@@ -20,7 +20,7 @@ separate copies of this matrix in each document.
 | Provider onboarding | Partial | Manual endpoints and pre-registered OAuth clients; no discovery/dynamic registration. |
 | Real integrations | Planned / unvalidated | Generic HTTP transport exists; end-to-end evidence uses two disposable fixtures. |
 | Connection UI | Partial | Configured connections and OAuth reconnect; no verified account or health dashboard. |
-| OIDC login | Partial | Google domain + exact-owner browser checks tested with fixtures; live Google registration pending. Amp workload tokens supported for MCP; demo/legacy bearer retained. |
+| OIDC login | Partial | Google domain + exact-owner browser checks tested with fixtures; production credentials configured, real browser login pending. Amp workload authentication verified against Fly; demo/legacy bearer retained. |
 | Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
 | On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
@@ -34,7 +34,8 @@ separate copies of this matrix in each document.
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
 | Tamper-evident archive | Planned | No independent archive, signed checkpoints, immutable retention or receipts. |
 | Local / orb development | Implemented | mise, pinned Go, setup script, supervised demo, helper client, race tests and vet. |
-| Tailscale / Fly deployment | Partial | Demo destroyed; replacement Fly HTTPS config ready with separate secrets. App reserved, deployment blocked on Google registration. Tailscale optional, unconfigured. |
+| Tailscale / Fly deployment | Partial | Replacement Fly HTTPS deployment healthy with separate secrets and an empty catalogue. Tailscale optional, unconfigured. |
+| CI / automatic deployment | Partial | Buildkite pipeline created; checks and serialized main deploy scripts validated locally. App-scoped deploy secret and first CI run pending. |
 | Operational hardening | Planned | Automated backup/restore, key rotation, retention, rate limits, response bounds and OpenTelemetry. |
 | Safe replay | Later idea | Protected recorded operations as test fixtures, without replaying production writes. |
 | Cross-tool information controls | Later idea | Restricted-data to external-destination checks; needs runtime cooperation. |
@@ -55,7 +56,7 @@ separate copies of this matrix in each document.
 - [x] Verify Amp workload issuer and reject wrong user/audience/signature/expiry/token use.
 - [x] Persist verified Amp user and thread link separately from model metadata.
 - [x] Add an orb MCP bridge that mints short-lived tokens per HTTP request.
-- [ ] Register Google web client and configure exact owner subject plus `ljd.cc` domain.
+- [x] Register Google web client and configure exact owner subject plus `ljd.cc` domain.
 - [ ] Validate live Google login and production browser approvals.
 - [ ] Add general client-facing OAuth discovery/scopes if non-orb clients need it.
 
@@ -63,13 +64,14 @@ separate copies of this matrix in each document.
 
 - [x] Validate the private Fly demo, then retire its app and disposable data.
 - [x] Select Fly public HTTPS with Google browser and Amp workload authentication.
-- [ ] Deploy `lox-mcp-gateway` after Google registration and separate secrets are supplied.
+- [x] Deploy `lox-mcp-gateway` after Google registration and separate secrets are supplied.
 - [ ] Test consistent backup and restore with separately protected encryption keys.
 - [ ] Design credential/key rotation, session revocation and retention procedures.
 - [ ] Bound login-state allocation, request rates and upstream response sizes.
 - [ ] Add connection diagnostics without leaking tokens or tool payloads.
 - [ ] Define complete audit coverage, then add independent archival/checkpointing.
-- [ ] Add repeatable CI checks when the GitHub workflow and permissions are chosen.
+- [x] Add repeatable CI checks and create the Buildkite pipeline.
+- [ ] Configure its app-scoped Fly secret and verify the first automatic deployment.
 
 ## Later, only with evidence of need
 

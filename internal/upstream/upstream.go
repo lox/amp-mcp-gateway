@@ -74,9 +74,6 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 	if err != nil {
 		return nil, fmt.Errorf("base URL: %w", err)
 	}
-	if len(connections) == 0 {
-		return nil, fmt.Errorf("at least one connection is required")
-	}
 	m := &Manager{baseURL: strings.TrimRight(base.String(), "/"), store: store, conns: make(map[string]*managedConnection, 2), states: make(map[string]pendingState)}
 	for _, c := range connections {
 		if c.ID == "" || strings.Trim(c.ID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {

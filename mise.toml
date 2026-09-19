@@ -1,5 +1,6 @@
 [tools]
 go = "1.26.8"
+flyctl = "0.4.104"
 
 [tasks.dev]
 description = "Run disposable local demo (browser password: demo-only)"

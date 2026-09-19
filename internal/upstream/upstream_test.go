@@ -34,6 +34,23 @@ func (s *memoryStore) SaveToken(_ context.Context, key string, value []byte) err
 	return nil
 }
 
+func TestEmptyCatalogue(t *testing.T) {
+	m, err := New("https://gateway.example", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Call(t.Context(), "unconfigured", "write", nil); err == nil {
+		t.Fatal("unconfigured connection accepted")
+	}
+	mux := http.NewServeMux()
+	m.Register(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/connections/unconfigured/connect", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unconfigured OAuth route returned %d", w.Code)
+	}
+}
+
 func TestBearerListAndCall(t *testing.T) {
 	t.Setenv("UPSTREAM_TOKEN", "secret")
 	type input struct {
