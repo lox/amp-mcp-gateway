@@ -1,0 +1,31 @@
+# Private fake-service demo. Do not connect real accounts in demo mode.
+app = "lox-mcp-gateway-test"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "-demo -listen [::]:8080 -base-url http://localhost:18080"
+
+[checks.health]
+  type = "http"
+  port = 8080
+  method = "GET"
+  path = "/healthz"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+
+[[mounts]]
+  source = "gateway_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"
+
+# No http_service, public ports or IPs. Connect with fly proxy.

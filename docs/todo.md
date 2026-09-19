@@ -34,7 +34,7 @@ separate copies of this matrix in each document.
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
 | Tamper-evident archive | Planned | No independent archive, signed checkpoints, immutable retention or receipts. |
 | Local / orb development | Implemented | mise, pinned Go, setup script, supervised demo, helper client, race tests and vet. |
-| Tailscale / Fly deployment | Planned | Not provisioned; one process and persistent disk supported today. |
+| Tailscale / Fly deployment | Partial | Private Fly fake-service demo on one Machine and volume; access via `fly proxy`. Tailscale and real-account deployment remain unconfigured. |
 | Operational hardening | Planned | Automated backup/restore, key rotation, retention, rate limits, response bounds and OpenTelemetry. |
 | Safe replay | Later idea | Protected recorded operations as test fixtures, without replaying production writes. |
 | Cross-tool information controls | Later idea | Restricted-data to external-destination checks; needs runtime cooperation. |
@@ -59,6 +59,7 @@ separate copies of this matrix in each document.
 
 ## Before operational use
 
+- [x] Deploy the fake-service demo privately on Fly with a persistent volume.
 - [ ] Select private ingress/host and obtain deployment approval.
 - [ ] Test consistent backup and restore with separately protected encryption keys.
 - [ ] Design credential/key rotation, session revocation and retention procedures.

@@ -83,8 +83,11 @@ account or delegation cannot reuse an approval or exceed a mandate.
 
 ### 5. Private operational deployment
 
-Select Tailscale ingress and a host such as one Fly Machine with a persistent
-volume. Tailscale supplies connectivity, not upstream OAuth or delegation.
+The fake-service demo is deployed to `lox-mcp-gateway-test`: one Fly Machine and
+a persistent volume, with no public IPs or ports. Use `fly proxy` as described in
+the [dev guide](dev.md#private-fly-test-app). This tests hosting, not real-account
+security. Tailscale remains an option for longer-term private access; it supplies
+connectivity, not upstream OAuth or delegation.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection
@@ -93,7 +96,8 @@ model requires evidence that the gateway operator cannot rewrite.
 
 Acceptance: restore a disposable deployment from backup, revoke access, recover
 after an interrupted write without redispatch, and verify that no backend HTTP port
-is accidentally public. Deployment requires a separate explicit go-ahead.
+is accidentally public. Deploying real accounts or changing public exposure requires
+a separate explicit go-ahead.
 
 ## Verification and boundaries
 
