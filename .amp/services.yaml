@@ -1,0 +1,9 @@
+services:
+  gateway:
+    command: './.agents/demo'
+    port: 8080
+    health: /healthz
+    review: false
+    portal:
+      title: MCP gateway demo
+      description: 'Disposable fixtures only. Sign in with password demo-only. Connect notes OAuth before approving a note.'

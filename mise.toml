@@ -1,0 +1,13 @@
+[tools]
+go = "1.26.8"
+
+[tasks.dev]
+description = "Run disposable local demo (browser password: demo-only)"
+run = "go run ./cmd/mcp-gateway -demo"
+
+[tasks.check]
+description = "Format check, race tests and vet"
+run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./..."
+
+[tasks.build]
+run = "go build -o bin/mcp-gateway ./cmd/mcp-gateway"

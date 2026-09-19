@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+exec mise exec -- go run ./cmd/mcp-gateway -demo -listen "0.0.0.0:${PORT:-8080}" -base-url "${PUBLIC_URL:-http://localhost:8080}"

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v mise >/dev/null 2>&1; then
+  curl -fsSL https://mise.run | sh
+fi
+echo 'Installing pinned toolchain'
+mise trust
+mise install
+echo 'Downloading Go dependencies'
+mise exec -- go mod download
+echo 'Building gateway'
+mise run build

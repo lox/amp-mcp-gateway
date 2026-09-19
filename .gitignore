@@ -1,0 +1,10 @@
+.local/
+bin/
+gateway.json
+.env
+.env.*
+*.db
+*.db-*
+*.db.lock
+.amp/portals/
+.amp/in/

@@ -1,0 +1,16 @@
+{
+  "Listen": "127.0.0.1:8080",
+  "BaseURL": "https://gateway.example.com",
+  "Database": "/data/gateway.db",
+  "OwnerSubject": "your-stable-oidc-subject",
+  "Issuer": "https://idp.example.com",
+  "ClientID": "gateway-browser",
+  "Connections": [
+    {"ID":"reference","URL":"https://reference.example.com/mcp","Account":"Your reference account","TokenEnv":"REFERENCE_TOKEN"},
+    {"ID":"notes","URL":"https://notes.example.com/mcp","Account":"Your notes account","OAuth":{"ClientID":"registered-upstream-client","ClientSecretEnv":"NOTES_CLIENT_SECRET","AuthURL":"https://notes.example.com/authorize","TokenURL":"https://notes.example.com/token","Scopes":["notes:write"]}}
+  ],
+  "Tools": [
+    {"ID":"reference.echo","Connection":"reference","Name":"echo","Description":"Read reference text","Policy":"allow","InputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}},
+    {"ID":"notes.create","Connection":"notes","Name":"create_note","Description":"Create a note","Policy":"require_approval","InputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}
+  ]
+}
