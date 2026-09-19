@@ -21,6 +21,16 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+string(b))
 	return http.DefaultTransport.RoundTrip(r)
 }
+
+func demoHTTPClient(token string) *http.Client {
+	return &http.Client{
+		Transport: bearer(token),
+		// The transport injects credentials on every request, including redirects.
+		// Never let a redirect forward the gateway token to another endpoint.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -47,7 +57,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	client := mcp.NewClient(&mcp.Implementation{Name: "demo-client", Version: "1"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: *endpoint, HTTPClient: &http.Client{Transport: bearer(secrets.GatewayToken)}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: *endpoint, HTTPClient: demoHTTPClient(secrets.GatewayToken), MaxRetries: -1, DisableStandaloneSSE: true}, nil)
 	if err != nil {
 		return err
 	}
