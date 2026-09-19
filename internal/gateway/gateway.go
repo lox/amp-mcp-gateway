@@ -292,7 +292,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	m.Register(mux)
 	g.registerConnections(mux, m)
-	mux.HandleFunc("GET /{$}", g.dashboard)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
 	mux.HandleFunc("GET /operations/{id}", g.operation)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
 		decision := r.PathValue("decision")
@@ -309,7 +309,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	return auth.Require(http.NewCrossOriginProtection().Handler(mux))
 }
 
-func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
 	ops, err := g.store.List(r.Context())
 	if err != nil {
 		http.Error(w, "ledger unavailable", 503)
@@ -321,8 +321,16 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.RLock()
-	connections := append([]upstream.Connection(nil), g.cfg.Connections...)
+	connections := make([]map[string]any, 0, len(g.cfg.Connections))
+	for _, c := range g.cfg.Connections {
+		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
+	}
 	g.mu.RUnlock()
+	for _, c := range connections {
+		if c["OAuth"] == true {
+			c["AuthStatus"] = m.OAuthStatus(r.Context(), c["ID"].(string))
+		}
+	}
 	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
