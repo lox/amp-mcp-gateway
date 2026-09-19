@@ -59,7 +59,7 @@ disposable private repository is a suggested starting point, subject to its curr
 MCP authentication support. Do not authorize or change a real account as part of
 documentation/setup work.
 
-### 3. Amp workload identity — implemented; Google setup pending
+### 3. Amp workload identity — deployed; Google browser validation pending
 
 Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience and
 one allowed user ID. A signed thread ID is required, stored and linked from the
@@ -70,8 +70,8 @@ gateway credentials. Google browser login requires both the exact subject and
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
-issuer check using this orb. Google credentials and real browser login are still
-needed. General MCP OAuth discovery, scopes, per-thread grants and revocation are
+issuer check using this orb. Google credentials are configured; real browser login
+still needs owner validation. General MCP OAuth discovery, scopes, per-thread grants and revocation are
 deferred; the current bridge is specific to Amp orbs.
 
 ### 4. Authority, account identity and meaningful approvals
@@ -87,14 +87,17 @@ subagents may only narrow authority. Do not build a general policy language firs
 Acceptance: negative tests demonstrate that changed arguments, resource state,
 account or delegation cannot reuse an approval or exceed a mandate.
 
-### 5. Single-owner Fly deployment — awaiting Google registration
+### 5. Single-owner Fly deployment — initial deployment running
 
-The demo app has been destroyed. `lox-mcp-gateway` is reserved; configuration now
-targets public Fly HTTPS, one Machine and volume, separate environment secrets,
-Google login and Amp workload authentication. Start with an empty tool catalogue.
+The demo app has been destroyed. `lox-mcp-gateway` runs on public Fly HTTPS with
+one Machine and volume, separate environment secrets, Google login configuration
+and Amp workload authentication. The tool catalogue is empty; startup now permits
+that state without fake connections. Live health, Amp discovery, unauthorized
+rejection and Google redirect checks passed. Browser login awaits owner validation.
 The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registration
-and deployment. No Machine is running until Google credentials are supplied.
-Tailscale is optional additional network protection, not authentication.
+and deployment. Buildkite tests changes and deploys non-PR `main` builds serially
+once its app-scoped Fly secret is configured. Tailscale is optional additional
+network protection, not authentication.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection

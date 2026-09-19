@@ -1,0 +1,17 @@
+agents:
+  queue: default
+
+steps:
+  - label: ":go: Test and build"
+    key: check
+    command: .buildkite/check
+    timeout_in_minutes: 15
+
+  - label: ":fly: Deploy main"
+    key: deploy
+    depends_on: check
+    if: build.branch == "main" && build.pull_request.id == null
+    command: .buildkite/deploy
+    concurrency: 1
+    concurrency_group: lox-mcp-gateway-production
+    timeout_in_minutes: 20

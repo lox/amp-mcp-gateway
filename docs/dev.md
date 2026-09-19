@@ -92,11 +92,14 @@ Amp's portal authentication using the gateway bearer token alone.
 ### Fly: Amp clients and Google browser login
 
 The disposable `lox-mcp-gateway-test` app has been destroyed. Its replacement,
-`lox-mcp-gateway`, is reserved but awaits Google credentials before deployment.
+`lox-mcp-gateway`, is deployed at https://lox-mcp-gateway.fly.dev with Google
+credentials and owner restrictions configured. Health, authenticated Amp discovery,
+unauthenticated rejection and the Google redirect are checked; the owner still
+needs to complete a real browser login.
 `fly.toml` uses public HTTPS, one Machine in Sydney, and `/data/gateway.db` on a
 persistent volume. It does not run demo mode or fake providers.
 
-Before the first deployment:
+To reproduce the deployment:
 
 1. Register a dedicated Google OAuth **Web application** client in the `ljd.cc`
    Workspace organisation. Use an internal consent screen where available and the
@@ -139,9 +142,46 @@ fly checks list
 Subsequent deployments only need the final three commands. The default rolling
 strategy updates the single Machine in place and waits for health checks. Do not
 add replicas or use blue-green deployment with this SQLite setup. The Machine
-stays running and incurs charges, as does the volume. Merging a PR does not deploy.
+stays running and incurs charges, as does the volume. Buildkite deploys merges to
+`main` once its deployment secret is configured, as described below.
 To suspend use, disable proxy auto-start before stopping the Machine; otherwise a
 request can start it again. Snapshots do not replace a tested backup/restore process.
+
+### Buildkite CI and deployment
+
+[lox/mcp-gateway](https://buildkite.com/lox/mcp-gateway) uses the Hosted cluster's
+`default` queue. The GitHub webhook builds branches and pull requests; fork PRs
+are disabled. The pipeline uploads `.buildkite/pipeline.yml` from the checkout.
+
+Checks run setup, build both Go commands, race tests, vet and formatting checks.
+Fly config validation runs in the authenticated deploy job. Only non-PR `main`
+builds deploy after checks pass. Deploys
+share one concurrency slot, skip superseded main commits, use Fly's rolling
+strategy without HA, and check public `/healthz` afterwards. Running deployments
+are not automatically cancelled by a newer commit.
+
+**One-time credential setup:** create an app-scoped Fly deploy token on your trusted
+machine, not an organisation-wide token:
+
+```sh
+fly tokens create deploy --app lox-mcp-gateway --name buildkite --expiry 2160h
+```
+
+Store it as the Buildkite secret **`MCP_GATEWAY_FLY_DEPLOY`** in the **Hosted**
+cluster (`9bd6538f-929f-4d0b-a667-6931e99428ce`). Restrict its agent access with:
+
+```yaml
+- pipeline_id: "01a0b80e-45e5-412e-a3a5-87d7aac08b8c"
+  build_branch: "main"
+  build_source: "webhook"
+```
+
+The deploy script retrieves it only after its branch and freshness checks. Keep
+the Google and encryption secrets in Fly, not Buildkite. The deploy token expires
+after 90 days; replace it before expiry and revoke the old token. Automatic deploys
+are not operational until this secret exists. The policy deliberately rejects
+API/manual builds; use a reviewed main push for normal deployment. Pipeline and
+repository administrators remain trusted to change production code.
 
 ### Connect an Amp orb
 
