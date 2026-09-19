@@ -1,14 +1,17 @@
 package browserauth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,18 +29,25 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 		claimDomain  string
 		claimSubject string
 		wantSuccess  bool
+		wantReason   string
 	}{
 		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
 		{name: "valid hosted domain", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "owner-123", wantSuccess: true},
-		{name: "missing hosted domain claim", hostedDomain: "ljd.cc", claimSubject: "owner-123"},
-		{name: "wrong hosted domain claim", hostedDomain: "ljd.cc", claimDomain: "other.example", claimSubject: "owner-123"},
-		{name: "same domain wrong owner", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "other-owner"},
-		{name: "wrong nonce", claimSubject: "owner-123"},
-		{name: "wrong audience", claimSubject: "owner-123"},
-		{name: "expired", claimSubject: "owner-123"},
+		{name: "missing hosted domain claim", hostedDomain: "ljd.cc", claimSubject: "owner-123", wantReason: "hosted_domain"},
+		{name: "wrong hosted domain claim", hostedDomain: "ljd.cc", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
+		{name: "same domain wrong owner", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "other-owner", wantReason: "owner"},
+		{name: "wrong nonce", claimSubject: "owner-123", wantReason: "nonce"},
+		{name: "wrong audience", claimSubject: "owner-123", wantReason: "id_token_verification"},
+		{name: "expired", claimSubject: "owner-123", wantReason: "id_token_verification"},
+		{name: "exchange rejected", wantReason: "token_exchange"},
+		{name: "missing ID token", wantReason: "missing_id_token"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			defer slog.SetDefault(previousLogger)
 			var issuer, nonce, challenge string
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +58,17 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 				json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
 			})
 			mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
+				if tt.name == "exchange rejected" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte(`{"error":"invalid_client","error_description":"sensitive-provider-response"}`))
+					return
+				}
+				if tt.name == "missing ID token" {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write([]byte(`{"access_token":"fixture-access","token_type":"Bearer"}`))
+					return
+				}
 				r.ParseForm()
 				sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
 				if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
@@ -109,6 +130,13 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			if got := location.Query().Get("hd"); got != tt.hostedDomain {
 				t.Fatalf("hosted domain hint = %q, want %q", got, tt.hostedDomain)
 			}
+			wantScope := "openid"
+			if tt.hostedDomain != "" {
+				wantScope = "openid email"
+			}
+			if got := location.Query().Get("scope"); got != wantScope {
+				t.Fatalf("scope = %q, want %q", got, wantScope)
+			}
 			callback := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequest("GET", "/auth/callback?state="+url.QueryEscape(location.Query().Get("state"))+"&code=fixture-code", nil)
 				r.AddCookie(login.Result().Cookies()[0])
@@ -123,6 +151,14 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			if res.Code != want {
 				t.Fatalf("status %d: %s", res.Code, res.Body.String())
+			}
+			if tt.wantReason != "" && !strings.Contains(logs.String(), "reason="+tt.wantReason) {
+				t.Fatalf("missing failure reason %q: %s", tt.wantReason, logs.String())
+			}
+			for _, sensitive := range []string{"sensitive-provider-response", "fixture-access", "fixture-secret", "fixture-code", "owner-123", "other-owner", nonce, challenge} {
+				if strings.Contains(logs.String(), sensitive) {
+					t.Fatal("authentication logs contain sensitive data")
+				}
 			}
 			session := false
 			for _, c := range res.Result().Cookies() {
