@@ -3,6 +3,7 @@ package upstream
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -165,6 +166,37 @@ func TestOAuthStateTamperingAndMissingSecret(t *testing.T) {
 	mux.ServeHTTP(w, callback)
 	if w.Code != http.StatusBadRequest || location.Query().Get("code_challenge_method") != "S256" || store.saves != 0 {
 		t.Fatalf("tampered callback status=%d challenge=%q saves=%d", w.Code, location.Query().Get("code_challenge_method"), store.saves)
+	}
+}
+
+func TestDiscoveryLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		count       int
+		description int
+		wantError   bool
+	}{
+		{"allowed count", 500, 0, false},
+		{"too many tools", 501, 0, true},
+		{"allowed size", 1, 1 << 20, false},
+		{"oversized definitions", 1, 2 << 20, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
+			for i := 0; i < tc.count; i++ {
+				server.AddTool(&mcp.Tool{Name: fmt.Sprintf("tool_%d", i), Description: strings.Repeat("x", tc.description), InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					t.Error("discovery executed a tool")
+					return &mcp.CallToolResult{}, nil
+				})
+			}
+			fixture := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+			defer fixture.Close()
+			m := newTestManager(t, fixture.URL, Connection{ID: "one", URL: fixture.URL, NoAuth: true})
+			tools, err := m.ListTools(t.Context(), "one")
+			if (err != nil) != tc.wantError || (!tc.wantError && len(tools) != tc.count) {
+				t.Fatalf("got %d tools, error %v", len(tools), err)
+			}
+		})
 	}
 }
 

@@ -91,6 +91,7 @@ func Open(path, key string) (*Store, error) {
 	s := &Store{db: db, aead: aead, lock: lock}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
 	if err != nil {
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, o
 	// Reject a wrong key before recovery mutates an existing ledger.
 	var id string
 	var payload []byte
-	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'operation:'||id,payload FROM operations LIMIT 1`).Scan(&id, &payload)
+	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
 	}
@@ -143,6 +144,46 @@ func (s *Store) LoadToken(ctx context.Context, id string) ([]byte, error) {
 func (s *Store) SaveToken(ctx context.Context, id string, b []byte) error {
 	_, err := s.db.ExecContext(ctx, "INSERT INTO tokens VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", id, s.seal("token:"+id, b))
 	return err
+}
+
+// LoadCatalogue retrieves the encrypted browser-managed configuration, including credentials.
+func (s *Store) LoadCatalogue(ctx context.Context) ([]byte, error) {
+	var b []byte
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM catalogue WHERE id=1").Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.open("catalogue", b)
+}
+
+// SaveCatalogue commits configuration and revokes queued approvals atomically.
+// Running operations must finish before their authority can change.
+func (s *Store) SaveCatalogue(ctx context.Context, b []byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var running int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM operations WHERE status='running'").Scan(&running); err != nil {
+		return err
+	}
+	if running != 0 {
+		return errors.New("wait for running operations before changing connections or policies")
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO catalogue VALUES (1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", s.seal("catalogue", b)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) SELECT id,'denied','catalogue-changed',unixepoch() FROM operations WHERE status IN ('pending','ready')"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Reauthorize invalidates queued requests when a human replaces an OAuth grant.

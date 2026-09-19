@@ -16,7 +16,7 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 
 - Go, the official MCP Go SDK, standard HTTP handlers and server-rendered HTML.
 - One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`.
-- Search a manually pinned catalogue; do not expose newly discovered tools silently.
+- Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
 - Single owner, one process, one SQLite disk. Persist intent before dispatch.
 - Google Workspace OIDC for the browser; Amp workload OIDC for orb MCP calls.
   Match one Google subject and one Amp user. Keep the signed thread link; neither
@@ -41,9 +41,17 @@ The fixture write echoes text; it is not a real notes integration.
 
 ### 2. One real integration and normal-client usage — next
 
-Choose one provider with both a low-risk read and a reversible write in a disposable
-account or repository. Start with explicit endpoint/client registration and pinned
-schemas rather than a general onboarding framework.
+The browser can now add a public HTTPS MCP server, discover OAuth metadata,
+register a client or accept existing credentials, and fetch tools for explicit
+policy review. Connections and pinned tools persist in encrypted SQLite. New and
+changed definitions start disabled; saves revoke queued authority and reject
+stale reviews. Public DeepWiki discovery is verified in the demo; provider OAuth
+is covered by fixtures, not yet a real account.
+
+Next choose one provider with both a low-risk read and a reversible write in a
+disposable account or repository. Use the browser flow and verify its real auth
+behavior before adding more onboarding features. Endpoint/credential editing,
+connection removal, and automatic drift detection remain follow-ups.
 
 Acceptance:
 
@@ -59,7 +67,7 @@ disposable private repository is a suggested starting point, subject to its curr
 MCP authentication support. Do not authorize or change a real account as part of
 documentation/setup work.
 
-### 3. Amp workload identity — deployed; Google browser validation pending
+### 3. Amp workload identity and Google browser login — deployed
 
 Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience and
 one allowed user ID. A signed thread ID is required, stored and linked from the
@@ -70,8 +78,8 @@ gateway credentials. Google browser login requires both the exact subject and
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
-issuer check using this orb. Google credentials are configured; real browser login
-still needs owner validation. General MCP OAuth discovery, scopes, per-thread grants and revocation are
+issuer check using this orb. The owner confirmed real Google browser login.
+General client-facing MCP OAuth discovery, scopes, per-thread grants and revocation are
 deferred; the current bridge is specific to Amp orbs.
 
 ### 4. Authority, account identity and meaningful approvals
@@ -93,10 +101,10 @@ The demo app has been destroyed. `lox-mcp-gateway` runs on public Fly HTTPS with
 one Machine and volume, separate environment secrets, Google login configuration
 and Amp workload authentication. The tool catalogue is empty; startup now permits
 that state without fake connections. Live health, Amp discovery, unauthorized
-rejection and Google redirect checks passed. Browser login awaits owner validation.
+rejection and Google redirect checks passed. The owner confirmed browser login.
 The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registration
-and deployment. Buildkite tests changes and deploys non-PR `main` builds serially
-once its app-scoped Fly secret is configured. Tailscale is optional additional
+and deployment. Buildkite tests changes and deploys non-PR `main` builds serially;
+its app-scoped Fly secret is configured and deployment has passed. Tailscale is optional additional
 network protection, not authentication.
 
 Before real operational use: test backup/restore, define key rotation and retention,
