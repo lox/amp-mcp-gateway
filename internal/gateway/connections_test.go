@@ -486,6 +486,14 @@ func TestDashboardOAuthStatus(t *testing.T) {
 			if status == "Connected" && !strings.Contains(body, "Credentials saved; provider access not verified.") {
 				t.Fatal("connected status must not imply verified access")
 			}
+			action := "Reconnect"
+			if status == "Not connected" {
+				action = "Connect"
+			}
+			inline := `</span><small><a href="/connections/oauth/connect">` + action + `</a></small></p>`
+			if !strings.Contains(body, inline) || strings.Count(body, `href="/connections/oauth/connect"`) != 1 {
+				t.Fatal("connection action must appear once, beside status")
+			}
 		})
 	}
 	g, s, _ := fixture(t)
