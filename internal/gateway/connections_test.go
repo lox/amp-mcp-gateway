@@ -295,6 +295,86 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	}
 }
 
+func TestRefreshPreservesUnsavedPolicies(t *testing.T) {
+	g, s, _ := fixture(t)
+	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
+	schema := map[string]any{"type": "object"}
+	add := func(name, description string) {
+		remote.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			t.Error("refresh executed a tool")
+			return nil, nil
+		})
+	}
+	add("stable", "original")
+	add("changed", "different")
+	add("new", "new")
+	server := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return remote }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	defer server.Close()
+	cfg := g.cfg
+	cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
+	cfg.Tools = []Tool{
+		{ID: "notes.stable", Connection: "notes", Name: "stable", Description: "original", InputSchema: schema, Policy: "deny"},
+		{ID: "notes.changed", Connection: "notes", Name: "changed", Description: "original", InputSchema: schema, Policy: "deny"},
+	}
+	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err = New(cfg, s, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	ticketFrom := func(w *httptest.ResponseRecorder) string {
+		t.Helper()
+		match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if w.Code != 200 || len(match) != 2 {
+			t.Fatalf("no review: %d %s", w.Code, w.Body.String())
+		}
+		return match[1]
+	}
+	ticket := ticketFrom(formRequest(h, cookie, "GET", "/connections/notes/tools", nil))
+	before := digest(g.catalogue())
+	values := url.Values{"ticket": {ticket}, "default_policy": {"allow"}, "policy_0": {"inherit"}, "policy_1": {"allow"}}
+	ticket = ticketFrom(formRequest(h, cookie, "POST", "/connections/notes/discover", values))
+	draft := g.drafts[ticket]
+	if draft.Default != "allow" || digest(g.catalogue()) != before {
+		t.Fatal("refresh lost edited default or published unsaved policies")
+	}
+	for _, tool := range draft.Tools {
+		want := map[string]string{"stable": "", "changed": "require_approval", "new": ""}[tool.Name]
+		if tool.Policy != want {
+			t.Fatalf("%s: got %q want %q", tool.Name, tool.Policy, want)
+		}
+	}
+	// Tool order changed during discovery. Carry the edits by identity, not index.
+	values = url.Values{"ticket": {ticket}, "default_policy": {"deny"}}
+	for i := range draft.Tools {
+		values.Set("policy_"+strconv.Itoa(i), "allow")
+	}
+	add("stable", "changed again")
+	ticket = ticketFrom(formRequest(h, cookie, "POST", "/connections/notes/discover", values))
+	if g.drafts[ticket].Default != "deny" || g.drafts[ticket].Tools[0].Policy != "allow" || g.drafts[ticket].Tools[2].Policy != "require_approval" {
+		t.Fatal("repeat refresh lost choices or failed to downgrade changed definition")
+	}
+	// A failed fetch must still display the edited form, without saving it.
+	server.Close()
+	values.Set("ticket", ticket)
+	values.Set("default_policy", "require_approval")
+	w := formRequest(h, cookie, "POST", "/connections/notes/discover", values)
+	if ticketFrom(w) != ticket || g.drafts[ticket].Default != "require_approval" || !strings.Contains(w.Body.String(), "Could not fetch tools") || digest(g.catalogue()) != before {
+		t.Fatal("failed refresh discarded edits or changed live policies")
+	}
+	values.Set("policy_1", "bogus")
+	if w := formRequest(h, cookie, "POST", "/connections/notes/discover", values); w.Code != 400 {
+		t.Fatal("invalid refresh policy accepted")
+	}
+	values.Set("ticket", "stale")
+	if w := formRequest(h, cookie, "POST", "/connections/notes/discover", values); w.Code != 409 {
+		t.Fatal("stale refresh accepted")
+	}
+}
+
 func TestPermissionPageViewsDoNotExhaustDrafts(t *testing.T) {
 	g, s, _ := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
@@ -379,6 +459,29 @@ func TestOAuthStatusPage(t *testing.T) {
 				if !strings.Contains(w.Body.String(), text) {
 					t.Fatalf("missing %q", text)
 				}
+			}
+			open := strings.Contains(w.Body.String(), `<details class="auth-details" open>`)
+			if open != (tc.status != "Connected") {
+				t.Fatal("authorization details should collapse only when connected")
+			}
+		})
+	}
+}
+
+func TestDefaultPermissionRadios(t *testing.T) {
+	for _, policy := range []string{"deny", "require_approval", "allow"} {
+		t.Run(policy, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy}, "Connection": map[string]any{"ID": "notes"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			checked := regexp.MustCompile(`name="default_policy" value="([^"]+)" checked`).FindAllStringSubmatch(w.Body.String(), -1)
+			if len(checked) != 1 || checked[0][1] != policy {
+				t.Fatalf("saved default %q not selected: %v", policy, checked)
+			}
+			if !strings.Contains(w.Body.String(), `<button type="submit" formaction="/connections/notes/discover">Refresh tools</button>`) {
+				t.Fatal("refresh must submit discovery rather than saving policy edits")
 			}
 		})
 	}

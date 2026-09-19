@@ -47,8 +47,8 @@ Sign in to the gateway and click **Add MCP**. Enter the server URL and choose
 OAuth, a bearer token, or no authentication for a public server. For OAuth, review
 the authorization server and scopes, then sign in with the provider.
 
-Click **Fetch tools**, set a connection default—usually **Require approval**—and
-**Save policies**. Add exceptions only where needed. Search and select multiple
+Click **Refresh tools**, set a connection default—usually **Require approval**—and
+**Save changes**. Use **Add exception** where needed. Under **All tools**, search and select multiple
 tools to allow or block them together, or reset them to the connection default.
 Nothing changes until you save. Refreshes keep unchanged permissions; changed
 allowed tools go back to approval and blocked tools stay blocked.

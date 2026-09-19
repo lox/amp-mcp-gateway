@@ -84,9 +84,9 @@ After signing in, click **Add MCP**. As a public read-only example:
 - MCP server URL: `https://mcp.deepwiki.com/mcp`
 - Authentication: **None — public server**
 
-Add the server and click **Fetch tools**. For this example set the connection
+Add the server and click **Refresh tools**. For this example set the connection
 default to **Block**, choose **All tools**, and set `read_wiki_structure` to
-**Allow without approval**. Other tools inherit Block. Save, then check discovery:
+**Allow**. Other tools inherit Block. Save, then check discovery:
 
 ```sh
 mise exec -- go run ./cmd/demo-client -args '{"query":"public-docs"}'
@@ -117,21 +117,25 @@ configuration can still use loopback fixtures. Discovery is limited to 500 tools
 
 ### Defaults, exceptions and refreshes
 
-The suggested connection default is **Require approval**. Choose **Exceptions
-only** for a short list of overrides, or **All tools** to add exceptions. Search,
-select visible tools, choose a permission and click **Apply to selected**. Bulk
-edits are staged until **Save policies**. Filtering clears hidden selections.
-**Use connection default** removes an exception. Expand a tool to read its
+The suggested connection default is **Require approval**. The page starts with
+**Exceptions**. **Add exception** opens the full tool list; choose a permission
+for any tool you want to override. Under **All tools**, search, select visible
+tools and click a bulk permission button. Edits are staged until **Save changes**.
+Filtering clears hidden selections. The remove button or **Use connection default**
+removes an exception; **Use default** does the same in bulk. Expand a tool to read its
 description and schema; names and read-only annotations never grant permissions.
 
 Existing saved permissions are preserved as explicit exceptions on upgrade.
-To adopt the default for them, select them in bulk and choose **Use connection
-default** once. Changing a connection default never overrides explicit choices.
+To adopt the default for them, select them in bulk and choose **Use default**
+once. Changing a connection default never overrides explicit choices.
 You can edit saved permissions without fetching the server, including when it is
-offline. **Allow without approval** as the default also allows new tools after
+offline. **Allow** as the default also allows new tools without approval after
 you save a refresh; the form warns about this explicitly.
 
-Fetching alone changes no live policies. The preview marks new and changed tools
+Fetching alone changes no live policies. Refresh keeps the default and exceptions
+you are editing, including if the fetch fails; changed definitions still trigger
+the approval/block rules below. You must save to publish these choices.
+The preview marks new and changed tools
 and lists removals. New tools inherit the default. Unchanged schemas/descriptions
 keep their exceptions; changed tools require approval unless previously blocked,
 in which case they remain blocked. This also applies to tools previously allowed

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -92,6 +93,25 @@ type toolDraft struct {
 	Removed    []string
 }
 
+func (draft toolDraft) edit(values url.Values) (toolDraft, error) {
+	draft.Default = values.Get("default_policy")
+	if !validPolicy(draft.Default) {
+		return draft, errors.New("Choose a connection default.")
+	}
+	draft.Tools = append([]Tool(nil), draft.Tools...)
+	for i := range draft.Tools {
+		policy := values.Get("policy_" + strconv.Itoa(i))
+		if policy != "inherit" && !validPolicy(policy) {
+			return draft, errors.New("Choose a policy for every tool.")
+		}
+		if policy == "inherit" {
+			policy = ""
+		}
+		draft.Tools[i].Policy = policy
+	}
+	return draft, nil
+}
+
 // Caller holds g.mu. Reviews also support editing saved policies while offline.
 func (g *Gateway) newDraft(draft toolDraft) (string, error) {
 	found := false
@@ -117,7 +137,9 @@ func (g *Gateway) newDraft(draft toolDraft) (string, error) {
 		return "", errors.New("Too many open reviews. Wait ten minutes and try again.")
 	}
 	draft.Revision = digest(g.catalogue())
-	draft.Default = g.cfg.defaultPolicy(draft.Connection)
+	if draft.Default == "" {
+		draft.Default = g.cfg.defaultPolicy(draft.Connection)
+	}
 	draft.Expires = time.Now().Add(10 * time.Minute)
 	ticket := rand.Text()
 	g.drafts[ticket] = draft
@@ -275,27 +297,54 @@ func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *ups
 }
 
 func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if r.ParseForm() != nil {
+		http.Error(w, "invalid form", 400)
+		return
+	}
 	id := r.PathValue("id")
-	g.mu.RLock()
+	previousTicket := r.PostForm.Get("ticket")
+	var previous toolDraft
+	g.mu.Lock()
 	revision := digest(g.catalogue())
-	g.mu.RUnlock()
+	if previousTicket != "" {
+		var ok bool
+		previous, ok = g.drafts[previousTicket]
+		if !ok || previous.Connection != id || time.Now().After(previous.Expires) || previous.Revision != revision {
+			g.mu.Unlock()
+			http.Error(w, "Edit expired or configuration changed. Reopen saved permissions.", 409)
+			return
+		}
+		var err error
+		previous, err = previous.edit(r.PostForm)
+		if err != nil {
+			g.mu.Unlock()
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		g.drafts[previousTicket] = previous
+	}
+	g.mu.Unlock()
+	failed := func(message string) {
+		g.toolsPage(w, r, m, id, previous.Tools, previousTicket, message, false)
+	}
 	discovered, err := m.ListTools(r.Context(), id)
 	if err != nil {
-		g.toolsPage(w, r, m, id, nil, "", "Could not fetch tools. Check the URL and credentials, or connect OAuth first. Existing policies are unchanged.", false)
+		failed("Could not fetch tools. Check the URL and credentials, or connect OAuth first. Existing policies are unchanged.")
 		return
 	}
 	tools := []Tool{}
 	names := map[string]bool{}
 	for _, remote := range discovered {
 		if remote == nil || remote.Name == "" || len(remote.Name) > 200 || names[remote.Name] {
-			g.toolsPage(w, r, m, id, nil, "", "Server returned invalid or duplicate tool names.", false)
+			failed("Server returned invalid or duplicate tool names.")
 			return
 		}
 		names[remote.Name] = true
 		raw, err := json.Marshal(remote.InputSchema)
 		var schema map[string]any
 		if err != nil || len(raw) > 256<<10 || json.Unmarshal(raw, &schema) != nil || schema == nil {
-			g.toolsPage(w, r, m, id, nil, "", "Server returned an invalid or oversized tool schema.", false)
+			failed("Server returned an invalid or oversized tool schema.")
 			return
 		}
 		tools = append(tools, Tool{ID: id + "." + remote.Name, Connection: id, Name: remote.Name, Description: remote.Description, InputSchema: schema})
@@ -307,7 +356,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 		g.toolsPage(w, r, m, id, nil, "", "Configuration changed while fetching. Fetch again.", false)
 		return
 	}
-	draft := toolDraft{Connection: id, Tools: tools, Changes: map[string]string{}}
+	draft := toolDraft{Connection: id, Tools: tools, Default: previous.Default, Changes: map[string]string{}}
 	for i := range tools {
 		draft.Changes[tools[i].ID] = "New"
 		for _, old := range g.cfg.Tools {
@@ -331,6 +380,23 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 			draft.Removed = append(draft.Removed, old.ID)
 		}
 	}
+	// Preserve unsaved choices only when the definition the owner saw is unchanged.
+	for i := range tools {
+		for _, old := range previous.Tools {
+			if old.Name != tools[i].Name {
+				continue
+			}
+			if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description {
+				tools[i].Policy = old.Policy
+			} else {
+				tools[i].Policy = "require_approval"
+				if old.Policy == "deny" || (old.Policy == "" && previous.Default == "deny") {
+					tools[i].Policy = "deny"
+				}
+			}
+		}
+	}
+	delete(g.drafts, previousTicket)
 	ticket, err := g.newDraft(draft)
 	g.mu.Unlock()
 	message := ""
@@ -354,44 +420,29 @@ func (g *Gateway) saveTools(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "Edit expired or configuration changed. Reopen saved permissions or fetch tools again.", 409)
 		return
 	}
-	next := g.catalogue()
-	defaultPolicy := r.PostForm.Get("default_policy")
-	if !validPolicy(defaultPolicy) {
+	draft, err := draft.edit(r.PostForm)
+	if err != nil {
 		g.mu.Unlock()
-		http.Error(w, "Choose a connection default.", 400)
+		http.Error(w, err.Error(), 400)
 		return
 	}
+	next := g.catalogue()
 	next.ToolDefaults = maps.Clone(next.ToolDefaults)
 	if next.ToolDefaults == nil {
 		next.ToolDefaults = map[string]string{}
 	}
-	next.ToolDefaults[id] = defaultPolicy
+	next.ToolDefaults[id] = draft.Default
 	next.Tools = nil
 	for _, t := range g.cfg.Tools {
 		if t.Connection != id {
 			next.Tools = append(next.Tools, t)
 		}
 	}
-	edited := append([]Tool(nil), draft.Tools...)
-	for i, t := range edited {
-		policy := r.PostForm.Get("policy_" + strconv.Itoa(i))
-		if policy != "inherit" && !validPolicy(policy) {
-			g.mu.Unlock()
-			http.Error(w, "Choose a policy for every tool.", 400)
-			return
-		}
-		if policy == "inherit" {
-			policy = ""
-		}
-		t.Policy = policy
-		edited[i] = t
-		next.Tools = append(next.Tools, t)
-	}
-	err := g.saveCatalogue(r.Context(), next, m)
+	next.Tools = append(next.Tools, draft.Tools...)
+	err = g.saveCatalogue(r.Context(), next, m)
 	if err == nil {
 		clear(g.drafts) // Every older snapshot is now stale.
 	} else {
-		draft.Tools, draft.Default = edited, defaultPolicy
 		g.drafts[ticket] = draft
 	}
 	g.mu.Unlock()
