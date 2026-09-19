@@ -468,6 +468,40 @@ func TestOAuthStatusPage(t *testing.T) {
 	}
 }
 
+func TestDashboardOAuthStatus(t *testing.T) {
+	for _, status := range []string{"Connected", "Not connected", "Reconnect required", "Status unavailable"} {
+		t.Run(status, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			err := page.Execute(w, map[string]any{"Connections": []map[string]any{
+				{"ID": "oauth", "OAuth": true, "AuthStatus": status},
+				{"ID": "public", "OAuth": false},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, "OAuth · "+status) || strings.Count(body, "OAuth · ") != 1 {
+				t.Fatal("missing OAuth status or status shown on non-OAuth card")
+			}
+			if status == "Connected" && !strings.Contains(body, "Credentials saved; provider access not verified.") {
+				t.Fatal("connected status must not imply verified access")
+			}
+		})
+	}
+	g, s, _ := fixture(t)
+	g.cfg.Connections[0].TokenEnv = ""
+	g.cfg.Connections[0].OAuth = &upstream.OAuthConfig{ClientID: "client", AuthURL: "https://auth.example/authorize", TokenURL: "https://auth.example/token"}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	w := formRequest(h, cookie, "GET", "/", nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "OAuth · Not connected") {
+		t.Fatal("dashboard did not load credential status")
+	}
+}
+
 func TestDefaultPermissionRadios(t *testing.T) {
 	for _, policy := range []string{"deny", "require_approval", "allow"} {
 		t.Run(policy, func(t *testing.T) {
