@@ -43,10 +43,13 @@ The fixture write echoes text; it is not a real notes integration.
 
 The browser can now add a public HTTPS MCP server, discover OAuth metadata,
 register a client or accept existing credentials, and fetch tools for explicit
-policy review. Connections and pinned tools persist in encrypted SQLite. New and
-changed definitions start disabled; saves revoke queued authority and reject
-stale reviews. Public DeepWiki discovery is verified in the demo; provider OAuth
-is covered by fixtures, not yet a real account.
+policy review. Connections and pinned tools persist in encrypted SQLite. Connection
+defaults (initially require approval) cover new tools, with explicit exceptions
+and bulk editing. Refresh preserves unchanged choices, sends changed allowed
+tools back to approval, and keeps blocks. Saves revoke queued authority and reject
+stale reviews. OAuth status distinguishes saved credentials from verified access.
+Public DeepWiki discovery is verified in the demo; the owner confirmed Buildkite
+OAuth and tool discovery for `lox`. Real provider execution remains to be tested.
 
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth

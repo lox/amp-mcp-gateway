@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -131,11 +132,11 @@ func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	if _, err := g.submit(t.Context(), input("not-yet-enabled", "test")); err == nil {
 		t.Fatal("discovery enabled tool without save")
 	}
-	if g.drafts[ticket].Tools[0].Policy != "deny" {
-		t.Fatal("new tool not disabled")
+	if g.drafts[ticket].Tools[0].Policy != "" || g.drafts[ticket].Default != "require_approval" {
+		t.Fatal("new tool did not inherit approval default")
 	}
 	save := func(ticket, policy string) *httptest.ResponseRecorder {
-		return formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {ticket}, "policy_0": {policy}})
+		return formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {ticket}, "default_policy": {"require_approval"}, "policy_0": {policy}})
 	}
 	if w := save(ticket, "require_approval"); w.Code != 303 {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
@@ -169,7 +170,7 @@ func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	// changing the published catalogue until an explicit save.
 	add("Changed operation meaning")
 	changed := discover()
-	if g.drafts[changed].Tools[0].Policy != "deny" || g.tools["notes.write"].Policy != "allow" {
+	if g.drafts[changed].Tools[0].Policy != "require_approval" || g.tools["notes.write"].Policy != "allow" {
 		t.Fatal("incorrect drift review behavior")
 	}
 	if w := save(changed, "require_approval"); w.Code != 303 {
@@ -197,6 +198,189 @@ func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	raw, _ := json.Marshal(restored.tools["notes.write"].InputSchema)
 	if !strings.Contains(string(raw), "text") {
 		t.Fatal("lost pinned schema")
+	}
+}
+
+func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
+	g, s, _ := fixture(t)
+	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
+	schema := map[string]any{"type": "object"}
+	for _, name := range []string{"blocked", "changed", "new", "unchanged"} {
+		description := "original"
+		if name == "changed" || name == "blocked" {
+			description = "different behavior"
+		}
+		remote.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			t.Error("policy editing executed a tool")
+			return nil, nil
+		})
+	}
+	server := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return remote }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	defer server.Close()
+	cfg := g.cfg
+	cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
+	cfg.ToolDefaults = map[string]string{"notes": "allow"}
+	cfg.Tools = nil
+	for name, policy := range map[string]string{"blocked": "deny", "changed": "", "unchanged": "allow", "gone": "require_approval"} {
+		cfg.Tools = append(cfg.Tools, Tool{ID: "notes." + name, Connection: "notes", Name: name, Description: "original", InputSchema: schema, Policy: policy})
+	}
+	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err = New(cfg, s, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	ticketFrom := func(w *httptest.ResponseRecorder) string {
+		t.Helper()
+		match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if w.Code != 200 || len(match) != 2 {
+			t.Fatalf("no edit ticket: %d %s", w.Code, w.Body.String())
+		}
+		return match[1]
+	}
+	ticket := ticketFrom(formRequest(h, cookie, "POST", "/connections/notes/discover", nil))
+	draft := g.drafts[ticket]
+	if len(draft.Removed) != 1 || draft.Removed[0] != "notes.gone" || draft.Changes["notes.new"] != "New" || draft.Changes["notes.changed"] != "Changed" {
+		t.Fatal("wrong change summary", draft.Changes, draft.Removed)
+	}
+	for _, tool := range draft.Tools {
+		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "unchanged": "allow"}[tool.Name]
+		if tool.Policy != want {
+			t.Fatalf("%s: %q, want %q", tool.Name, tool.Policy, want)
+		}
+	}
+	save := func(ticket, defaultPolicy string) *httptest.ResponseRecorder {
+		values := url.Values{"ticket": {ticket}, "default_policy": {defaultPolicy}}
+		for i, tool := range g.drafts[ticket].Tools {
+			policy := tool.Policy
+			if policy == "" {
+				policy = "inherit"
+			}
+			values.Set("policy_"+strconv.Itoa(i), policy)
+		}
+		return formRequest(h, cookie, "POST", "/connections/notes/tools", values)
+	}
+	if w := save(ticket, "allow"); w.Code != 303 {
+		t.Fatal(w.Body.String())
+	}
+	if _, ok := g.tools["notes.gone"]; ok {
+		t.Fatal("removed tool stayed available")
+	}
+	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" {
+		t.Fatal("incorrect effective refresh policies")
+	}
+	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	g, err = New(cfg, s, m)
+	if err != nil || g.cfg.ToolDefaults["notes"] != "allow" || g.tools["notes.changed"].Policy != "require_approval" {
+		t.Fatal("policies not restored", err)
+	}
+	h, cookie = adminUI(t, g, m)
+	server.Close() // Saved policy edits must not depend on provider availability.
+	ticket = ticketFrom(formRequest(h, cookie, "GET", "/connections/notes/tools", nil))
+	before := digest(g.catalogue())
+	bad := formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {ticket}, "default_policy": {"deny"}})
+	if bad.Code != 400 || digest(g.catalogue()) != before {
+		t.Fatal("partial form changed live policy")
+	}
+	if w := save(ticket, "deny"); w.Code != 303 {
+		t.Fatal(w.Body.String())
+	}
+	if g.tools["notes.new"].Policy != "deny" || g.tools["notes.unchanged"].Policy != "allow" || g.tools["notes.blocked"].Policy != "deny" {
+		t.Fatal("default edit lost exceptions")
+	}
+}
+
+func TestPermissionPageViewsDoNotExhaustDrafts(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	// Even an unchanged discovery review must survive saved-permission page views.
+	var reviews []string
+	for range 31 {
+		ticket, err := g.newDraft(toolDraft{Connection: "notes", Tools: g.cfg.Tools, Changes: map[string]string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reviews = append(reviews, ticket)
+	}
+	var latest string
+	for i := range 40 {
+		w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
+		match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if w.Code != 200 || len(match) != 2 {
+			t.Fatalf("page view %d lost editing: %d %s", i, w.Code, w.Body.String())
+		}
+		latest = match[1]
+	}
+	for _, ticket := range reviews {
+		if _, ok := g.drafts[ticket]; !ok {
+			t.Fatal("page view discarded a discovery review")
+		}
+	}
+	values := url.Values{"ticket": {latest}, "default_policy": {"require_approval"}}
+	for i := range g.drafts[latest].Tools {
+		values.Set("policy_"+strconv.Itoa(i), "inherit")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 {
+		t.Fatalf("latest page could not save: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestConnectionDefaultExecution(t *testing.T) {
+	g, s, b := fixture(t)
+	cfg := g.cfg
+	cfg.Tools = append([]Tool(nil), cfg.Tools...)
+	cfg.Tools[0].Policy = ""
+	for _, tc := range []struct{ policy, status string }{{"require_approval", "pending"}, {"allow", "ready"}, {"deny", "denied"}} {
+		cfg.ToolDefaults = map[string]string{"notes": tc.policy}
+		next, err := New(cfg, s, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		o, err := next.submit(t.Context(), input("default-"+tc.policy, "hello"))
+		if err != nil || o.Status != tc.status {
+			t.Fatalf("%s: %s, %v", tc.policy, o.Status, err)
+		}
+	}
+	// A legacy explicit block stays blocked even with an allow default.
+	cfg.Tools[0].Policy = "deny"
+	cfg.ToolDefaults["notes"] = "allow"
+	next, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.tools["notes.write"].Policy != "deny" {
+		t.Fatal("default overrode exception")
+	}
+}
+
+func TestOAuthStatusPage(t *testing.T) {
+	for _, tc := range []struct{ status, help, action string }{
+		{"Connected", "OAuth credentials saved. Fetch tools to check access", "Reconnect OAuth"},
+		{"Not connected", "Connect your provider account", "Connect OAuth"},
+		{"Reconnect required", "saved token has expired", "Reconnect OAuth"},
+		{"Status unavailable", "Could not read saved credentials", "Reconnect OAuth"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Connection": map[string]any{"ID": "notes", "OAuth": true, "AuthStatus": tc.status}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, text := range []string{">" + tc.status + "</span>", tc.help, ">" + tc.action + "</a>", `role="status"`} {
+				if !strings.Contains(w.Body.String(), text) {
+					t.Fatalf("missing %q", text)
+				}
+			}
+		})
 	}
 }
 

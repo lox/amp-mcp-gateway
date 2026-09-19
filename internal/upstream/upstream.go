@@ -267,6 +267,26 @@ func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(clone)
 }
 
+// OAuthStatus describes saved credentials, not provider-side validity. It never
+// refreshes credentials or contacts the provider.
+func (m *Manager) OAuthStatus(ctx context.Context, id string) string {
+	c, ok := m.connection(id)
+	if !ok || c.config.OAuth == nil {
+		return "Not connected"
+	}
+	token, err := m.loadToken(ctx, c)
+	if err != nil {
+		return "Status unavailable"
+	}
+	if token == nil || token.AccessToken == "" {
+		return "Not connected"
+	}
+	if !token.Valid() && token.RefreshToken == "" {
+		return "Reconnect required"
+	}
+	return "Connected"
+}
+
 func (m *Manager) loadToken(ctx context.Context, c *managedConnection) (*oauth2.Token, error) {
 	raw, err := m.store.LoadToken(ctx, tokenKey(c.config))
 	if err != nil {

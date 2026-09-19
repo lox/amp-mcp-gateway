@@ -35,6 +35,35 @@ func (s *memoryStore) SaveToken(_ context.Context, key string, value []byte) err
 	return nil
 }
 
+func TestOAuthStatus(t *testing.T) {
+	c := Connection{ID: "oauth", URL: "https://mcp.example.com", OAuth: &OAuthConfig{ClientID: "client", AuthURL: "https://auth.example.com/authorize", TokenURL: "https://auth.example.com/token"}}
+	for _, tc := range []struct{ name, raw, want string }{
+		{"missing", "", "Not connected"},
+		{"saved", `{"access_token":"private-canary"}`, "Connected"},
+		{"expired", `{"access_token":"private-canary","expiry":"2000-01-01T00:00:00Z"}`, "Reconnect required"},
+		{"refreshable", `{"access_token":"private-canary","refresh_token":"refresh-canary","expiry":"2000-01-01T00:00:00Z"}`, "Connected"},
+		{"empty", `{}`, "Not connected"},
+		{"corrupt", `invalid`, "Status unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &memoryStore{data: map[string][]byte{}}
+			if tc.raw != "" {
+				s.data[tokenKey(c)] = []byte(tc.raw)
+			}
+			m, err := New("https://gateway.example", []Connection{c}, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := m.OAuthStatus(t.Context(), c.ID); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if s.saves != 0 {
+				t.Fatal("status check changed credentials")
+			}
+		})
+	}
+}
+
 func TestEmptyCatalogue(t *testing.T) {
 	m, err := New("https://gateway.example", nil, nil)
 	if err != nil {
