@@ -40,6 +40,7 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	OwnerSubject string
+	HostedDomain string
 	SessionKey   string
 	DemoPassword string
 	Demo         bool
@@ -47,12 +48,13 @@ type Config struct {
 
 // Auth owns browser authentication state and handlers.
 type Auth struct {
-	baseURL  *url.URL
-	key      []byte
-	secure   bool
-	demo     bool
-	password string
-	owner    string
+	baseURL      *url.URL
+	key          []byte
+	secure       bool
+	demo         bool
+	password     string
+	owner        string
+	hostedDomain string
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
@@ -85,20 +87,21 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		return nil, errors.New("browserauth: SessionKey must be base64 encoding of exactly 32 bytes")
 	}
 	a := &Auth{
-		baseURL:  base,
-		key:      key,
-		secure:   base.Scheme == "https",
-		demo:     c.Demo,
-		password: c.DemoPassword,
-		owner:    c.OwnerSubject,
-		states:   make(map[string]pendingState),
-		now:      time.Now,
+		baseURL:      base,
+		key:          key,
+		secure:       base.Scheme == "https",
+		demo:         c.Demo,
+		password:     c.DemoPassword,
+		owner:        c.OwnerSubject,
+		hostedDomain: c.HostedDomain,
+		states:       make(map[string]pendingState),
+		now:          time.Now,
 	}
 	if c.Demo {
 		if c.DemoPassword == "" {
 			return nil, errors.New("browserauth: DemoPassword is required in demo mode")
 		}
-		if c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" {
+		if c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.HostedDomain != "" {
 			return nil, errors.New("browserauth: OIDC configuration is not allowed in demo mode")
 		}
 		if a.owner == "" {
@@ -194,7 +197,11 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 	a.states[state] = pendingState{nonce: nonce, verifier: verifier, expires: expires}
 	a.mu.Unlock()
 	a.setSignedCookie(w, stateCookie, cookieValue{State: state, Expires: expires.Unix()}, stateTTL)
-	http.Redirect(w, r, a.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusSeeOther)
+	authOptions := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	if a.hostedDomain != "" {
+		authOptions = append(authOptions, oauth2.SetAuthURLParam("hd", a.hostedDomain))
+	}
+	http.Redirect(w, r, a.oauth.AuthCodeURL(state, authOptions...), http.StatusSeeOther)
 }
 
 func (a *Auth) demoLogin(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +263,15 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil || idToken.Nonce != pending.nonce || idToken.Subject != a.owner {
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
+	}
+	if a.hostedDomain != "" {
+		var claims struct {
+			HostedDomain string `json:"hd"`
+		}
+		if err := idToken.Claims(&claims); err != nil || claims.HostedDomain != a.hostedDomain {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
 	}
 	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: idToken.Subject, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusSeeOther)

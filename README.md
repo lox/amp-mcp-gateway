@@ -48,7 +48,10 @@ approvals, and encrypted storage for OAuth tokens, arguments and results.
 A few limits worth knowing:
 
 - One owner and one call per request. Search is keyword-based.
-- OIDC is for browser login. MCP clients still use a shared owner token.
+- Amp orbs can authenticate with short-lived identity tokens; requests link back
+  to their thread. Browser approvals use a separate OIDC login.
+- Google Workspace login can require both your domain and your exact account.
+  The live Google setup is not validated yet. The local demo uses a shared token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
 - A timed-out call may have run upstream. We mark it `unknown` and don't retry it.

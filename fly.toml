@@ -1,5 +1,5 @@
-# Private fake-service demo. Do not connect real accounts in demo mode.
-app = "lox-mcp-gateway-test"
+# Single-owner gateway. Configure Google login and Amp identity before deployment.
+app = "lox-mcp-gateway"
 primary_region = "syd"
 kill_signal = "SIGTERM"
 kill_timeout = "10s"
@@ -8,11 +8,21 @@ kill_timeout = "10s"
   dockerfile = "Dockerfile"
 
 [processes]
-  app = "-demo -listen [::]:8080 -base-url http://localhost:18080"
+  app = "-config /etc/gateway.json"
 
-[checks.health]
-  type = "http"
-  port = 8080
+[[files]]
+  guest_path = "/etc/gateway.json"
+  secret_name = "GATEWAY_CONFIG"
+
+[http_service]
+  processes = ["app"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
   method = "GET"
   path = "/healthz"
   interval = "30s"
@@ -28,4 +38,4 @@ kill_timeout = "10s"
   cpus = 1
   memory = "256mb"
 
-# No http_service, public ports or IPs. Connect with fly proxy.
+# No replicas: one process owns the SQLite volume. Use fly deploy --ha=false.
