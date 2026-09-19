@@ -10,4 +10,4 @@ description = "Format check, race tests and vet"
 run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./..."
 
 [tasks.build]
-run = "go build -o bin/mcp-gateway ./cmd/mcp-gateway"
+run = "go build -o bin/mcp-gateway ./cmd/mcp-gateway && go build -o bin/amp-mcp ./cmd/amp-mcp"

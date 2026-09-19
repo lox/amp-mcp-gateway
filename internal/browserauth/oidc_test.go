@@ -20,8 +20,24 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"valid", "wrong subject", "wrong nonce", "wrong audience", "expired"} {
-		t.Run(scenario, func(t *testing.T) {
+	tests := []struct {
+		name         string
+		hostedDomain string
+		claimDomain  string
+		claimSubject string
+		wantSuccess  bool
+	}{
+		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
+		{name: "valid hosted domain", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "owner-123", wantSuccess: true},
+		{name: "missing hosted domain claim", hostedDomain: "ljd.cc", claimSubject: "owner-123"},
+		{name: "wrong hosted domain claim", hostedDomain: "ljd.cc", claimDomain: "other.example", claimSubject: "owner-123"},
+		{name: "same domain wrong owner", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "other-owner"},
+		{name: "wrong nonce", claimSubject: "owner-123"},
+		{name: "wrong audience", claimSubject: "owner-123"},
+		{name: "expired", claimSubject: "owner-123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			var issuer, nonce, challenge string
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -39,10 +55,11 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 					http.Error(w, "invalid", 400)
 					return
 				}
-				claims := map[string]any{"iss": issuer, "sub": "owner-123", "aud": "gateway", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
-				switch scenario {
-				case "wrong subject":
-					claims["sub"] = "other-owner"
+				claims := map[string]any{"iss": issuer, "sub": tt.claimSubject, "aud": "gateway", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
+				if tt.claimDomain != "" {
+					claims["hd"] = tt.claimDomain
+				}
+				switch tt.name {
 				case "wrong nonce":
 					claims["nonce"] = "other-nonce"
 				case "wrong audience":
@@ -72,7 +89,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			idp := httptest.NewServer(mux)
 			defer idp.Close()
 			issuer = idp.URL
-			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ClientID: "gateway", ClientSecret: "fixture-secret", OwnerSubject: "owner-123", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32))})
+			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ClientID: "gateway", ClientSecret: "fixture-secret", OwnerSubject: "owner-123", HostedDomain: tt.hostedDomain, SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32))})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,6 +106,9 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			if nonce == "" || challenge == "" {
 				t.Fatal("missing nonce/PKCE")
 			}
+			if got := location.Query().Get("hd"); got != tt.hostedDomain {
+				t.Fatalf("hosted domain hint = %q, want %q", got, tt.hostedDomain)
+			}
 			callback := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequest("GET", "/auth/callback?state="+url.QueryEscape(location.Query().Get("state"))+"&code=fixture-code", nil)
 				r.AddCookie(login.Result().Cookies()[0])
@@ -98,7 +118,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			res := callback()
 			want := http.StatusUnauthorized
-			if scenario == "valid" {
+			if tt.wantSuccess {
 				want = http.StatusSeeOther
 			}
 			if res.Code != want {
@@ -110,7 +130,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 					session = true
 				}
 			}
-			if session != (scenario == "valid") {
+			if session != tt.wantSuccess {
 				t.Fatal("incorrect session issuance")
 			}
 			if callback().Code != http.StatusBadRequest {

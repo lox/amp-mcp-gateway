@@ -20,9 +20,9 @@ separate copies of this matrix in each document.
 | Provider onboarding | Partial | Manual endpoints and pre-registered OAuth clients; no discovery/dynamic registration. |
 | Real integrations | Planned / unvalidated | Generic HTTP transport exists; end-to-end evidence uses two disposable fixtures. |
 | Connection UI | Partial | Configured connections and OAuth reconnect; no verified account or health dashboard. |
-| OIDC login | Partial | Browser approval login implemented with fixture tests; MCP uses one owner bearer token. |
+| OIDC login | Partial | Google domain + exact-owner browser checks tested with fixtures; live Google registration pending. Amp workload tokens supported for MCP; demo/legacy bearer retained. |
 | Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
-| On-behalf-of attribution | Partial | Configured owner and approval actor; no authenticated delegation chain, client or run hierarchy. |
+| On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Static allow / require approval / deny; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, approve/deny, ten-minute expiry and status polling. |
@@ -34,7 +34,7 @@ separate copies of this matrix in each document.
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
 | Tamper-evident archive | Planned | No independent archive, signed checkpoints, immutable retention or receipts. |
 | Local / orb development | Implemented | mise, pinned Go, setup script, supervised demo, helper client, race tests and vet. |
-| Tailscale / Fly deployment | Partial | Private Fly fake-service demo on one Machine and volume; access via `fly proxy`. Tailscale and real-account deployment remain unconfigured. |
+| Tailscale / Fly deployment | Partial | Demo destroyed; replacement Fly HTTPS config ready with separate secrets. App reserved, deployment blocked on Google registration. Tailscale optional, unconfigured. |
 | Operational hardening | Planned | Automated backup/restore, key rotation, retention, rate limits, response bounds and OpenTelemetry. |
 | Safe replay | Later idea | Protected recorded operations as test fixtures, without replaying production writes. |
 | Cross-tool information controls | Later idea | Restricted-data to external-destination checks; needs runtime cooperation. |
@@ -44,7 +44,7 @@ separate copies of this matrix in each document.
 
 - [ ] Select a provider and disposable account/repository; confirm its MCP auth flow.
 - [ ] Pin a low-risk read and reversible write, including schemas and policy.
-- [ ] Test through the normal Amp client with the current gateway bearer token.
+- [ ] Test through the normal Amp client using the orb identity bridge against Fly.
 - [ ] Verify upstream-side results for allowed, approved and denied calls.
 - [ ] Exercise expired/revoked tokens, refresh, approval expiry and restart.
 - [ ] Add provider identity introspection or document exactly what cannot be verified.
@@ -52,15 +52,18 @@ separate copies of this matrix in each document.
 
 ## Next: replace shared client credentials
 
-- [ ] Confirm Amp's current OAuth interoperability requirements against MCP auth specs.
-- [ ] Add client-facing OAuth backed by the existing OIDC provider.
-- [ ] Test wrong issuer/audience, expiry, missing scopes, revocation and client binding.
-- [ ] Persist subject and client evidence separately from reported agent/model metadata.
+- [x] Verify Amp workload issuer and reject wrong user/audience/signature/expiry/token use.
+- [x] Persist verified Amp user and thread link separately from model metadata.
+- [x] Add an orb MCP bridge that mints short-lived tokens per HTTP request.
+- [ ] Register Google web client and configure exact owner subject plus `ljd.cc` domain.
+- [ ] Validate live Google login and production browser approvals.
+- [ ] Add general client-facing OAuth discovery/scopes if non-orb clients need it.
 
 ## Before operational use
 
-- [x] Deploy the fake-service demo privately on Fly with a persistent volume.
-- [ ] Select private ingress/host and obtain deployment approval.
+- [x] Validate the private Fly demo, then retire its app and disposable data.
+- [x] Select Fly public HTTPS with Google browser and Amp workload authentication.
+- [ ] Deploy `lox-mcp-gateway` after Google registration and separate secrets are supplied.
 - [ ] Test consistent backup and restore with separately protected encryption keys.
 - [ ] Design credential/key rotation, session revocation and retention procedures.
 - [ ] Bound login-state allocation, request rates and upstream response sizes.

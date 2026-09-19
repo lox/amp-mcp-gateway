@@ -34,6 +34,7 @@ type Tool struct {
 // Config holds non-secret configuration. Secrets are supplied by environment variables.
 type Config struct {
 	Listen, BaseURL, Database, OwnerSubject, Issuer, ClientID string
+	AmpUserID, HostedDomain                                   string
 	Connections                                               []upstream.Connection
 	Tools                                                     []Tool
 }
@@ -86,7 +87,7 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		}
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
-		g.bindings[t.ID] = digest([]any{t, connection, cfg.OwnerSubject, cfg.Issuer, os.Getenv(connection.TokenEnv)})
+		g.bindings[t.ID] = digest([]any{t, connection, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
 	}
 	return g, nil
 }
@@ -124,6 +125,18 @@ func (g *Gateway) result(o store.Operation) operationResult {
 
 // MCP serves three standard MCP tools behind a revocable owner bearer token.
 func (g *Gateway) MCP(token string) http.Handler {
+	h := g.mcpHandler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g.cfg.AmpUserID != "" || token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-gateway", Version: "0.1.0"}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
 		out := []Tool{}
@@ -160,20 +173,16 @@ func (g *Gateway) MCP(token string) http.Handler {
 		}
 		return nil, g.result(o), nil
 	})
-	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 }
 
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,100}$`)
 
 func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, error) {
+	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
+	if g.cfg.AmpUserID != "" && (identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID)) {
+		return store.Operation{}, errors.New("verified Amp identity required")
+	}
 	if !requestID.MatchString(in.RequestID) || len(in.Calls) != 1 || len(in.ModelReported) > 200 {
 		return store.Operation{}, errors.New("supply an 8–100 character request_id and exactly one call")
 	}
@@ -202,7 +211,8 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
-	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model})
+	o.AmpUserID, o.AmpThreadID = identity.UserID, identity.ThreadID
+	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
 }
 

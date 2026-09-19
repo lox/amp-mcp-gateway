@@ -18,8 +18,9 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`.
 - Search a manually pinned catalogue; do not expose newly discovered tools silently.
 - Single owner, one process, one SQLite disk. Persist intent before dispatch.
-- Browser OIDC and a separate MCP bearer token for now. Neither model metadata nor
-  account labels are authentication evidence.
+- Google Workspace OIDC for the browser; Amp workload OIDC for orb MCP calls.
+  Match one Google subject and one Amp user. Keep the signed thread link; neither
+  model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once, recheck its configuration binding,
   and never automatically retry an ambiguous dispatch.
@@ -46,7 +47,7 @@ schemas rather than a general onboarding framework.
 
 Acceptance:
 
-- Connect from the normal Amp MCP client using the current bearer mechanism.
+- Connect from an Amp orb through the token-minting `amp-mcp` stdio bridge.
 - Link the provider, discover the read and write, and execute both through the gateway.
 - Verify the provider-side effect, not just the gateway's success status.
 - Exercise deny, expired approval, refresh, revoked grant and process restart.
@@ -58,15 +59,20 @@ disposable private repository is a suggested starting point, subject to its curr
 MCP authentication support. Do not authorize or change a real account as part of
 documentation/setup work.
 
-### 3. Client-facing OAuth/OIDC
+### 3. Amp workload identity — implemented; Google setup pending
 
-Replace the shared MCP bearer token with standards-based client authorization,
-using an existing identity provider. Browser approval authentication and MCP access
-tokens remain distinct. Validate issuer, audience, expiry, scopes and client binding.
+Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience and
+one allowed user ID. A signed thread ID is required, stored and linked from the
+approval page. All that user's threads share authority; there is no delegation tree.
+The local bridge mints a token for each HTTP request, without storing long-lived
+gateway credentials. Google browser login requires both the exact subject and
+`hd=ljd.cc`. Both identities map explicitly to one configured owner.
 
-Acceptance: supported clients sign in once; missing, expired, wrong-audience and
-revoked access fails closed; operation records identify the authenticated subject
-and client. Test interoperability with Amp before adding unattended workloads.
+Evidence: signed-token rejection tests, MCP identity persistence and idempotency
+tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
+issuer check using this orb. Google credentials and real browser login are still
+needed. General MCP OAuth discovery, scopes, per-thread grants and revocation are
+deferred; the current bridge is specific to Amp orbs.
 
 ### 4. Authority, account identity and meaningful approvals
 
@@ -81,13 +87,14 @@ subagents may only narrow authority. Do not build a general policy language firs
 Acceptance: negative tests demonstrate that changed arguments, resource state,
 account or delegation cannot reuse an approval or exceed a mandate.
 
-### 5. Private operational deployment
+### 5. Single-owner Fly deployment — awaiting Google registration
 
-The fake-service demo is deployed to `lox-mcp-gateway-test`: one Fly Machine and
-a persistent volume, with no public IPs or ports. Use `fly proxy` as described in
-the [dev guide](dev.md#private-fly-test-app). This tests hosting, not real-account
-security. Tailscale remains an option for longer-term private access; it supplies
-connectivity, not upstream OAuth or delegation.
+The demo app has been destroyed. `lox-mcp-gateway` is reserved; configuration now
+targets public Fly HTTPS, one Machine and volume, separate environment secrets,
+Google login and Amp workload authentication. Start with an empty tool catalogue.
+The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registration
+and deployment. No Machine is running until Google credentials are supplied.
+Tailscale is optional additional network protection, not authentication.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection
@@ -96,8 +103,8 @@ model requires evidence that the gateway operator cannot rewrite.
 
 Acceptance: restore a disposable deployment from backup, revoke access, recover
 after an interrupted write without redispatch, and verify that no backend HTTP port
-is accidentally public. Deploying real accounts or changing public exposure requires
-a separate explicit go-ahead.
+is accidentally public. Public HTTPS deployment is authorized; attaching real upstream
+accounts still requires selecting a provider and approving its access.
 
 ## Verification and boundaries
 

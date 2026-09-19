@@ -72,7 +72,7 @@ func run() error {
 			return errors.New("production BaseURL must use HTTPS behind your trusted TLS proxy")
 		}
 	}
-	if len(secrets.GatewayToken) < 32 {
+	if cfg.AmpUserID == "" && len(secrets.GatewayToken) < 32 {
 		return errors.New("GATEWAY_TOKEN must be at least 32 characters")
 	}
 	if cfg.Listen != "" {
@@ -91,7 +91,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: os.Getenv("GATEWAY_OIDC_SECRET"), OwnerSubject: cfg.OwnerSubject, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: os.Getenv("GATEWAY_OIDC_SECRET"), OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	if *demoMode {
 		authCfg.DemoPassword = "demo-only"
 	}
@@ -101,7 +101,16 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	auth.Register(mux)
-	mux.Handle("/mcp", g.MCP(secrets.GatewayToken))
+	var mcpHandler http.Handler
+	if cfg.AmpUserID != "" {
+		mcpHandler, err = g.AmpMCP(ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		mcpHandler = g.MCP(secrets.GatewayToken)
+	}
+	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("/", g.UI(auth, m))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))

@@ -27,19 +27,21 @@ type Store struct {
 
 // Operation is an immutable request with mutable execution state.
 type Operation struct {
-	ID         string          `json:"id"`
-	Tool       string          `json:"tool"`
-	Connection string          `json:"connection"`
-	Account    string          `json:"account"`
-	Subject    string          `json:"subject"`
-	Model      string          `json:"model_reported,omitempty"`
-	Arguments  map[string]any  `json:"arguments"`
-	Digest     string          `json:"digest"`
-	Binding    string          `json:"binding"`
-	Status     string          `json:"status"`
-	Created    int64           `json:"created"`
-	Expires    int64           `json:"expires"`
-	Result     json.RawMessage `json:"result,omitempty"`
+	ID          string          `json:"id"`
+	Tool        string          `json:"tool"`
+	Connection  string          `json:"connection"`
+	Account     string          `json:"account"`
+	Subject     string          `json:"subject"`
+	AmpUserID   string          `json:"amp_user_id,omitempty"`
+	AmpThreadID string          `json:"amp_thread_id,omitempty"`
+	Model       string          `json:"model_reported,omitempty"`
+	Arguments   map[string]any  `json:"arguments"`
+	Digest      string          `json:"digest"`
+	Binding     string          `json:"binding"`
+	Status      string          `json:"status"`
+	Created     int64           `json:"created"`
+	Expires     int64           `json:"expires"`
+	Result      json.RawMessage `json:"result,omitempty"`
 }
 
 // Event records a durable state transition without tool payloads or credentials.
@@ -217,7 +219,11 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, s.seal("operation:"+o.ID, b)); err != nil {
 		return o, err
 	}
-	if err = event(ctx, tx, o.ID, o.Status, o.Subject); err != nil {
+	actor := o.Subject
+	if o.AmpUserID != "" {
+		actor = "amp:" + o.AmpUserID
+	}
+	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
 	return o, tx.Commit()
