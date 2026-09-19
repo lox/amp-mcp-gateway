@@ -295,6 +295,45 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	}
 }
 
+func TestPermissionPageViewsDoNotExhaustDrafts(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	// Even an unchanged discovery review must survive saved-permission page views.
+	var reviews []string
+	for range 31 {
+		ticket, err := g.newDraft(toolDraft{Connection: "notes", Tools: g.cfg.Tools, Changes: map[string]string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reviews = append(reviews, ticket)
+	}
+	var latest string
+	for i := range 40 {
+		w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
+		match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if w.Code != 200 || len(match) != 2 {
+			t.Fatalf("page view %d lost editing: %d %s", i, w.Code, w.Body.String())
+		}
+		latest = match[1]
+	}
+	for _, ticket := range reviews {
+		if _, ok := g.drafts[ticket]; !ok {
+			t.Fatal("page view discarded a discovery review")
+		}
+	}
+	values := url.Values{"ticket": {latest}, "default_policy": {"require_approval"}}
+	for i := range g.drafts[latest].Tools {
+		values.Set("policy_"+strconv.Itoa(i), "inherit")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 {
+		t.Fatalf("latest page could not save: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestConnectionDefaultExecution(t *testing.T) {
 	g, s, b := fixture(t)
 	cfg := g.cfg

@@ -88,7 +88,7 @@ type toolDraft struct {
 	Tools      []Tool
 	Expires    time.Time
 	Default    string
-	Changes    map[string]string
+	Changes    map[string]string // Non-nil for discovery reviews, even without changes.
 	Removed    []string
 }
 
@@ -108,7 +108,8 @@ func (g *Gateway) newDraft(draft toolDraft) (string, error) {
 		g.drafts = map[string]toolDraft{}
 	}
 	for key, old := range g.drafts {
-		if time.Now().After(old.Expires) {
+		// Page views replace offline edits for this connection, not discovery reviews.
+		if time.Now().After(old.Expires) || (draft.Changes == nil && old.Changes == nil && old.Connection == draft.Connection) {
 			delete(g.drafts, key)
 		}
 	}

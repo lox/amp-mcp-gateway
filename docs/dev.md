@@ -137,7 +137,9 @@ keep their exceptions; changed tools require approval unless previously blocked,
 in which case they remain blocked. This also applies to tools previously allowed
 through the default. Removed tools disappear on save; historical operations remain.
 Save publishes the reviewed snapshot, replacing that connection's tool list.
-Edits expire after ten minutes and reject stale saves. There is no background
+Edits expire after ten minutes and reject stale saves. Reopening saved permissions
+replaces any earlier saved-permissions edit for that connection, including in
+another tab; fetched-tool reviews remain independent. There is no background
 refresh or drift detection; upstream behavior can still change between calls.
 Editing endpoints, rotating pasted tokens, and removing connections in the UI
 are follow-up work.
