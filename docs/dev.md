@@ -84,9 +84,9 @@ After signing in, click **Add MCP**. As a public read-only example:
 - MCP server URL: `https://mcp.deepwiki.com/mcp`
 - Authentication: **None — public server**
 
-Add the server, click **Fetch tools**, and review the descriptions and argument
-schemas. Enable `read_wiki_structure` with **Allow without approval**, leave other
-tools disabled, and save. In the demo you can check discovery with:
+Add the server and click **Fetch tools**. For this example set the connection
+default to **Block**, choose **All tools**, and set `read_wiki_structure` to
+**Allow without approval**. Other tools inherit Block. Save, then check discovery:
 
 ```sh
 mise exec -- go run ./cmd/demo-client -args '{"query":"public-docs"}'
@@ -97,7 +97,12 @@ provider's metadata and tries dynamic client registration. If registration is
 unavailable, expand **Use an existing OAuth client** and supply its client ID and,
 if required, secret. Register the callback shown in the form with that provider.
 Review the discovered authorization server and scopes before clicking
-**Connect / reconnect OAuth**. PKCE S256 is required. Providers requiring client-ID
+**Connect OAuth** (or **Reconnect OAuth**). After authorization, **Connected** means
+credentials are saved, not that the provider has confirmed they still work. Fetch
+tools to check access. An expired token without a refresh token shows **Reconnect
+required**; a storage error shows **Status unavailable** rather than implying the
+account is disconnected. Viewing status never refreshes credentials.
+PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
 Discovered authorization and token endpoints must share an origin, so credentials
 cannot go to a different host from the one reviewed before login. Split-origin
@@ -110,21 +115,44 @@ Local stdio and legacy SSE servers are not supported by this flow. Static truste
 configuration can still use loopback fixtures. Discovery is limited to 500 tools,
 2 MiB of tool definitions and a 30-second timeout. Schemas must be self-contained.
 
-New or changed definitions default to disabled. Fetching alone changes no live
-policies: save publishes the reviewed snapshot, replacing that connection's tool
-list. Reviews expire after ten minutes and reject stale saves. There is no
-background drift detection; upstream behavior can still change between calls.
+### Defaults, exceptions and refreshes
+
+The suggested connection default is **Require approval**. Choose **Exceptions
+only** for a short list of overrides, or **All tools** to add exceptions. Search,
+select visible tools, choose a permission and click **Apply to selected**. Bulk
+edits are staged until **Save policies**. Filtering clears hidden selections.
+**Use connection default** removes an exception. Expand a tool to read its
+description and schema; names and read-only annotations never grant permissions.
+
+Existing saved permissions are preserved as explicit exceptions on upgrade.
+To adopt the default for them, select them in bulk and choose **Use connection
+default** once. Changing a connection default never overrides explicit choices.
+You can edit saved permissions without fetching the server, including when it is
+offline. **Allow without approval** as the default also allows new tools after
+you save a refresh; the form warns about this explicitly.
+
+Fetching alone changes no live policies. The preview marks new and changed tools
+and lists removals. New tools inherit the default. Unchanged schemas/descriptions
+keep their exceptions; changed tools require approval unless previously blocked,
+in which case they remain blocked. This also applies to tools previously allowed
+through the default. Removed tools disappear on save; historical operations remain.
+Save publishes the reviewed snapshot, replacing that connection's tool list.
+Edits expire after ten minutes and reject stale saves. There is no background
+refresh or drift detection; upstream behavior can still change between calls.
 Editing endpoints, rotating pasted tokens, and removing connections in the UI
 are follow-up work.
 
 ### Saved configuration and rollout
 
 The first browser save copies the current connections and tools into encrypted
-SQLite storage. After that, the saved catalogue replaces `Connections` and `Tools`
-from the startup JSON, including after a deploy or restart. Identity, listen and
-deployment settings still come from the file/environment. Editing those two JSON
-arrays will no longer change the running catalogue. Protect and back up the
-database **and its encryption key**; this includes pasted bearer tokens and OAuth
+SQLite storage. After that, the saved catalogue replaces `Connections`, `Tools`
+and `ToolDefaults` from the startup JSON, including after a deploy or restart.
+Identity, listen and
+deployment settings still come from the file/environment. Editing those JSON
+fields will no longer change the running catalogue. Defaults are stored separately
+from upstream credentials, so changing them does not discard OAuth grants.
+An empty tool `Policy` means inherit; explicit policies remain exceptions.
+Protect and back up the database **and its encryption key**; this includes pasted bearer tokens and OAuth
 client secrets as well as grants.
 
 Adding a connection or saving policies atomically denies **all** pending/ready
@@ -133,7 +161,9 @@ the save until they finish. There is not yet a separate audit record for each
 configuration edit. Startup adds an empty `catalogue` table to existing databases;
 existing grants and pinned tools remain unchanged until a browser save. Rolling
 back to an older binary ignores the saved catalogue and uses file configuration,
-so do not treat a binary rollback as a safe policy rollback.
+so do not treat a binary rollback as a safe policy rollback. The previous
+browser-onboarding binary rejects inherited (empty) policies at startup; after
+adopting defaults, roll forward rather than rolling back to that binary.
 
 ### Amp orbs
 

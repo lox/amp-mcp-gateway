@@ -5,8 +5,8 @@ connection, keeps their credentials in one place, and lets you require approval
 before an agent calls particular tools.
 
 It's self-hosted, written in Go, and still a prototype. The demo works end to end
-with fake services. Public-server discovery has been tested with DeepWiki; real
-provider OAuth and writes still need validation.
+with fake services. DeepWiki discovery and Buildkite OAuth/discovery have been
+tested; real provider execution still needs validation.
 
 ## How it works
 
@@ -47,9 +47,11 @@ Sign in to the gateway and click **Add MCP**. Enter the server URL and choose
 OAuth, a bearer token, or no authentication for a public server. For OAuth, review
 the authorization server and scopes, then sign in with the provider.
 
-Click **Fetch tools**, choose **Disabled**, **Require approval**, or **Allow without
-approval** for each tool, then **Save policies**. Nothing is enabled until you save.
-Agents can then find the enabled tools through the same gateway connection.
+Click **Fetch tools**, set a connection default—usually **Require approval**—and
+**Save policies**. Add exceptions only where needed. Search and select multiple
+tools to allow or block them together, or reset them to the connection default.
+Nothing changes until you save. Refreshes keep unchanged permissions; changed
+allowed tools go back to approval and blocked tools stay blocked.
 
 ![Reviewing DeepWiki tool permissions in the demo](docs/images/tool-review.png)
 

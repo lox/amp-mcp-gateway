@@ -8,6 +8,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 </style><style>
 .heading{display:flex;justify-content:space-between;align-items:center;gap:16px}.setup{max-width:760px;margin:auto}.field{display:grid;gap:8px;margin-bottom:22px}.field label{font-weight:600}.field small,.help{color:#586b62;line-height:1.5}input,select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid #bccdc0;border-radius:6px;background:white;color:#172b26;font:inherit}input:focus,select:focus{outline:2px solid #216442;outline-offset:2px}.setup details{margin:16px 0}.setup summary,summary{cursor:pointer}.setup details .field{margin-top:18px}.error{background:#fde9e5;border-left:3px solid #9f3535;padding:16px}.success{background:#dff3e5;padding:16px}.setup form:not(:has(option[value="bearer"]:checked)) .bearer-fields{display:none}.setup form:not(:has(option[value="oauth"]:checked)) .oauth-fields{display:none}.tool-row{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:24px;padding:22px 0;border-bottom:1px solid #e7ebe5}.tool-row:last-child{border:0}.tool-row h2{margin:0 0 8px;font:600 16px ui-monospace,monospace;overflow-wrap:anywhere}.tool-row p{line-height:1.5;overflow-wrap:anywhere}.tool-row details{margin-top:12px}.tool-row label{display:block;font-size:13px;margin-bottom:8px}.actions{flex-wrap:wrap}.endpoint{overflow-wrap:anywhere} @media(max-width:600px){.tool-row{grid-template-columns:1fr;gap:8px}.heading{align-items:flex-start;flex-direction:column}}
 @media(min-width:601px){.tool-row{grid-template-columns:minmax(0,1fr) 260px}}
+.policy-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.policy-controls .field{flex:1;min-width:160px;margin:0}.policy-row{display:grid;grid-template-columns:24px minmax(0,1fr) 260px;align-items:start;gap:14px;padding:14px 0;border-bottom:1px solid #e7ebe5}.policy-row[hidden]{display:none}.policy-row input[type=checkbox],#select-visible{width:18px;height:18px}.policy-row summary{overflow-wrap:anywhere;font:600 14px ui-monospace,monospace}.policy-row details p{line-height:1.5;overflow-wrap:anywhere}.policy-row select{font-size:14px}.policy-row label{font-size:12px;display:block;margin-bottom:4px}.policy-footer{padding:16px 0}.default-warning{color:#9c3724} @media(max-width:600px){.policy-row{grid-template-columns:24px minmax(0,1fr)}.policy-row>div{grid-column:2}.policy-controls{align-items:stretch}}
 </style></head><body><header><a href="/">mcp-gateway</a><small>Single-owner preview · {{.Owner}}</small><form method="post" action="/logout"><button>Sign out</button></form></header><main>
 {{if .AddConnection}}
 <div class="setup"><a href="/">← Connections</a><h1>Add MCP</h1><p class="sub">Connect a remote server, then choose which tools agents can use.</p>
@@ -23,12 +24,71 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 {{else if .ToolReview}}
 <a href="/">← Connections</a><h1>{{.Connection.ID}}</h1><p class="sub endpoint">{{.Connection.URL}}</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="success" role="status">Policies saved. Enabled tools are available to agents now.</p>{{end}}
-{{if .Connection.OAuth}}<div class="card"><h2 style="margin-top:0">Provider authorization</h2><p class="help endpoint">Authorization server: {{.Connection.AuthURL}}</p><p class="help">Requested scopes: <code>{{.Connection.Scopes}}</code></p><a class="button" href="/connections/{{.Connection.ID}}/connect">Connect / reconnect OAuth</a></div>{{end}}
-<div class="heading"><div><h2>{{if .Ticket}}Review discovered tools{{else}}Saved tools{{end}}</h2><p class="sub">New or changed definitions start disabled. Server descriptions are untrusted.</p></div><form method="post" action="/connections/{{.Connection.ID}}/discover"><button>Fetch tools</button></form></div>
-{{if .Ticket}}<p class="note">Review the definitions below, then save. Saving replaces this connection’s tool list and cancels queued requests. This review expires in ten minutes.</p>{{end}}
-<form method="post" action="/connections/{{.Connection.ID}}/tools"><input type="hidden" name="ticket" value="{{.Ticket}}"><div class="card">
-{{range $i,$row := .Rows}}<div class="tool-row"><div><h2>{{$row.Tool.ID}}</h2><p>{{$row.Tool.Description}}</p><details><summary>Argument schema</summary><pre>{{$row.Schema}}</pre></details></div><div><label for="policy-{{$i}}">Permission</label>{{if $.Ticket}}<select id="policy-{{$i}}" name="policy_{{$i}}"><option value="deny" {{if eq $row.Tool.Policy "deny"}}selected{{end}}>Disabled</option><option value="require_approval" {{if eq $row.Tool.Policy "require_approval"}}selected{{end}}>Require approval</option><option value="allow" {{if eq $row.Tool.Policy "allow"}}selected{{end}}>Allow without approval</option></select>{{else}}<span class="badge">{{if eq $row.Tool.Policy "deny"}}Disabled{{else if eq $row.Tool.Policy "require_approval"}}Require approval{{else}}Allow without approval{{end}}</span>{{end}}</div></div>{{else}}<p class="sub">{{if .Ticket}}The server returned no tools. Saving removes any previously saved tools for this connection.{{else}}No tools enabled yet. Connect credentials if needed, then fetch tools to review them.{{end}}</p>{{end}}
-</div>{{if .Ticket}}<div class="actions"><button class="primary">Save policies</button><a class="button" href="/connections/{{.Connection.ID}}/tools">Discard review</a></div>{{end}}</form>
+{{if .Connection.OAuth}}<div class="card"><h2 style="margin-top:0">Provider authorization</h2>
+<p role="status"><span class="badge {{if eq .Connection.AuthStatus "Connected"}}succeeded{{else}}pending{{end}}">{{.Connection.AuthStatus}}</span></p>
+{{if eq .Connection.AuthStatus "Connected"}}<p class="help">OAuth credentials saved. Fetch tools to check access with the provider.</p>
+{{else if eq .Connection.AuthStatus "Reconnect required"}}<p class="help">The saved token has expired and cannot be refreshed. Reconnect to continue.</p>
+{{else if eq .Connection.AuthStatus "Status unavailable"}}<p class="help">Could not read saved credentials. Try again before reconnecting.</p>
+{{else}}<p class="help">Connect your provider account before fetching tools.</p>{{end}}
+<p class="help endpoint">Authorization server: {{.Connection.AuthURL}}</p><p class="help">Requested scopes: <code>{{.Connection.Scopes}}</code></p><a class="button" href="/connections/{{.Connection.ID}}/connect">{{if eq .Connection.AuthStatus "Not connected"}}Connect OAuth{{else}}Reconnect OAuth{{end}}</a></div>{{end}}
+<div class="heading"><h2>Tool permissions</h2><form method="post" action="/connections/{{.Connection.ID}}/discover"><button>Fetch tools</button></form></div>
+{{if .Ticket}}
+<form id="policies" method="post" action="/connections/{{.Connection.ID}}/tools"><input type="hidden" name="ticket" value="{{.Ticket}}">
+<div class="card"><div class="field"><label for="default-policy">Connection default</label><select id="default-policy" name="default_policy"><option value="require_approval" {{if eq .Draft.Default "require_approval"}}selected{{end}}>Require approval</option><option value="deny" {{if eq .Draft.Default "deny"}}selected{{end}}>Block</option><option value="allow" {{if eq .Draft.Default "allow"}}selected{{end}}>Allow without approval</option></select><small>Applies to tools without an exception, including new tools when you save a refresh. Existing exceptions stay unchanged.</small></div><p id="default-warning" class="default-warning" {{if ne .Draft.Default "allow"}}hidden{{end}}>Allow also permits newly discovered tools without approval after saving. Tool names and read-only hints are not a safety guarantee.</p></div>
+{{if .Draft.Changes}}<p class="note">Refresh preview: {{.Added}} new · {{.Changed}} changed · {{len .Draft.Removed}} removed. Changed allowed tools require approval again; blocked tools stay blocked. Nothing changes until you save.</p>{{else if .Draft.Removed}}<p class="note">Refresh preview: {{len .Draft.Removed}} removed. Nothing changes until you save.</p>{{end}}
+{{if .Draft.Removed}}<details><summary>Removed tools</summary><ul>{{range .Draft.Removed}}<li><code>{{.}}</code></li>{{end}}</ul></details>{{end}}
+<div class="card"><div class="policy-controls"><div class="field"><label for="tool-search">Search tools</label><input type="search" id="tool-search" placeholder="Name or description"></div><div class="field"><label for="tool-view">Show</label><select id="tool-view"><option value="exceptions">Exceptions only</option><option value="all">All tools</option><option value="changes">New or changed</option></select></div></div>
+<p id="tool-count" class="help">{{len .Rows}} tools. Use the connection default unless you need an exception.</p>
+<div class="policy-controls"><label><input id="select-visible" type="checkbox"> Select visible tools</label><div class="field"><label for="bulk-policy">Set selected tools to</label><select id="bulk-policy"><option value="inherit">Use connection default</option><option value="allow">Allow without approval</option><option value="require_approval">Require approval</option><option value="deny">Block</option></select></div><button type="button" id="apply-policy">Apply to selected</button></div>
+<p class="help">Bulk edits are staged until Save policies. Expand a tool to inspect its description and schema; provider descriptions are untrusted.</p>
+{{range $i,$row := .Rows}}<div class="policy-row" data-change="{{$row.Change}}"><input type="checkbox" class="tool-select" aria-label="Select {{$row.Tool.ID}}"><details><summary>{{$row.Tool.ID}} {{if $row.Change}}<span class="badge">{{$row.Change}}</span>{{end}}</summary><p>{{$row.Tool.Description}}</p><pre>{{$row.Schema}}</pre></details><div><label for="policy-{{$i}}">Permission for {{$row.Tool.Name}}</label><select class="tool-policy" id="policy-{{$i}}" name="policy_{{$i}}"><option value="inherit" {{if eq $row.Tool.Policy ""}}selected{{end}}>Use connection default</option><option value="deny" {{if eq $row.Tool.Policy "deny"}}selected{{end}}>Block</option><option value="require_approval" {{if eq $row.Tool.Policy "require_approval"}}selected{{end}}>Require approval</option><option value="allow" {{if eq $row.Tool.Policy "allow"}}selected{{end}}>Allow without approval</option></select></div></div>{{end}}
+<p id="no-matches" class="help" hidden>No matching tools. Choose All tools to add exceptions, or Fetch tools if none have been saved.</p>
+</div><div class="policy-footer"><p class="help">Saving cancels queued requests. Running calls must finish first. This edit expires in ten minutes.</p><div class="actions"><button class="primary">Save policies</button><a class="button" href="/connections/{{.Connection.ID}}/tools">Discard changes</a></div><p id="edit-status" role="status" class="help"></p></div></form>
+<script>
+(() => {
+ const form = document.getElementById('policies');
+ const rows = Array.from(form.querySelectorAll('.policy-row'));
+ const search = document.getElementById('tool-search');
+ const view = document.getElementById('tool-view');
+ const selectAll = document.getElementById('select-visible');
+ const status = document.getElementById('edit-status');
+ const defaults = document.getElementById('default-policy');
+ let dirty = false;
+ function filter() {
+  const query = search.value.toLowerCase().trim();
+  for (const row of rows) {
+   const exception = row.querySelector('.tool-policy').value !== 'inherit';
+   row.hidden = !row.querySelector('details').textContent.toLowerCase().includes(query) || (view.value === 'exceptions' && !exception) || (view.value === 'changes' && !row.dataset.change);
+   if (row.hidden) row.querySelector('.tool-select').checked = false;
+  }
+  const visible = rows.filter(row => !row.hidden);
+  const selected = visible.filter(row => row.querySelector('.tool-select').checked).length;
+  selectAll.checked = visible.length > 0 && selected === visible.length;
+  selectAll.indeterminate = selected > 0 && selected < visible.length;
+  document.getElementById('tool-count').textContent = visible.length + ' of ' + rows.length + ' tools shown · ' + rows.filter(row => row.querySelector('.tool-policy').value !== 'inherit').length + ' exceptions · ' + selected + ' selected';
+  document.getElementById('no-matches').hidden = visible.length !== 0;
+ }
+ function edited() { dirty = true; status.textContent = 'Unsaved changes'; filter(); }
+ search.addEventListener('input', filter);
+ view.addEventListener('change', filter);
+ selectAll.addEventListener('change', () => { rows.filter(row => !row.hidden).forEach(row => { row.querySelector('.tool-select').checked = selectAll.checked; }); filter(); });
+ rows.forEach(row => {
+  row.querySelector('.tool-select').addEventListener('change', filter);
+  row.querySelector('.tool-policy').addEventListener('change', edited);
+ });
+ document.getElementById('apply-policy').addEventListener('click', () => {
+  const selected = rows.filter(row => !row.hidden && row.querySelector('.tool-select').checked);
+  if (!selected.length) { status.textContent = 'Select tools first.'; return; }
+  selected.forEach(row => { row.querySelector('.tool-policy').value = document.getElementById('bulk-policy').value; });
+  edited(); status.textContent = selected.length + ' tools updated. Save policies to apply.';
+ });
+ defaults.addEventListener('change', () => { document.getElementById('default-warning').hidden = defaults.value !== 'allow'; edited(); });
+ form.addEventListener('submit', () => { dirty = false; });
+ window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
+ filter();
+})();
+</script>
+{{else}}<p class="help">Open <a href="/connections/{{.Connection.ID}}/tools">saved permissions</a> to edit without fetching the provider.</p>{{end}}
 {{else}}
 {{with .Operation}}{{if .AmpThreadID}}<p class="note">Requested by Amp user <code>{{.AmpUserID}}</code> · <a href="https://ampcode.com/threads/{{.AmpThreadID}}">Open Amp thread</a><br>Identity verified by Amp. This is not human approval or model attestation.</p>{{end}}{{end}}
 {{if .Operation}}{{with .Operation}}<a href="/">← All activity</a><h1>{{.Tool}}</h1><p class="sub">Exact request review · <code>{{.ID}}</code></p><div class="card"><span class="badge {{.Status}}">{{.Status}}</span><dl><dt>On behalf of</dt><dd>{{.Subject}}</dd><dt>Connection</dt><dd>{{.Connection}}</dd><dt>Upstream account</dt><dd>{{.Account}} <small>(configured label)</small></dd><dt>Calling model</dt><dd>{{if .Model}}{{.Model}} — client-reported, unverified{{else}}Unknown — not supplied by client{{end}}</dd><dt>Request digest</dt><dd><code>{{.Digest}}</code></dd></dl><h2>Exact arguments</h2><pre>{{$.Arguments}}</pre>{{if eq .Status "pending"}}<p class="note">Approve only if the account, tool and arguments are correct. Approval expires 10 minutes after submission and authorises this stored request once. This is not an effect preview.</p><div class="actions"><form method="post" action="/operations/{{.ID}}/approve"><button class="primary">Approve once</button></form><form method="post" action="/operations/{{.ID}}/deny"><button class="danger">Deny</button></form></div>{{else}}<p class="sub">Refresh to see the latest durable execution status.</p><a class="button" href="/operations/{{.ID}}">Refresh status</a>{{end}}{{if .Result}}<h2>Upstream result</h2><pre>{{printf "%s" .Result}}</pre>{{end}}</div>{{end}}

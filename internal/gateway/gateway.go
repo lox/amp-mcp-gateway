@@ -26,7 +26,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// Tool pins a reviewed upstream tool definition and its local policy.
+// Tool pins a reviewed definition. An empty Policy inherits its connection default.
 type Tool struct {
 	ID, Connection, Name, Description, Policy string
 	InputSchema                               map[string]any
@@ -38,6 +38,7 @@ type Config struct {
 	AmpUserID, HostedDomain                                   string
 	Connections                                               []upstream.Connection
 	Tools                                                     []Tool
+	ToolDefaults                                              map[string]string `json:",omitempty"`
 }
 
 // Backend is the upstream transport boundary.
@@ -60,6 +61,11 @@ type Gateway struct {
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	for _, policy := range cfg.ToolDefaults {
+		if !validPolicy(policy) {
+			return nil, errors.New("invalid connection default")
+		}
+	}
 	for _, t := range cfg.Tools {
 		if t.ID == "" || t.Name == "" || t.InputSchema == nil {
 			return nil, errors.New("tool ID, name and input schema required")
@@ -67,7 +73,10 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		if _, ok := g.tools[t.ID]; ok {
 			return nil, errors.New("duplicate tool ID")
 		}
-		if t.Policy != "allow" && t.Policy != "require_approval" && t.Policy != "deny" {
+		if t.Policy == "" {
+			t.Policy = cfg.defaultPolicy(t.Connection)
+		}
+		if !validPolicy(t.Policy) {
 			return nil, fmt.Errorf("invalid policy for %s", t.ID)
 		}
 		var connection *upstream.Connection
