@@ -8,6 +8,21 @@ to approve selected calls and retain a durable record of what was requested and 
 locally with disposable fixtures. Real identity providers and upstream services
 still need to be configured and tested before using real accounts.
 
+See the [delivery plan](docs/plan.md) and [feature matrix / TODOs](docs/todo.md)
+for the distinction between working features and the proposed product.
+
+## Screenshots
+
+These are captures of the running disposable demo, not mockups or real accounts.
+
+**Review the exact request before approving it:**
+
+![Pending request with owner, account, unverified model and approve/deny controls](docs/images/approval.png)
+
+**Inspect completed and denied operations alongside their audit transitions:**
+
+![Demo connections, operation statuses and audit trail](docs/images/dashboard.png)
+
 ## First slice
 
 - One Streamable HTTP MCP endpoint, `/mcp`, with `find_tools`, `call_tools` and
@@ -31,6 +46,9 @@ and one persistent disk**, with a file lock preventing competing workers.
 
 Prerequisites: Linux or macOS, Git and curl. Setup installs mise if absent and the
 pinned Go toolchain. Run commands from the repository root.
+
+Clone the private repository with `gh repo clone lox/mcp-gateway` and enter the
+checkout. GitHub authentication is required. Then:
 
 ```sh
 .agents/setup
@@ -70,10 +88,28 @@ mise exec -- go run ./cmd/demo-client -tool get_operation -args \
 Reuse a `request_id` only for the exact same request. Poll `get_operation` for the
 result. Do not generate a fresh ID to retry an ambiguous write.
 
+For a new write, the `structuredContent` field of the MCP response looks like:
+
+```json
+{
+  "id": "note-example-001",
+  "status": "pending",
+  "approval_url": "http://localhost:8080/operations/note-example-001"
+}
+```
+
+After approval, poll the same ID until it reaches `succeeded`, `failed`, `denied`,
+`expired` or `unknown`. A successful result includes the upstream MCP response in
+`result`; the demo's `result.structuredContent` contains the original text and
+`"fixture": true`. `ready` and `running` are intermediate states. If you repeat
+these examples, use new IDs only for deliberately new operations.
+
 For another MCP client, configure a Streamable HTTP connection to `/mcp` with an
 `Authorization: Bearer <gateway-token>` header. In demo mode the token is the
 `GatewayToken` field in the private local secrets file. Use your client's secret
 storage; do not commit it or paste it into a chat. The demo helper reads it directly.
+The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
+the final MCP URL when overriding `-url`.
 
 ### Amp orbs
 
