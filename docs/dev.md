@@ -76,6 +76,61 @@ storage; do not commit it or paste it into a chat. The demo helper reads it dire
 The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
 the final MCP URL when overriding `-url`.
 
+## Connect a remote MCP
+
+After signing in, click **Add MCP**. As a public read-only example:
+
+- Connection name: `public-docs`
+- MCP server URL: `https://mcp.deepwiki.com/mcp`
+- Authentication: **None — public server**
+
+Add the server, click **Fetch tools**, and review the descriptions and argument
+schemas. Enable `read_wiki_structure` with **Allow without approval**, leave other
+tools disabled, and save. In the demo you can check discovery with:
+
+```sh
+mise exec -- go run ./cmd/demo-client -args '{"query":"public-docs"}'
+```
+
+For private providers, choose **Bearer token** or **OAuth**. OAuth discovers the
+provider's metadata and tries dynamic client registration. If registration is
+unavailable, expand **Use an existing OAuth client** and supply its client ID and,
+if required, secret. Register the callback shown in the form with that provider.
+Review the discovered authorization server and scopes before clicking
+**Connect / reconnect OAuth**. PKCE S256 is required. Providers requiring client-ID
+metadata documents or custom authentication flows are not supported yet.
+
+Only public HTTPS port 443 is accepted through the browser. Private-network
+addresses, redirects and proxies are blocked; DNS is checked at connection time.
+Local stdio and legacy SSE servers are not supported by this flow. Static trusted
+configuration can still use loopback fixtures. Discovery is limited to 500 tools,
+2 MiB of tool definitions and a 30-second timeout. Schemas must be self-contained.
+
+New or changed definitions default to disabled. Fetching alone changes no live
+policies: save publishes the reviewed snapshot, replacing that connection's tool
+list. Reviews expire after ten minutes and reject stale saves. There is no
+background drift detection; upstream behavior can still change between calls.
+Editing endpoints, rotating pasted tokens, and removing connections in the UI
+are follow-up work.
+
+### Saved configuration and rollout
+
+The first browser save copies the current connections and tools into encrypted
+SQLite storage. After that, the saved catalogue replaces `Connections` and `Tools`
+from the startup JSON, including after a deploy or restart. Identity, listen and
+deployment settings still come from the file/environment. Editing those two JSON
+arrays will no longer change the running catalogue. Protect and back up the
+database **and its encryption key**; this includes pasted bearer tokens and OAuth
+client secrets as well as grants.
+
+Adding a connection or saving policies atomically denies **all** pending/ready
+operations, recording `catalogue-changed` transitions. Running operations block
+the save until they finish. There is not yet a separate audit record for each
+configuration edit. Startup adds an empty `catalogue` table to existing databases;
+existing grants and pinned tools remain unchanged until a browser save. Rolling
+back to an older binary ignores the saved catalogue and uses file configuration,
+so do not treat a binary rollback as a safe policy rollback.
+
 ### Amp orbs
 
 `.agents/setup` installs and builds the project. `.amp/services.yaml` declares the
@@ -94,8 +149,8 @@ Amp's portal authentication using the gateway bearer token alone.
 The disposable `lox-mcp-gateway-test` app has been destroyed. Its replacement,
 `lox-mcp-gateway`, is deployed at https://lox-mcp-gateway.fly.dev with Google
 credentials and owner restrictions configured. Health, authenticated Amp discovery,
-unauthenticated rejection and the Google redirect are checked; the owner still
-needs to complete a real browser login.
+unauthenticated rejection and the Google redirect are checked; the owner has
+confirmed a successful real browser login.
 `fly.toml` uses public HTTPS, one Machine in Sydney, and `/data/gateway.db` on a
 persistent volume. It does not run demo mode or fake providers.
 
@@ -186,8 +241,8 @@ cluster (`9bd6538f-929f-4d0b-a667-6931e99428ce`). Restrict its agent access with
 
 The deploy script retrieves it only after its branch and freshness checks. Keep
 the Google and encryption secrets in Fly, not Buildkite. The deploy token expires
-after 90 days; replace it before expiry and revoke the old token. Automatic deploys
-are not operational until this secret exists. The policy deliberately rejects
+after 90 days; replace it before expiry and revoke the old token. The secret is
+configured and automatic deployment has passed. The policy deliberately rejects
 API/manual builds; use a reviewed main push for normal deployment. Pipeline and
 repository administrators remain trusted to change production code.
 

@@ -5,7 +5,8 @@ connection, keeps their credentials in one place, and lets you require approval
 before an agent calls particular tools.
 
 It's self-hosted, written in Go, and still a prototype. The demo works end to end
-with fake services. We haven't validated it against real providers yet.
+with fake services. Public-server discovery has been tested with DeepWiki; real
+provider OAuth and writes still need validation.
 
 ## How it works
 
@@ -40,6 +41,22 @@ The activity page shows what ran, what was denied, and who approved it.
 
 ![Demo operations and their audit history](docs/images/dashboard.png)
 
+## Connect an MCP
+
+Sign in to the gateway and click **Add MCP**. Enter the server URL and choose
+OAuth, a bearer token, or no authentication for a public server. For OAuth, review
+the authorization server and scopes, then sign in with the provider.
+
+Click **Fetch tools**, choose **Disabled**, **Require approval**, or **Allow without
+approval** for each tool, then **Save policies**. Nothing is enabled until you save.
+Agents can then find the enabled tools through the same gateway connection.
+
+![Reviewing DeepWiki tool permissions in the demo](docs/images/tool-review.png)
+
+This supports remote Streamable HTTP servers on public HTTPS, not local commands.
+See the [connection guide](docs/dev.md#connect-a-remote-mcp) for an example and
+provider limitations.
+
 ## What's there today
 
 Bearer-token and OAuth connections, token refresh, per-tool rules, browser
@@ -51,7 +68,7 @@ A few limits worth knowing:
 - Amp orbs can authenticate with short-lived identity tokens; requests link back
   to their thread. Browser approvals use a separate OIDC login.
 - Google Workspace login can require both your domain and your exact account.
-  The live Google setup is not validated yet. The local demo uses a shared token.
+  The owner has verified live Google login. The local demo uses a shared token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
 - A timed-out call may have run upstream. We mark it `unknown` and don't retry it.

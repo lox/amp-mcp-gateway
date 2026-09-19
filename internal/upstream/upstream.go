@@ -31,6 +31,10 @@ type Connection struct {
 	Account  string
 	TokenEnv string
 	OAuth    *OAuthConfig
+	// Browser-managed configuration is encrypted at rest; never render these secrets.
+	BearerToken string `json:",omitempty"`
+	NoAuth      bool   `json:",omitempty"`
+	PublicOnly  bool   `json:",omitempty"`
 }
 
 // OAuthConfig contains the pre-registered OAuth authorization-code endpoints.
@@ -40,6 +44,9 @@ type OAuthConfig struct {
 	AuthURL         string
 	TokenURL        string
 	Scopes          []string
+	ClientSecret    string           `json:",omitempty"`
+	Resource        string           `json:",omitempty"`
+	AuthStyle       oauth2.AuthStyle `json:",omitempty"`
 }
 
 // TokenStore persists JSON-encoded oauth2.Token values. A missing token is nil, nil.
@@ -53,6 +60,7 @@ type Manager struct {
 	baseURL string
 	store   TokenStore
 	conns   map[string]*managedConnection
+	connMu  sync.RWMutex
 	states  map[string]pendingState
 	stateMu sync.Mutex
 }
@@ -85,8 +93,19 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 		if _, err := validatedURL(c.URL); err != nil {
 			return nil, fmt.Errorf("connection %q URL: %w", c.ID, err)
 		}
-		if (c.TokenEnv == "") == (c.OAuth == nil) {
+		methods := 0
+		for _, enabled := range []bool{c.TokenEnv != "", c.BearerToken != "", c.OAuth != nil, c.NoAuth} {
+			if enabled {
+				methods++
+			}
+		}
+		if methods != 1 {
 			return nil, fmt.Errorf("connection %q must configure exactly one authentication method", c.ID)
+		}
+		if c.PublicOnly {
+			if err := ValidatePublicURL(c.URL); err != nil {
+				return nil, err
+			}
 		}
 		if c.OAuth != nil {
 			if store == nil {
@@ -101,27 +120,73 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 			if _, err := validatedURL(c.OAuth.TokenURL); err != nil {
 				return nil, fmt.Errorf("connection %q token URL: %w", c.ID, err)
 			}
+			if c.PublicOnly {
+				for _, raw := range []string{c.OAuth.AuthURL, c.OAuth.TokenURL} {
+					if err := ValidatePublicURL(raw); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 		m.conns[c.ID] = &managedConnection{config: c}
 	}
 	return m, nil
 }
 
+// Install publishes a validated manager's connections, preserving existing token locks.
+// Call only after the new configuration has been durably saved.
+func (m *Manager) Install(next *Manager) {
+	m.connMu.Lock()
+	defer m.connMu.Unlock()
+	for id, c := range next.conns {
+		if old, ok := m.conns[id]; ok && tokenKey(old.config) == tokenKey(c.config) {
+			next.conns[id] = old
+		}
+	}
+	m.conns = next.conns
+}
+
+func (m *Manager) connection(id string) (*managedConnection, bool) {
+	m.connMu.RLock()
+	defer m.connMu.RUnlock()
+	c, ok := m.conns[id]
+	return c, ok
+}
+
 // ListTools initializes a fresh MCP session and returns all pages of tools.
 func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	var tools []*mcp.Tool
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		cursor := ""
+		seen := map[string]bool{}
+		bytes := 0
 		for {
 			result, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 			if err != nil {
 				return err
 			}
+			raw, err := json.Marshal(result.Tools)
+			if err != nil {
+				return err
+			}
+			bytes += len(raw)
+			if bytes > 2<<20 {
+				return errors.New("tool catalogue exceeds 2 MiB")
+			}
 			tools = append(tools, result.Tools...)
+			if len(tools) > 500 {
+				return errors.New("server returned more than 500 tools")
+			}
 			if result.NextCursor == "" {
 				return nil
 			}
 			cursor = result.NextCursor
+			if seen[cursor] || len(seen) >= 50 {
+				return errors.New("invalid or excessive tool pagination")
+			}
+			seen[cursor] = true
 		}
 	})
 	return tools, err
@@ -139,7 +204,7 @@ func (m *Manager) Call(ctx context.Context, connection, tool string, args map[st
 }
 
 func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.ClientSession) error) error {
-	c, ok := m.conns[id]
+	c, ok := m.connection(id)
 	if !ok {
 		return fmt.Errorf("unknown connection %q", id)
 	}
@@ -159,12 +224,23 @@ func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.Clien
 
 func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.Client, error) {
 	base := &http.Client{Timeout: requestTimeout, CheckRedirect: rejectRedirect}
-	if c.config.TokenEnv != "" {
-		token := os.Getenv(c.config.TokenEnv)
+	transport := http.DefaultTransport
+	if c.config.PublicOnly {
+		transport = publicTransport
+	}
+	base.Transport = transport
+	if c.config.NoAuth {
+		return base, nil
+	}
+	if c.config.TokenEnv != "" || c.config.BearerToken != "" {
+		token := c.config.BearerToken
+		if c.config.TokenEnv != "" {
+			token = os.Getenv(c.config.TokenEnv)
+		}
 		if token == "" {
 			return nil, fmt.Errorf("connection %q bearer token environment variable is empty", c.config.ID)
 		}
-		base.Transport = bearerTransport{token: token, base: http.DefaultTransport}
+		base.Transport = bearerTransport{token: token, base: transport}
 		return base, nil
 	}
 	token, err := m.loadToken(ctx, c)
@@ -175,7 +251,7 @@ func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.C
 		return nil, fmt.Errorf("connection %q is not authorized", c.config.ID)
 	}
 	source := &persistingTokenSource{manager: m, connection: c}
-	base.Transport = &oauth2.Transport{Source: source, Base: http.DefaultTransport}
+	base.Transport = &oauth2.Transport{Source: source, Base: transport}
 	return base, nil
 }
 
@@ -229,7 +305,7 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: requestTimeout, CheckRedirect: rejectRedirect})
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthHTTPClient(c.config))
 	refreshed, err := s.manager.oauthConfig(c.config).TokenSource(ctx, token).Token()
 	if err != nil {
 		return nil, fmt.Errorf("refresh OAuth token: %w", err)

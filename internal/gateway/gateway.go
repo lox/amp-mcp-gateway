@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"ampcode.com/lox/mcp-gateway/internal/browserauth"
@@ -46,12 +47,14 @@ type Backend interface {
 
 // Gateway owns validated tools and execution policy.
 type Gateway struct {
+	mu       sync.RWMutex // catalogue publication, submission and discovery snapshots
 	cfg      Config
 	store    *store.Store
 	backend  Backend
 	tools    map[string]Tool
 	schemas  map[string]*jsonschema.Schema
 	bindings map[string]string
+	drafts   map[string]toolDraft
 }
 
 // New validates and compiles the pinned tool catalogue.
@@ -78,6 +81,8 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 			return nil, fmt.Errorf("unknown connection for %s", t.ID)
 		}
 		compiler := jsonschema.NewCompiler()
+		// Upstream schemas are untrusted: only references within this document are allowed.
+		compiler.UseLoader(jsonschema.SchemeURLLoader{})
 		if err := compiler.AddResource("schema.json", t.InputSchema); err != nil {
 			return nil, err
 		}
@@ -139,6 +144,8 @@ func (g *Gateway) MCP(token string) http.Handler {
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-gateway", Version: "0.1.0"}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
+		g.mu.RLock()
+		defer g.mu.RUnlock()
 		out := []Tool{}
 		words := strings.Fields(strings.ToLower(in.Query))
 		for _, t := range g.tools {
@@ -179,6 +186,8 @@ func (g *Gateway) mcpHandler() http.Handler {
 var requestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,100}$`)
 
 func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 	if g.cfg.AmpUserID != "" && (identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID)) {
 		return store.Operation{}, errors.New("verified Amp identity required")
@@ -232,8 +241,11 @@ func (g *Gateway) Run(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("claim operation: %w", err)
 			}
+			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
-			if !ok || t.Policy == "deny" || g.bindings[o.Tool] != o.Binding {
+			valid := ok && t.Policy != "deny" && g.bindings[o.Tool] == o.Binding
+			g.mu.RUnlock()
+			if !valid {
 				if err := g.store.Finish(ctx, o, "denied", nil); err != nil {
 					return err
 				}
@@ -270,6 +282,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	m.Register(mux)
+	g.registerConnections(mux, m)
 	mux.HandleFunc("GET /{$}", g.dashboard)
 	mux.HandleFunc("GET /operations/{id}", g.operation)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +311,10 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "audit unavailable", 503)
 		return
 	}
-	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": g.cfg.Connections, "Owner": g.cfg.OwnerSubject})
+	g.mu.RLock()
+	connections := append([]upstream.Connection(nil), g.cfg.Connections...)
+	g.mu.RUnlock()
+	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	o, err := g.store.Get(r.Context(), r.PathValue("id"))

@@ -26,7 +26,7 @@ func (m *Manager) Register(mux *http.ServeMux) {
 }
 
 func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
-	c, ok := m.conns[r.PathValue("id")]
+	c, ok := m.connection(r.PathValue("id"))
 	if !ok || c.config.OAuth == nil {
 		http.NotFound(w, r)
 		return
@@ -51,12 +51,16 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 	m.states[state] = pendingState{connection: c.config.ID, verifier: verifier, expires: now.Add(stateLifetime)}
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/connections/" + c.config.ID + "/callback", HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: int(stateLifetime.Seconds())})
-	location := m.oauthConfig(c.config).AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
+	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
+	if c.config.OAuth.Resource != "" {
+		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
+	}
+	location := m.oauthConfig(c.config).AuthCodeURL(state, options...)
 	http.Redirect(w, r, location, http.StatusFound)
 }
 
 func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
-	c, ok := m.conns[r.PathValue("id")]
+	c, ok := m.connection(r.PathValue("id"))
 	if !ok || c.config.OAuth == nil {
 		http.NotFound(w, r)
 		return
@@ -82,8 +86,12 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: requestTimeout, CheckRedirect: rejectRedirect})
-	token, err := m.oauthConfig(c.config).Exchange(ctx, code, oauth2.VerifierOption(pending.verifier))
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthHTTPClient(c.config))
+	options := []oauth2.AuthCodeOption{oauth2.VerifierOption(pending.verifier)}
+	if c.config.OAuth.Resource != "" {
+		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
+	}
+	token, err := m.oauthConfig(c.config).Exchange(ctx, code, options...)
 	if err != nil {
 		http.Error(w, "authorization exchange failed", http.StatusBadGateway)
 		return
@@ -102,16 +110,16 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization could not be saved", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/connections/"+c.config.ID+"/tools", http.StatusSeeOther)
 }
 
 func (m *Manager) oauthConfig(c Connection) *oauth2.Config {
 	o := c.OAuth
-	secret := ""
+	secret := o.ClientSecret
 	if o.ClientSecretEnv != "" {
 		secret = getenv(o.ClientSecretEnv)
 	}
-	return &oauth2.Config{ClientID: o.ClientID, ClientSecret: secret, Endpoint: oauth2.Endpoint{AuthURL: o.AuthURL, TokenURL: o.TokenURL}, RedirectURL: m.baseURL + "/connections/" + c.ID + "/callback", Scopes: append([]string(nil), o.Scopes...)}
+	return &oauth2.Config{ClientID: o.ClientID, ClientSecret: secret, Endpoint: oauth2.Endpoint{AuthURL: o.AuthURL, TokenURL: o.TokenURL, AuthStyle: o.AuthStyle}, RedirectURL: m.baseURL + "/connections/" + c.ID + "/callback", Scopes: append([]string(nil), o.Scopes...)}
 }
 
 var getenv = func(key string) string { return strings.TrimSpace(os.Getenv(key)) }

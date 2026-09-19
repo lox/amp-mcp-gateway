@@ -83,6 +83,9 @@ func run() error {
 		return err
 	}
 	defer s.Close()
+	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
+		return fmt.Errorf("load saved catalogue: %w", err)
+	}
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
 		return err
