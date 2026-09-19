@@ -82,6 +82,13 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	if !slices.Contains(meta.CodeChallengeMethodsSupported, "S256") {
 		return nil, errors.New("OAuth server must support PKCE S256")
 	}
+	// The owner reviews the authorization URL before connecting. Do not send
+	// codes, PKCE verifiers or client secrets to a different, hidden origin.
+	authorization, authErr := url.Parse(meta.AuthorizationEndpoint)
+	token, tokenErr := url.Parse(meta.TokenEndpoint)
+	if authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host) {
+		return nil, errors.New("OAuth authorization and token endpoints must share an origin; split-origin providers are not supported yet")
+	}
 	if len(scopes) == 0 {
 		scopes = meta.ScopesSupported
 	}
@@ -96,6 +103,9 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 		}, h)
 		if err != nil {
 			return nil, errors.New("OAuth client registration failed; try an existing client ID")
+		}
+		if registered.ClientSecret != "" && !registered.ClientSecretExpiresAt.IsZero() {
+			return nil, errors.New("expiring OAuth client secrets are not supported; use a non-expiring registered client")
 		}
 		o.ClientID, o.ClientSecret = registered.ClientID, registered.ClientSecret
 		switch registered.TokenEndpointAuthMethod {

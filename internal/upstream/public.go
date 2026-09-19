@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,23 +50,18 @@ var publicTransport http.RoundTripper = boundedPublicTransport{transport: &http.
 	TLSHandshakeTimeout:   10 * time.Second,
 	ResponseHeaderTimeout: 20 * time.Second,
 	IdleConnTimeout:       30 * time.Second,
-	DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-		if err != nil || len(ips) == 0 {
-			return nil, errors.New("cannot resolve MCP endpoint")
-		}
-		for _, ip := range ips {
-			if !publicIP(ip) {
-				return nil, errors.New("private-network destination blocked")
+	DialContext: (&net.Dialer{
+		Timeout: 10 * time.Second,
+		// Go resolves once and handles address fallback / Happy Eyeballs. This
+		// hook checks each numeric destination before its socket can connect.
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			destination, err := netip.ParseAddrPort(address)
+			if err != nil || !publicIP(destination.Addr()) {
+				return errors.New("private-network destination blocked")
 			}
-		}
-		// Dial the checked address, never resolve it a second time.
-		return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
-	},
+			return nil
+		},
+	}).DialContext,
 }}
 
 type boundedPublicTransport struct{ transport http.RoundTripper }

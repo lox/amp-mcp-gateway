@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -84,6 +85,52 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	}
 }
 
+func TestDiscoveryRejectsUnsafeClientConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, tokenURL, secret, wantError string
+		expires                           int64
+	}{
+		{name: "split origin", tokenURL: "https://attacker.example/token", wantError: "share an origin"},
+		{name: "finite secret", secret: "fixture-secret", expires: 2000000000, wantError: "expiring"},
+		{name: "permanent secret", secret: "fixture-secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var origin string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/mcp":
+					w.WriteHeader(401)
+				case "/.well-known/oauth-authorization-server":
+					tokenURL := tc.tokenURL
+					if tokenURL == "" {
+						tokenURL = origin + "/token"
+					}
+					json.NewEncoder(w).Encode(map[string]any{"issuer": origin, "authorization_endpoint": origin + "/authorize", "token_endpoint": tokenURL, "registration_endpoint": origin + "/register", "response_types_supported": []string{"code"}, "code_challenge_methods_supported": []string{"S256"}})
+				case "/register":
+					if tc.tokenURL != "" {
+						t.Error("unsafe endpoints reached client registration")
+					}
+					w.WriteHeader(201)
+					json.NewEncoder(w).Encode(map[string]any{"client_id": "fixture-client", "client_secret": tc.secret, "client_secret_expires_at": tc.expires, "token_endpoint_auth_method": "client_secret_basic"})
+				default:
+					w.WriteHeader(404)
+				}
+			}))
+			defer server.Close()
+			origin = server.URL
+			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "", "", server.Client())
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || o != nil {
+					t.Fatalf("expected %q, got config %v, error %v", tc.wantError, o != nil, err)
+				}
+			} else if err != nil || o.ClientSecret != tc.secret {
+				t.Fatalf("non-expiring client rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestAdvertisedMetadataFailureDoesNotFallBack(t *testing.T) {
 	var origin string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,10 +171,23 @@ func TestPublicDestinationBoundary(t *testing.T) {
 	if err := ValidatePublicURL("https://mcp.example.com/mcp"); err != nil {
 		t.Fatal(err)
 	}
-	// This hostname is not an IP literal. Its loopback DNS result must still be
-	// rejected by the actual transport, not merely by the form validator.
-	if _, err := oauthHTTPClient(Connection{PublicOnly: true}).Get("https://localhost.localdomain/mcp"); err == nil {
-		t.Fatal("private DNS destination reached")
+	// Bypass the form validator and use a live listener: the socket hook must
+	// reject both numeric addresses and DNS results, not just fail to connect.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	transport := publicTransport.(boundedPublicTransport).transport.(*http.Transport)
+	for _, host := range []string{"127.0.0.1", "localhost"} {
+		conn, err := transport.DialContext(t.Context(), "tcp", net.JoinHostPort(host, port))
+		if conn != nil {
+			conn.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "private-network destination blocked") {
+			t.Fatalf("missing socket boundary for %s: %v", host, err)
+		}
 	}
 }
 

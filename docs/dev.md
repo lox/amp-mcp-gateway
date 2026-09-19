@@ -99,6 +99,10 @@ if required, secret. Register the callback shown in the form with that provider.
 Review the discovered authorization server and scopes before clicking
 **Connect / reconnect OAuth**. PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
+Discovered authorization and token endpoints must share an origin, so credentials
+cannot go to a different host from the one reviewed before login. Split-origin
+providers are rejected for now. Dynamic registration responses with expiring
+client secrets are also rejected; registration renewal is not implemented.
 
 Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.

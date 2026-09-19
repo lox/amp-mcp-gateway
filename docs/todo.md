@@ -17,7 +17,7 @@ separate copies of this matrix in each document.
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
 | Central upstream credentials | Implemented | Environment or encrypted pasted bearer tokens; encrypted OAuth client credentials, grants and refresh. |
-| Provider onboarding | Partial | Browser URL/auth flow, OAuth metadata discovery, PKCE and dynamic registration or supplied client credentials. No client-ID metadata documents or custom provider flows. |
+| Provider onboarding | Partial | Browser URL/auth flow, OAuth metadata discovery, PKCE and dynamic registration or supplied client credentials. No split-origin OAuth endpoints, expiring registration secrets, client-ID metadata documents or custom provider flows. |
 | Real integrations | Partial | DeepWiki public tool discovery verified in the demo; authenticated provider reads/writes remain unvalidated. |
 | Connection UI | Partial | Add server, connect OAuth, fetch and review tools, save policies. No endpoint/credential editing, removal, verified account or health dashboard yet. |
 | OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Amp workload authentication verified against Fly; demo/legacy bearer retained. |
