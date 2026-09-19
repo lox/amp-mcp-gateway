@@ -129,14 +129,16 @@ For a subsequent deployment, from the repository root:
 
 ```sh
 fly config validate
-fly deploy --remote-only --ha=false --strategy immediate
+fly deploy --remote-only --ha=false
 fly status
 fly ips list
 ```
 
 The Docker build context excludes local state and credentials. Deployments briefly
-stop the single instance; do not enable high availability or rolling overlap against
-this SQLite volume. The Machine stays running because there is no public proxy to
+stop the single instance. The default rolling strategy updates it in place and
+waits for health checks. Do not enable high availability, add Machines, or use
+blue-green deployment with this single-process SQLite setup.
+The Machine stays running because there is no public proxy to
 wake it. It and the volume incur Fly charges. To stop compute when finished:
 
 ```sh
