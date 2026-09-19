@@ -99,6 +99,14 @@ needs to complete a real browser login.
 `fly.toml` uses public HTTPS, one Machine in Sydney, and `/data/gateway.db` on a
 persistent volume. It does not run demo mode or fake providers.
 
+Hosted-domain login requests `openid email`, as required by Google's OIDC flow;
+authorization still uses the verified subject and `hd` claim, not the email address.
+If the browser reports `authentication failed`, check Fly logs for
+`browser authentication failed` and its `reason`: `token_exchange`,
+`missing_id_token`, `id_token_verification`, `nonce`, `owner` or `hosted_domain`.
+These logs contain fixed stage names, not tokens, provider responses or user claims.
+Start a fresh login after a failure; callback state is single-use.
+
 To reproduce the deployment:
 
 1. Register a dedicated Google OAuth **Web application** client in the `ljd.cc`

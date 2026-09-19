@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -126,6 +127,10 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  a.endpoint("auth/callback"),
 		Scopes:       []string{oidc.ScopeOpenID},
+	}
+	if c.HostedDomain != "" {
+		// Google requires email or profile alongside openid. Request no profile data.
+		a.oauth.Scopes = append(a.oauth.Scopes, "email")
 	}
 	a.verifier = provider.Verifier(&oidc.Config{ClientID: c.ClientID})
 	return a, nil
@@ -251,16 +256,30 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	token, err := a.oauth.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(pending.verifier))
 	if err != nil {
+		// Never log provider errors: they can include credentials or token responses.
+		slog.Warn("browser authentication failed", "reason", "token_exchange")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
+		slog.Warn("browser authentication failed", "reason", "missing_id_token")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	idToken, err := a.verifier.Verify(r.Context(), rawIDToken)
-	if err != nil || idToken.Nonce != pending.nonce || idToken.Subject != a.owner {
+	idToken, err := a.verifier.Verify(ctx, rawIDToken)
+	if err != nil {
+		slog.Warn("browser authentication failed", "reason", "id_token_verification")
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+	if idToken.Nonce != pending.nonce {
+		slog.Warn("browser authentication failed", "reason", "nonce")
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+	if idToken.Subject != a.owner {
+		slog.Warn("browser authentication failed", "reason", "owner")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
@@ -269,6 +288,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 			HostedDomain string `json:"hd"`
 		}
 		if err := idToken.Claims(&claims); err != nil || claims.HostedDomain != a.hostedDomain {
+			slog.Warn("browser authentication failed", "reason", "hosted_domain")
 			http.Error(w, "authentication failed", http.StatusUnauthorized)
 			return
 		}
