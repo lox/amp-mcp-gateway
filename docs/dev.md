@@ -153,8 +153,9 @@ request can start it again. Snapshots do not replace a tested backup/restore pro
 `default` queue. The GitHub webhook builds branches and pull requests; fork PRs
 are disabled. The pipeline uploads `.buildkite/pipeline.yml` from the checkout.
 
-Checks run setup, build both Go commands, race tests, vet, formatting checks and
-Fly config validation. Only non-PR `main` builds deploy after checks pass. Deploys
+Checks run setup, build both Go commands, race tests, vet and formatting checks.
+Fly config validation runs in the authenticated deploy job. Only non-PR `main`
+builds deploy after checks pass. Deploys
 share one concurrency slot, skip superseded main commits, use Fly's rolling
 strategy without HA, and check public `/healthz` afterwards. Running deployments
 are not automatically cancelled by a newer commit.
@@ -166,7 +167,7 @@ machine, not an organisation-wide token:
 fly tokens create deploy --app lox-mcp-gateway --name buildkite --expiry 2160h
 ```
 
-Store it as the Buildkite secret **`mcp_gateway_fly_deploy`** in the **Hosted**
+Store it as the Buildkite secret **`MCP_GATEWAY_FLY_DEPLOY`** in the **Hosted**
 cluster (`9bd6538f-929f-4d0b-a667-6931e99428ce`). Restrict its agent access with:
 
 ```yaml
