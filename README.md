@@ -1,212 +1,60 @@
 # mcp-gateway
 
-A small, self-hosted permission boundary between an agent and its MCP tools.
-Connect the agent once. Keep upstream credentials in the gateway. Require a human
-to approve selected calls and retain a durable record of what was requested and executed.
+Managing auth for a pile of MCP servers is a pain. This puts them behind one
+connection, keeps their credentials in one place, and lets you require approval
+before an agent calls particular tools.
 
-**This is a single-owner prototype, not a production security product.** It runs
-locally with disposable fixtures. Real identity providers and upstream services
-still need to be configured and tested before using real accounts.
+It's self-hosted, written in Go, and still a prototype. The demo works end to end
+with fake services. We haven't validated it against real providers yet.
 
-See the [delivery plan](docs/plan.md) and [feature matrix / TODOs](docs/todo.md)
-for the distinction between working features and the proposed product.
+## How it works
 
-## Screenshots
+The agent gets three tools:
 
-These are captures of the running disposable demo, not mockups or real accounts.
+- `find_tools` searches the configured tools and returns their argument schemas.
+- `call_tools` submits a call to a specific tool. It either queues it, denies it,
+  or returns a link for human approval.
+- `get_operation` checks the status and retrieves the result.
 
-**Review the exact request before approving it:**
-
-![Pending request with owner, account, unverified model and approve/deny controls](docs/images/approval.png)
-
-**Inspect completed and denied operations alongside their audit transitions:**
-
-![Demo connections, operation statuses and audit trail](docs/images/dashboard.png)
-
-## First slice
-
-- One Streamable HTTP MCP endpoint, `/mcp`, with `find_tools`, `call_tools` and
-  `get_operation`. `call_tools` accepts exactly one call for now.
-- A reviewed, pinned catalogue with JSON Schema validation and `allow`,
-  `require_approval` or `deny` policies. Unknown tools cannot execute.
-- Lexical discovery, not model-based routing. `find_tools` returns matching tools,
-  schemas and policies; the calling agent selects an exact tool ID.
-- Remote MCP upstreams using environment bearer tokens or pre-registered
-  OAuth authorization-code clients with PKCE and persisted refresh tokens.
-- OIDC owner login for the approval UI; a separate owner bearer token for MCP.
-  Client-facing OAuth/OIDC is **not** implemented yet.
-- SQLite operation ledger, AES-256-GCM encrypted credentials/arguments/results,
-  and transactional audit events.
-
-Go and the official MCP Go SDK keep the protocol implementation small. Server-rendered
-HTML needs no frontend build. SQLite deliberately limits deployment to **one process
-and one persistent disk**, with a file lock preventing competing workers.
-
-## Try it
-
-Prerequisites: Linux or macOS, Git and curl. Setup installs mise if absent and the
-pinned Go toolchain. Run commands from the repository root.
-
-Clone the private repository with `gh repo clone lox/mcp-gateway` and enter the
-checkout. GitHub authentication is required. Then:
-
-```sh
-.agents/setup
-export PATH="$HOME/.local/bin:$PATH"
-mise run check
-mise run dev
-```
-
-On your machine, open `http://localhost:8080`. Sign in with **demo-only** and click
-**Connect / reconnect OAuth** before submitting a notes request. The fake provider
-authorizes immediately. Nothing connects to a real account.
-
-The two loopback fixtures on port 8091 are `reference.echo` (allowed) and
-`notes.create` (approval required). Both return the supplied text; the notes fixture
-does not maintain a separate notes database. Demo keys are generated once in
-`.local/demo-secrets.json`, mode 0600, and never printed by the helper client.
-
-From another terminal:
-
-```sh
-# Discover tools and their argument schemas.
-mise exec -- go run ./cmd/demo-client -args '{"query":"notes"}'
-
-# An allowed read goes directly into the execution queue.
-mise exec -- go run ./cmd/demo-client -tool call_tools -args \
-  '{"request_id":"read-example-001","calls":[{"tool_id":"reference.echo","arguments":{"text":"Hello gateway"}}]}'
-
-# A write waits for a human. The model label is unverified client metadata.
-mise exec -- go run ./cmd/demo-client -tool call_tools -args \
-  '{"request_id":"note-example-001","model_reported":"example-model","calls":[{"tool_id":"notes.create","arguments":{"text":"Release checklist reviewed"}}]}'
-
-# Open the returned approval_url, review the exact arguments, and approve or deny.
-mise exec -- go run ./cmd/demo-client -tool get_operation -args \
-  '{"id":"note-example-001"}'
-```
-
-Reuse a `request_id` only for the exact same request. Poll `get_operation` for the
-result. Do not generate a fresh ID to retry an ambiguous write.
-
-For a new write, the `structuredContent` field of the MCP response looks like:
+For example, after finding `notes.create`, the agent calls `call_tools` with:
 
 ```json
 {
-  "id": "note-example-001",
-  "status": "pending",
-  "approval_url": "http://localhost:8080/operations/note-example-001"
+  "request_id": "note-example-001",
+  "calls": [
+    {
+      "tool_id": "notes.create",
+      "arguments": {"text": "Release checklist reviewed"}
+    }
+  ]
 }
 ```
 
-After approval, poll the same ID until it reaches `succeeded`, `failed`, `denied`,
-`expired` or `unknown`. A successful result includes the upstream MCP response in
-`result`; the demo's `result.structuredContent` contains the original text and
-`"fixture": true`. `ready` and `running` are intermediate states. If you repeat
-these examples, use new IDs only for deliberately new operations.
+That demo tool requires approval. You review the account and exact arguments in
+the browser, then approve or deny. The request and its outcome are saved, so the
+agent can check back later without keeping the connection open.
 
-For another MCP client, configure a Streamable HTTP connection to `/mcp` with an
-`Authorization: Bearer <gateway-token>` header. In demo mode the token is the
-`GatewayToken` field in the private local secrets file. Use your client's secret
-storage; do not commit it or paste it into a chat. The demo helper reads it directly.
-The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
-the final MCP URL when overriding `-url`.
+![Reviewing a demo request before approving it](docs/images/approval.png)
 
-### Amp orbs
+The activity page shows what ran, what was denied, and who approved it.
 
-`.agents/setup` installs and builds the project. `.amp/services.yaml` declares the
-supervised demo; `.agents/demo` passes its assigned port and public origin.
+![Demo operations and their audit history](docs/images/dashboard.png)
 
-```sh
-amp orb services ensure
-```
+## What's there today
 
-Open the portal URL printed by that command. It uses the same demo-only password.
-Use the helper client inside the orb; ordinary remote MCP clients cannot bypass
-Amp's portal authentication using the gateway bearer token alone.
+Bearer-token and OAuth connections, token refresh, per-tool rules, browser
+approvals, and encrypted storage for OAuth tokens, arguments and results.
 
-## What approval actually guarantees
+A few limits worth knowing:
 
-The gateway persists intent before returning an operation ID. Approval changes only
-the status, never the stored arguments. The worker claims that request atomically
-before contacting the upstream, then records its outcome and audit event together.
+- One owner and one call per request. Search is keyword-based.
+- OIDC is for browser login. MCP clients still use a shared owner token.
+- Model names are reported by the client, not verified. Account names are labels.
+- The audit log is local, not tamper-proof.
+- A timed-out call may have run upstream. We mark it `unknown` and don't retry it.
 
-- Approval expires ten minutes after submission, including time spent queued.
-- Repeated or concurrent approvals cannot dispatch the same operation twice.
-- Changes to the pinned tool, policy, connection, owner, issuer or static upstream
-  credential invalidate queued requests when checked at execution.
-- Reconnecting OAuth denies **all** pending/ready requests conservatively. It is
-  refused while any request is running. Submit new requests after reconnecting.
-- OAuth grants are bound to the connection configuration; changed endpoints require
-  reconnecting rather than receiving an existing credential.
-- Timeouts and transport errors become `unknown`; a restart also marks previously
-  running operations `unknown`. No automatic dispatch retries occur.
-- `unknown` does not mean failure. Inspect the upstream before deciding what to do.
-  There is no exactly-once guarantee across the upstream/network boundary.
+## Try it
 
-The browser shows the tool, configured upstream account label, exact arguments,
-request digest and model label. It is **not** an effect preview or a guarantee that
-an upstream's implementation has not changed.
-
-## Identity and audit boundaries
-
-“On behalf of” currently means **the configured owner whose gateway bearer token
-was used**. It does not prove which person or agent possessed that token. Browser
-approvals check the owner's OIDC issuer/subject, audience, signature, expiry and nonce.
-Model identity is explicitly client-reported and unverified; it never grants authority.
-Upstream account names are configured labels, not verified provider identities.
-
-The ledger retains operation identity, account label, owner, model label, request
-digest, encrypted arguments/results and timestamped state transitions. Audit events
-are durable local records, **not independently tamper-proof evidence**: an operator
-with database access can change them. Discovery, rejected malformed requests,
-browser logins and token refreshes do not yet have audit events. Tool results can
-contain sensitive data and are returned only to the authenticated owner/client.
-
-## Connect real services deliberately
-
-1. Copy `gateway.example.json` to ignored `gateway.json`. Replace every placeholder
-   endpoint, account label, tool name and schema with a reviewed real configuration.
-2. Configure an OIDC client with callback `https://YOUR-ORIGIN/auth/callback` and set
-   the exact issuer, client ID and stable owner subject in the config.
-3. Register each upstream OAuth client with callback
-   `https://YOUR-ORIGIN/connections/CONNECTION-ID/callback`. Explicit authorization
-   and token endpoints are required; dynamic registration/discovery is not implemented.
-4. Supply these secrets through your process manager or secret store:
-
-   | Variable | Purpose |
-   | --- | --- |
-   | `GATEWAY_ENCRYPTION_KEY` | Random 32 bytes, standard base64; keep a backed-up copy |
-   | `GATEWAY_SESSION_KEY` | Separate random 32 bytes, standard base64 |
-   | `GATEWAY_TOKEN` | Random bearer token, at least 32 characters |
-   | `GATEWAY_OIDC_SECRET` | Browser OIDC client secret |
-   | Connection `TokenEnv` / `ClientSecretEnv` | Upstream credentials |
-
-5. Run `mise run build`, then `bin/mcp-gateway -config gateway.json`. Production
-   mode requires an HTTPS canonical BaseURL and serves HTTP behind your trusted TLS
-   proxy. The config's `Listen` takes precedence over the command-line address;
-   `-base-url` is for demo mode.
-
-Tailscale Serve is a reasonable private TLS front door for a first real deployment.
-A single Fly Machine with a persistent volume is another possible host. Neither is
-provisioned here. Do not expose the backend HTTP port directly, put secrets in URLs,
-enable real accounts in demo mode, or add replicas.
-
-Stop the process before taking a consistent backup of the SQLite database and keep
-the encryption key separately. Losing the key loses the encrypted data. Changing
-the key is not a supported rotation procedure. Rotate the bearer token to revoke
-agent access; rotate the session key when changing the OIDC trust configuration or
-revoking browser sessions. Sign-out clears the browser cookie but cannot revoke a
-copied session cookie; sessions otherwise last 12 hours.
-
-## Verification and limits
-
-`mise run check` checks formatting, runs the Go suite with the race detector, and
-runs `go vet`. Tests cover the MCP protocol, argument substitution, stale approvals,
-concurrent approval/claim, unknown outcomes, restart recovery, ciphertext integrity,
-OIDC claim rejection/PKCE/state replay, OAuth refresh rotation and CSRF.
-
-Deferred: multiple users, per-agent identities and delegation chains, verified model
-attestation, semantic/Jev discovery, batch calls, stdio/legacy-SSE upstreams,
-provider-specific account introspection, signed audit exports, retention and key
-rotation, policy expressions and production deployment hardening. Keep this private
-and low-volume until those operational requirements are addressed.
+The [dev guide](docs/dev.md) has setup instructions and runnable examples.
+The [plan](docs/plan.md) covers what comes next; the [feature matrix and TODOs](docs/todo.md)
+track what's implemented and what's still an idea.

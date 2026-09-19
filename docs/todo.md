@@ -5,7 +5,7 @@
 scope, with no delivery date. **Later idea** is deliberately outside the next slices.
 
 See the [plan](plan.md) for sequencing and acceptance criteria, and the
-[README](../README.md) for runnable examples. Keep status here rather than maintaining
+[dev guide](dev.md) for runnable examples. Keep status here rather than maintaining
 separate copies of this matrix in each document.
 
 ## Feature matrix
