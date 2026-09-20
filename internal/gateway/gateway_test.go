@@ -239,3 +239,62 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 		t.Fatal("missing schema")
 	}
 }
+
+func TestOperationPresentation(t *testing.T) {
+	for _, status := range []string{"pending", "ready", "running", "succeeded", "failed", "denied", "expired", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			g, s, _ := fixture(t)
+			o := store.Operation{ID: "display-test", Tool: "notes.list_items", Connection: "notes", Account: "test account", Status: status, Arguments: map[string]any{"text": "exact request"}}
+			if status == "succeeded" || status == "failed" {
+				o.Result = json.RawMessage(`{"content":[{"type":"text","text":"{\"id\":9007199254740993,\"extra\":true}"},{"type":"text","text":"<script>alert(1)</script>"},{"type":"resource_link","uri":"https://example.com/item"},{"type":"text","text":"{\"count\":2}"}],"structuredContent":{"count":2},"_meta":{"trace":"kept"}}`)
+			}
+			if _, err := s.Submit(t.Context(), o); err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest("GET", "/operations/display-test", nil)
+			r.SetPathValue("id", o.ID)
+			w := httptest.NewRecorder()
+			g.operation(w, r)
+			body := w.Body.String()
+			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
+				t.Fatal("incorrect refresh control")
+			}
+			if strings.Contains(body, "Approve once") != (status == "pending") {
+				t.Fatal("incorrect approval control")
+			}
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once") {
+				t.Fatal("arguments must precede approval")
+			}
+			if len(o.Result) > 0 {
+				if strings.Count(body, "<pre>{\n  &#34;count&#34;: 2\n}</pre>") != 1 {
+					t.Fatal("identical structured and text content should be shown once")
+				}
+				if !strings.Contains(body, "<pre>{\n  &#34;id&#34;: 9007199254740993,\n  &#34;extra&#34;: true\n}</pre>") {
+					t.Fatal("text content must be decoded and formatted, not just present in the raw response")
+				}
+				for _, want := range []string{"9007199254740993", "extra", "resource_link", "https://example.com/item", "count", "kept", "Raw MCP response", "&lt;script&gt;"} {
+					if !strings.Contains(body, want) {
+						t.Errorf("missing %s", want)
+					}
+				}
+				if strings.Contains(body, "<script>alert") {
+					t.Fatal("unescaped upstream output")
+				}
+				if strings.Index(body, "9007199254740993") > strings.Index(body, "Request details") {
+					t.Fatal("result should come first")
+				}
+			}
+		})
+	}
+}
+
+func TestPrettyJSON(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{`{"id":9007199254740993,"id":2}`, "{\n  \"id\": 9007199254740993,\n  \"id\": 2\n}"},
+		{"not JSON\nplain text", "not JSON\nplain text"},
+	} {
+		if got := prettyJSON([]byte(tc.input)); got != tc.want {
+			t.Fatalf("got %q, want %q", got, tc.want)
+		}
+	}
+}

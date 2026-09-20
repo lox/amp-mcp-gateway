@@ -35,6 +35,10 @@ That demo tool requires approval. You review the account and exact arguments in
 the browser, then approve or deny. The request and its outcome are saved, so the
 agent can check back later without keeping the connection open.
 
+Finished calls show the result first, with JSON formatted for reading. Expand
+**Raw MCP response** for the full response, or **Request details** and
+**Identity & audit** for the arguments and attribution.
+
 ![Reviewing a demo request before approving it](docs/images/approval.png)
 
 The activity page shows what ran, what was denied, and who approved it.
