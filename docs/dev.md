@@ -158,8 +158,10 @@ Google granted access or that a tool call will succeed.
 ### Dropbox
 
 In **Add MCP**, use connection name `dropbox`, URL `https://mcp.dropbox.com/mcp`
-and **OAuth**. Dropbox advertises dynamic client registration; try that first.
-If it rejects registration, supply an existing OAuth client with this callback:
+and **OAuth**. Dropbox advertises dynamic client registration but restricts it to
+[approved clients](https://help.dropbox.com/integrations/connect-dropbox-mcp-server).
+For this gateway, register a Dropbox app and use its app key and secret under
+**Use an existing OAuth client**, with this callback:
 
 ```text
 https://lox-mcp-gateway.fly.dev/connections/dropbox/callback
@@ -401,6 +403,15 @@ before contacting the upstream, then records its outcome and audit event togethe
   running operations `unknown`. No automatic dispatch retries occur.
 - `unknown` does not mean failure. Inspect the upstream before deciding what to do.
   There is no exactly-once guarantee across the upstream/network boundary.
+
+New upstream execution errors include a `diagnostic` object in the stored result
+and `get_operation` response. It records the stage (`credentials`, `connect` or
+`request`), a fixed error category, and HTTP/JSON-RPC error codes when available.
+The HTTP code is the last observed non-success response during that stage, not
+proof of which request failed. Provider messages, bodies, headers, URLs and
+arguments are excluded. These details do not authorize retries or change the
+`unknown` status. Older records and restart-recovered operations may have no
+diagnostic; it cannot be reconstructed after the fact.
 
 The browser shows the tool, configured upstream account label, exact arguments,
 request digest and model label. It is **not** an effect preview or a guarantee that
