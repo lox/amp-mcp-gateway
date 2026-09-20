@@ -15,6 +15,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ const (
 	sessionTTL       = 12 * time.Hour
 	stateTTL         = 10 * time.Minute
 	maxPendingLogins = 128
+	maxSourceLogins  = 8
 )
 
 type subjectKey struct{}
@@ -46,17 +48,21 @@ type Config struct {
 	SessionKey   string
 	DemoPassword string
 	Demo         bool
+	// TrustedClientIPHeader requires an ingress that overwrites this header and
+	// prevents clients from reaching the listener directly. Empty uses RemoteAddr.
+	TrustedClientIPHeader string
 }
 
 // Auth owns browser authentication state and handlers.
 type Auth struct {
-	baseURL      *url.URL
-	key          []byte
-	secure       bool
-	demo         bool
-	password     string
-	owner        string
-	hostedDomain string
+	baseURL        *url.URL
+	key            []byte
+	secure         bool
+	demo           bool
+	password       string
+	owner          string
+	hostedDomain   string
+	clientIPHeader string
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
@@ -70,6 +76,7 @@ type pendingState struct {
 	nonce    string
 	verifier string
 	expires  time.Time
+	source   netip.Prefix
 }
 
 type cookieValue struct {
@@ -89,15 +96,16 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		return nil, errors.New("browserauth: SessionKey must be base64 encoding of exactly 32 bytes")
 	}
 	a := &Auth{
-		baseURL:      base,
-		key:          key,
-		secure:       base.Scheme == "https",
-		demo:         c.Demo,
-		password:     c.DemoPassword,
-		owner:        c.OwnerSubject,
-		hostedDomain: c.HostedDomain,
-		states:       make(map[string]pendingState),
-		now:          time.Now,
+		baseURL:        base,
+		key:            key,
+		secure:         base.Scheme == "https",
+		demo:           c.Demo,
+		password:       c.DemoPassword,
+		owner:          c.OwnerSubject,
+		hostedDomain:   c.HostedDomain,
+		clientIPHeader: c.TrustedClientIPHeader,
+		states:         make(map[string]pendingState),
+		now:            time.Now,
 	}
 	if c.Demo {
 		if c.DemoPassword == "" {
@@ -193,15 +201,33 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
+	source, err := a.loginSource(r)
+	if err != nil {
+		http.Error(w, "invalid login source", http.StatusBadRequest)
+		return
+	}
+	previous, signed := a.readSignedCookie(r, stateCookie)
 	a.mu.Lock()
 	now := a.now()
-	// The capacity limit also bounds expiry work and contention with callbacks.
-	if len(a.states) >= maxPendingLogins {
-		for k, v := range a.states {
-			if !v.expires.After(now) {
-				delete(a.states, k)
-			}
+	if pending, ok := a.states[previous.State]; signed && ok && pending.expires.After(now) {
+		a.mu.Unlock()
+		a.redirectLogin(w, r, previous.State, pending)
+		return
+	}
+	// Both source accounting and expiry cleanup examine at most 128 states.
+	active := 0
+	for k, v := range a.states {
+		if !v.expires.After(now) {
+			delete(a.states, k)
+		} else if v.source == source {
+			active++
 		}
+	}
+	if active >= maxSourceLogins {
+		a.mu.Unlock()
+		w.Header().Set("Retry-After", "600")
+		http.Error(w, "too many pending logins from this source; try again later", http.StatusTooManyRequests)
+		return
 	}
 	if len(a.states) >= maxPendingLogins {
 		a.mu.Unlock()
@@ -209,14 +235,43 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := now.Add(stateTTL)
-	a.states[state] = pendingState{nonce: nonce, verifier: verifier, expires: expires}
+	pending := pendingState{nonce: nonce, verifier: verifier, expires: expires, source: source}
+	a.states[state] = pending
 	a.mu.Unlock()
 	a.setSignedCookie(w, stateCookie, cookieValue{State: state, Expires: expires.Unix()}, stateTTL)
-	authOptions := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	a.redirectLogin(w, r, state, pending)
+}
+
+func (a *Auth) redirectLogin(w http.ResponseWriter, r *http.Request, state string, pending pendingState) {
+	authOptions := []oauth2.AuthCodeOption{oidc.Nonce(pending.nonce), oauth2.S256ChallengeOption(pending.verifier)}
 	if a.hostedDomain != "" {
 		authOptions = append(authOptions, oauth2.SetAuthURLParam("hd", a.hostedDomain))
 	}
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state, authOptions...), http.StatusSeeOther)
+}
+
+func (a *Auth) loginSource(r *http.Request) (netip.Prefix, error) {
+	var addr netip.Addr
+	var err error
+	if a.clientIPHeader != "" {
+		if len(r.Header.Values(a.clientIPHeader)) != 1 {
+			return netip.Prefix{}, errors.New("missing or duplicate trusted client IP")
+		}
+		addr, err = netip.ParseAddr(r.Header.Get(a.clientIPHeader))
+	} else {
+		var peer netip.AddrPort
+		peer, err = netip.ParseAddrPort(r.RemoteAddr)
+		addr = peer.Addr()
+	}
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	addr = addr.Unmap().WithZone("")
+	bits := 32
+	if addr.Is6() {
+		bits = 64
+	}
+	return netip.PrefixFrom(addr, bits).Masked(), nil
 }
 
 func (a *Auth) demoLogin(w http.ResponseWriter, r *http.Request) {
