@@ -85,6 +85,65 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	}
 }
 
+func TestDiscoveryRootResourceFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, resourceSuffix string
+		wantSuccess          bool
+	}{
+		{name: "root resource", wantSuccess: true},
+		{name: "unrelated resource", resourceSuffix: "/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var origin string
+			rootRequests := 0
+			authorizationRequests := 0
+			authorization := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				authorizationRequests++
+				if r.URL.Path != "/.well-known/oauth-authorization-server" {
+					t.Errorf("unexpected authorization request: %s", r.URL.Path)
+				}
+				issuer := "http://" + r.Host
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "response_types_supported": []string{"code"}, "code_challenge_methods_supported": []string{"S256"}})
+			}))
+			defer authorization.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/mcp":
+					// Like Redbark, GET is unsupported and has no auth challenge.
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				case "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource":
+					if r.URL.Path == "/.well-known/oauth-protected-resource" {
+						rootRequests++
+					}
+					json.NewEncoder(w).Encode(map[string]any{"resource": origin + tc.resourceSuffix, "authorization_servers": []string{authorization.URL}, "scopes_supported": []string{"mcp:read"}})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			origin = server.URL
+			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "existing-client", "", server.Client())
+			if rootRequests != 1 {
+				t.Fatalf("root metadata requests = %d, want 1", rootRequests)
+			}
+			if !tc.wantSuccess {
+				if err == nil || o != nil || authorizationRequests != 0 {
+					t.Fatalf("accepted mismatched resource: config=%v, error=%v, authorization requests=%d", o, err, authorizationRequests)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o.Resource != origin || o.AuthURL != authorization.URL+"/authorize" || o.TokenURL != authorization.URL+"/token" || strings.Join(o.Scopes, " ") != "mcp:read" {
+				t.Fatalf("incorrect root discovery: %#v", o)
+			}
+		})
+	}
+}
+
 func TestDiscoveryRejectsUnsafeClientConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, tokenURL, secret, wantError string
