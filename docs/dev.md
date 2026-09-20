@@ -464,6 +464,27 @@ copied session cookie; sessions otherwise last 12 hours.
 
 ## Verification and limits
 
+New operation and agent policy-proposal admission is bounded by 10,000 retained
+operations, 50,000 audit events, and 64 MiB of encrypted operation payload plus
+audit text-field bytes. There is also a limit of 16 pending, ready or running
+operations. Requests beyond these limits return an MCP tool error and persist
+neither a new intent nor a rejection event. Denied and expired history still
+counts; repeated use of an existing request ID keeps its original result.
+
+Existing approvals, proposal decisions, claims, outcomes, token rotation and
+restart recovery remain available at capacity. Completion can take retained
+usage above the admission thresholds, so these are not physical database or
+filesystem size limits. SQLite overhead, credentials/catalogues and derived
+metadata also consume space; monitor the volume and leave room for outcomes.
+Non-public configured upstreams do not have a universal response-size cap.
+
+History is not automatically deleted. Do not delete operation IDs to free space:
+doing so can allow a replay to dispatch again. Retention with permanent replay
+protection remains separate work. At a retained-history limit, new work stays
+paused; raising the current limits requires a reviewed code change and sufficient
+volume headroom. Over-capacity ledgers can still be opened and inspected after an
+upgrade.
+
 `mise run check` checks formatting, runs the Go suite with the race detector, and
 runs `go vet`. Tests cover the MCP protocol, argument substitution, stale approvals,
 concurrent approval/claim, unknown outcomes, restart recovery, ciphertext integrity,

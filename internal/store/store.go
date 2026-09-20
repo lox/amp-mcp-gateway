@@ -20,9 +20,10 @@ import (
 
 // Store is a single-process SQLite ledger. Payloads and credentials are encrypted.
 type Store struct {
-	db   *sql.DB
-	aead cipher.AEAD
-	lock *os.File
+	db     *sql.DB
+	aead   cipher.AEAD
+	lock   *os.File
+	limits ledgerUsage
 }
 
 // Operation is an immutable request with mutable execution state.
@@ -88,7 +89,7 @@ func Open(path, key string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, aead: aead, lock: lock}
+	s := &Store{db: db, aead: aead, lock: lock, limits: ledgerUsage{operations: 10000, events: 50000, bytes: 64 << 20, outstanding: 16}}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
@@ -268,12 +269,20 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err != nil {
 		return o, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, s.seal("operation:"+o.ID, b)); err != nil {
-		return o, err
-	}
 	actor := o.Subject
 	if o.AmpUserID != "" {
 		actor = "amp:" + o.AmpUserID
+	}
+	encrypted := s.seal("operation:"+o.ID, b)
+	delta := ledgerUsage{operations: 1, events: 1, bytes: int64(len(encrypted) + len(o.ID) + len(o.Status) + len(actor))}
+	if o.Status == "pending" || o.Status == "ready" || o.Status == "running" {
+		delta.outstanding = 1
+	}
+	if err := s.checkAdmission(ctx, tx, delta); err != nil {
+		return o, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, encrypted); err != nil {
+		return o, err
 	}
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
