@@ -255,7 +255,8 @@ Amp's portal authentication using the gateway bearer token alone.
 instead of Google browser login. This is an explicit development option, not a
 production authentication alternative. It requires:
 
-- `AMP_ORB=1` and `BaseURL` exactly matching the service's `PUBLIC_URL`.
+- `AMP_ORB=1` and `BaseURL` matching the service's `PUBLIC_URL` with its trailing
+  slash removed. This keeps the MCP workload-token audience equal to the origin.
 - A literal loopback `Listen`, such as `127.0.0.1:<PORT>`.
 - Your exact `AmpUserID` and `OwnerSubject: "amp-portal:<AmpUserID>"`.
 - Empty `Issuer`, `ClientID` and `HostedDomain`; no `-demo` flag.

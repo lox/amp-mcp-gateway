@@ -12,6 +12,7 @@ func TestPortalStartupGuard(t *testing.T) {
 		demo, wantOK                                   bool
 	}{
 		{"orb", "1", "https://debug.onamp.dev", "127.0.0.1:8082", "user_owner", "amp-portal:user_owner", "", false, true},
+		{"portal trailing slash", "1", "https://debug.onamp.dev/", "127.0.0.1:8082", "user_owner", "amp-portal:user_owner", "", false, true},
 		{"IPv6", "1", "https://debug.onamp.dev", "[::1]:8082", "user_owner", "amp-portal:user_owner", "", false, true},
 		{"outside orb", "", "https://debug.onamp.dev", "127.0.0.1:8082", "user_owner", "amp-portal:user_owner", "", false, false},
 		{"public listener", "1", "https://debug.onamp.dev", "0.0.0.0:8082", "user_owner", "amp-portal:user_owner", "", false, false},

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -160,7 +161,7 @@ func run() error {
 
 func validatePortalAuth(cfg gateway.Config, listen string, demo bool) error {
 	address, err := netip.ParseAddrPort(listen)
-	if err != nil || !address.Addr().IsLoopback() || os.Getenv("AMP_ORB") != "1" || os.Getenv("PUBLIC_URL") == "" || os.Getenv("PUBLIC_URL") != cfg.BaseURL || demo || cfg.AmpUserID == "" || cfg.OwnerSubject != "amp-portal:"+cfg.AmpUserID || cfg.Issuer != "" || cfg.ClientID != "" || cfg.HostedDomain != "" {
+	if err != nil || !address.Addr().IsLoopback() || os.Getenv("AMP_ORB") != "1" || os.Getenv("PUBLIC_URL") == "" || strings.TrimSuffix(os.Getenv("PUBLIC_URL"), "/") != cfg.BaseURL || demo || cfg.AmpUserID == "" || cfg.OwnerSubject != "amp-portal:"+cfg.AmpUserID || cfg.Issuer != "" || cfg.ClientID != "" || cfg.HostedDomain != "" {
 		return errors.New("orb portal auth requires AMP_ORB=1, BaseURL matching PUBLIC_URL, literal loopback listen, AmpUserID, OwnerSubject=amp-portal:<AmpUserID>, and no OIDC/demo configuration")
 	}
 	return nil
