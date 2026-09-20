@@ -57,10 +57,11 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 			}
 		}
 	}
-	// Root metadata describes the origin, not the MCP endpoint's path. Keep
-	// each well-known URL bound to the resource from which it was derived.
+	// Preserve endpoint-scoped metadata at the root, then try origin-scoped
+	// metadata. Each candidate still requires an exact resource match.
 	metadataURLs = append(metadataURLs,
 		metadataCandidate{origin + "/.well-known/oauth-protected-resource" + u.EscapedPath(), endpoint},
+		metadataCandidate{origin + "/.well-known/oauth-protected-resource", endpoint},
 		metadataCandidate{origin + "/.well-known/oauth-protected-resource", origin},
 	)
 	var prm *oauthex.ProtectedResourceMetadata

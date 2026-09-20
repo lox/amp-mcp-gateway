@@ -91,6 +91,7 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 		wantSuccess          bool
 	}{
 		{name: "root resource", wantSuccess: true},
+		{name: "endpoint resource at root", resourceSuffix: "/mcp", wantSuccess: true},
 		{name: "unrelated resource", resourceSuffix: "/other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +115,10 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 					// Like Redbark, GET is unsupported and has no auth challenge.
 					w.WriteHeader(http.StatusMethodNotAllowed)
 				case "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource":
+					if tc.resourceSuffix == "/mcp" && r.URL.Path != "/.well-known/oauth-protected-resource" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
 					if r.URL.Path == "/.well-known/oauth-protected-resource" {
 						rootRequests++
 					}
@@ -125,8 +130,8 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 			defer server.Close()
 			origin = server.URL
 			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "existing-client", "", server.Client())
-			if rootRequests != 1 {
-				t.Fatalf("root metadata requests = %d, want 1", rootRequests)
+			if rootRequests == 0 {
+				t.Fatal("root metadata was not fetched")
 			}
 			if !tc.wantSuccess {
 				if err == nil || o != nil || authorizationRequests != 0 {
@@ -137,7 +142,7 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if o.Resource != origin || o.AuthURL != authorization.URL+"/authorize" || o.TokenURL != authorization.URL+"/token" || strings.Join(o.Scopes, " ") != "mcp:read" {
+			if o.Resource != origin+tc.resourceSuffix || o.AuthURL != authorization.URL+"/authorize" || o.TokenURL != authorization.URL+"/token" || strings.Join(o.Scopes, " ") != "mcp:read" {
 				t.Fatalf("incorrect root discovery: %#v", o)
 			}
 		})
