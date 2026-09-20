@@ -403,6 +403,11 @@ are durable local records, **not independently tamper-proof evidence**: an opera
 with database access can change them. Discovery, rejected malformed requests,
 browser logins and token refreshes do not yet have audit events. Tool results can
 contain sensitive data and are returned only to the authenticated owner/client.
+The dashboard reads separate encrypted operation summaries, so listing recent
+activity does not decrypt arguments or results. On the first startup after an
+upgrade, existing operations are backfilled one payload at a time, before restart
+recovery; their original ciphertext is preserved. Back up large ledgers before
+upgrading and allow time for this one-time migration.
 
 ## Connect real services deliberately
 
