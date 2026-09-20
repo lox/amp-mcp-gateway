@@ -17,10 +17,10 @@ separate copies of this matrix in each document.
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
-| Central upstream credentials | Implemented | Environment or encrypted pasted bearer tokens; encrypted OAuth client credentials, grants and refresh. |
+| Central upstream credentials | Implemented | Environment or encrypted pasted bearer tokens; encrypted OAuth grants with proactive refresh, persisted rotation/uncertain outcomes and bounded safe retries. Provider grant lifetimes still apply. |
 | Provider onboarding | Partial | Browser URL/auth flow, OAuth metadata discovery, PKCE and dynamic registration or supplied client credentials. Google and Dropbox's exact split-origin endpoints and offline access supported; other split-origin endpoints, expiring registration secrets and client-ID metadata documents unsupported. Dropbox consent, calls and refresh still need live validation. |
 | Real integrations | Partial | DeepWiki discovery verified in the demo; Buildkite reads, browser approval and denial verified in production. Live Google Sheets/Drive/Gmail metadata discovery verified; Google consent, execution and refresh still need validation. |
-| Connection UI | Partial | Add server, saved OAuth status, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or health dashboard yet. |
+| Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Amp workload authentication verified against Fly; demo/legacy bearer retained. |
 | Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
 | On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |

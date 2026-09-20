@@ -97,11 +97,35 @@ provider's metadata and tries dynamic client registration. If registration is
 unavailable, expand **Use an existing OAuth client** and supply its client ID and,
 if required, secret. Register the callback shown in the form with that provider.
 Review the discovered authorization server and scopes before clicking
-**Connect OAuth** (or **Reconnect OAuth**). After authorization, **Connected** means
-credentials are saved, not that the provider has confirmed they still work. Fetch
-tools to check access. An expired token without a refresh token shows **Reconnect
-required**; a storage error shows **Status unavailable** rather than implying the
-account is disconnected. Viewing status never refreshes credentials.
+**Connect OAuth** (or **Reconnect OAuth**). **Test connection**, beside reconnect,
+initializes MCP and lists tools without executing a tool or changing permissions.
+It updates health inline, preserving unsaved tool edits. **Healthy** means that
+test or a tool-list fetch succeeded at the displayed time, not continuous monitoring
+or verified account identity. Test observations reset to **Not tested** on restart
+or reauthorization. Viewing status does not contact the provider.
+
+The gateway checks OAuth grants every minute, refreshing tokens within two minutes
+of expiry even while idle. Expired tokens also refresh on use. Credentials, rotated
+refresh tokens, last-refresh times and refresh outcomes are encrypted and survive
+restarts. No expiry means no proactive schedule; no refresh token means reconnect
+will be needed when access expires. Provider revocation and absolute grant lifetimes
+still require consent again. The gateway must remain running to maintain idle grants.
+
+Connection health distinguishes **Refresh delayed** (a retry after one or two minutes),
+**Refresh paused** (three attempts exhausted; test to resume), **Reconnect required**
+(expired without refresh or `invalid_grant`), **Refresh blocked** (OAuth client/request
+configuration), and **Status unavailable** (storage failure). Only connection failures
+before a socket is acquired and explicit OAuth `server_error`/`temporarily_unavailable`
+rejections are retried. Lost or malformed responses, interrupted refreshes, and failed
+rotation persistence show **Refresh uncertain** and are never replayed, even on restart
+or when testing. Reconnect to recover those grants safely. A bare HTTP 5xx response is
+ambiguous, not proof that a rotating refresh token was unused.
+
+New grants retain the successful exchange's client authentication method. Legacy
+grants use configured `AuthStyle`, or the OAuth default (Basic for confidential
+clients, form parameters for public clients). An explicit HTTP 400/401
+`invalid_client` permits one scheduled switch from legacy Basic to form authentication;
+ambiguous failures never trigger authentication-method probing.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
 Discovered authorization and token endpoints must share an origin, except for

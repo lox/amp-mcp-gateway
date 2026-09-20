@@ -142,6 +142,7 @@ func run() error {
 	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return g.Run(ctx) })
+	group.Go(func() error { return m.RunRefresh(ctx) })
 	group.Go(func() error {
 		slog.Info("gateway listening", "address", *listen, "demo", *demoMode)
 		err := server.ListenAndServe()

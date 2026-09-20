@@ -341,9 +341,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	}
 	g.mu.RUnlock()
 	for _, c := range connections {
-		if c["OAuth"] == true {
-			c["AuthStatus"] = m.OAuthStatus(r.Context(), c["ID"].(string))
-		}
+		c["Health"] = m.Health(r.Context(), c["ID"].(string))
 	}
 	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }
