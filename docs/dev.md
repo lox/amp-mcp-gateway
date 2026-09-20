@@ -104,16 +104,53 @@ required**; a storage error shows **Status unavailable** rather than implying th
 account is disconnected. Viewing status never refreshes credentials.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
-Discovered authorization and token endpoints must share an origin, so credentials
-cannot go to a different host from the one reviewed before login. Split-origin
-providers are rejected for now. Dynamic registration responses with expiring
-client secrets are also rejected; registration renewal is not implemented.
+Discovered authorization and token endpoints must share an origin, except for
+Google's exact published pair: `https://accounts.google.com/o/oauth2/v2/auth`
+and `https://oauth2.googleapis.com/token`, discovered from Google's issuer.
+Other split-origin providers are rejected. Dynamic registration responses with
+expiring client secrets are also rejected; registration renewal is not implemented.
 
 Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.
 Local stdio and legacy SSE servers are not supported by this flow. Static trusted
 configuration can still use loopback fixtures. Discovery is limited to 500 tools,
 2 MiB of tool definitions and a 30-second timeout. Schemas must be self-contained.
+
+### Google Sheets, Drive and Gmail
+
+Google requires an existing **Web application** OAuth client ID and secret;
+it does not support dynamic client registration. You can reuse the client used
+by another MCP client, keeping its existing redirect URIs. Add a gateway callback
+for each connection name (replace the hostname for another deployment):
+
+```text
+https://lox-mcp-gateway.fly.dev/connections/google-sheets/callback
+https://lox-mcp-gateway.fly.dev/connections/google-drive/callback
+https://lox-mcp-gateway.fly.dev/connections/google-gmail/callback
+```
+
+In **Add MCP**, select OAuth and expand **Use an existing OAuth client**. Enter
+the ID and secret in the gateway, not in chat or source control. Use these names
+and endpoints:
+
+| Connection name | MCP URL |
+| --- | --- |
+| `google-sheets` | `https://sheetsmcp.googleapis.com/mcp/v1` |
+| `google-drive` | `https://drivemcp.googleapis.com/mcp/v1` |
+| `google-gmail` | `https://gmailmcp.googleapis.com/mcp/v1` |
+
+The gateway requests the scopes advertised by the provider; these can include
+write access. Review them before connecting. Google authorization requests offline
+access and consent so the gateway can receive a refresh token, including when
+the OAuth client already has a grant. The Google account, consent-screen audience
+and enabled APIs must permit the connection. See Google's
+[Workspace MCP setup guide](https://developers.google.com/workspace/guides/configure-mcp-servers).
+
+Fetch tools, keep **Require approval** as the default, and save. Test a harmless
+read and browser approval/denial before disabling the original direct connection.
+For Sheets, use a disposable spreadsheet. Verify refresh/reconnect before relying
+on the gateway as the only route. Successful discovery alone does not prove that
+Google granted access or that a tool call will succeed.
 
 ### Defaults, exceptions and refreshes
 

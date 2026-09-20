@@ -19,6 +19,10 @@ type reauthorizer interface {
 
 const stateCookie = "mcp_gateway_oauth_state"
 
+func googleOAuthEndpoints(authorize, token string) bool {
+	return authorize == "https://accounts.google.com/o/oauth2/v2/auth" && token == "https://oauth2.googleapis.com/token"
+}
+
 // Register installs the OAuth connect and callback handlers on mux.
 func (m *Manager) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /connections/{id}/connect", m.connectHandler)
@@ -52,6 +56,11 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/connections/" + c.config.ID + "/callback", HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: int(stateLifetime.Seconds())})
 	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
+	if googleOAuthEndpoints(c.config.OAuth.AuthURL, c.config.OAuth.TokenURL) {
+		// Google needs offline access and renewed consent to issue a refresh
+		// token when this client already has a grant through another connection.
+		options = append(options, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
+	}
 	if c.config.OAuth.Resource != "" {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
 	}
