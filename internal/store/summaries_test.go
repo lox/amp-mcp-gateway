@@ -120,7 +120,7 @@ func TestListDoesNotReadOperationPayload(t *testing.T) {
 func TestListOrderingAndLimit(t *testing.T) {
 	s, _, _ := testStore(t)
 	for i := range 105 {
-		o := operation(fmt.Sprintf("op-%03d", i), "pending")
+		o := operation(fmt.Sprintf("op-%03d", i), "denied")
 		o.Created = int64(i)
 		if _, err := s.Submit(t.Context(), o); err != nil {
 			t.Fatal(err)
