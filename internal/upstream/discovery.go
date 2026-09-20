@@ -93,10 +93,13 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	}
 	// The owner reviews the authorization URL before connecting. Do not send
 	// codes, PKCE verifiers or client secrets to a different, hidden origin.
+	// Google publishes a separate token origin; accept only its exact endpoints
+	// discovered from Google's issuer, not arbitrary split-origin metadata.
+	google := (issuer == "https://accounts.google.com" || issuer == "https://accounts.google.com/") && googleOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
 	authorization, authErr := url.Parse(meta.AuthorizationEndpoint)
 	token, tokenErr := url.Parse(meta.TokenEndpoint)
-	if authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host) {
-		return nil, errors.New("OAuth authorization and token endpoints must share an origin; split-origin providers are not supported yet")
+	if !google && (authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host)) {
+		return nil, errors.New("OAuth authorization and token endpoints must share an origin; only Google's published split-origin endpoints are supported")
 	}
 	if len(scopes) == 0 {
 		scopes = meta.ScopesSupported
@@ -125,7 +128,7 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 		default:
 			return nil, errors.New("OAuth client authentication method is unsupported")
 		}
-	} else if secret == "" {
+	} else if secret == "" || google {
 		o.AuthStyle = oauth2.AuthStyleInParams
 	}
 	if o.ClientID == "" {
