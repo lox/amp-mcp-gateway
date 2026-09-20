@@ -33,6 +33,38 @@ func refreshFixture(t *testing.T, handler http.HandlerFunc, expiry time.Time) (*
 	return m, m.conns[c.ID], s
 }
 
+func TestHealthDuringSlowRefresh(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	m, c, _ := refreshFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"new-canary","expires_in":3600}`)
+	}, time.Now().Add(-time.Minute))
+	finished := make(chan error, 1)
+	go func() {
+		_, err := m.refresh(t.Context(), c, false)
+		finished <- err
+	}()
+	defer func() {
+		close(release)
+		if err := <-finished; err != nil {
+			t.Error(err)
+		}
+	}()
+	<-started
+	health := make(chan Health, 1)
+	go func() { health <- m.Health(t.Context(), c.config.ID) }()
+	select {
+	case h := <-health:
+		if h.Status != "Updating credentials" {
+			t.Fatalf("in-flight refresh status = %q", h.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("health blocked behind provider request")
+	}
+}
+
 func TestProactiveRefreshDueAndRestart(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

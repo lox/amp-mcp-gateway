@@ -40,7 +40,11 @@ func (m *Manager) Health(ctx context.Context, id string) Health {
 	if !ok {
 		return Health{Status: "Not connected"}
 	}
-	c.mu.Lock()
+	// Credential updates serialize network exchanges, but a slow provider must
+	// not block the dashboard. Do not report an in-flight claim as uncertain.
+	if !c.mu.TryLock() {
+		return Health{Status: "Updating credentials", Detail: "A credential update is in progress. Check again shortly."}
+	}
 	defer c.mu.Unlock()
 	h := c.check
 	if h.Status == "" {

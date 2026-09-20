@@ -531,6 +531,26 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 	}
 }
 
+func TestHealthDisclosure(t *testing.T) {
+	for _, status := range []string{"Healthy", "Not tested", "Reconnect required", "Refresh uncertain", "Updating credentials"} {
+		t.Run(status, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			if err := page.ExecuteTemplate(w, "health", upstream.Health{Status: status, Detail: "Health explanation", Refresh: "Refresh explanation"}); err != nil {
+				t.Fatal(err)
+			}
+			body := w.Body.String()
+			end := strings.Index(body, "</details>")
+			if end < 0 || strings.Contains(body, " open") || !strings.Contains(body[:end], "Refresh explanation") {
+				t.Fatal("diagnostics must be collapsed by default")
+			}
+			warning := status != "Healthy" && status != "Not tested"
+			if strings.Contains(body[end:], "Health explanation") != warning {
+				t.Fatal("only actionable health explanations should remain visible")
+			}
+		})
+	}
+}
+
 func TestDashboardOAuthStatus(t *testing.T) {
 	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Status unavailable"} {
 		t.Run(status, func(t *testing.T) {
