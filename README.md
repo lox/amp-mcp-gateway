@@ -52,8 +52,10 @@ OAuth, a bearer token, or no authentication for a public server. For OAuth, revi
 the authorization server and scopes, then sign in with the provider.
 
 Click **Refresh tools**, set a connection default—usually **Require approval**—and
-**Save changes**. Use **Add exception** where needed. Under **All tools**, search and select multiple
-tools to allow or block them together, or reset them to the connection default.
+**Save changes**. Search finds tools across the connection, including those using
+the default. Each result shows its permission; **Default: Require approval**, for
+example, means it inherits the connection setting. Select multiple results to
+allow or block them together, or reset them to the connection default.
 Nothing changes until you save. Refreshes keep unchanged permissions; changed
 allowed tools go back to approval and blocked tools stay blocked.
 

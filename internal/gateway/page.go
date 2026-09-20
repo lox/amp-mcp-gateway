@@ -61,9 +61,14 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
  let dirty = false;
  function filter() {
   const query = search.value.toLowerCase().trim();
+  const activeView = query ? 'all' : view;
+  const defaultPolicy = form.querySelector('input[name="default_policy"]:checked').value;
+  const defaultLabel = { deny: 'Block', require_approval: 'Require approval', allow: 'Allow' }[defaultPolicy];
   for (const row of rows) {
-   const exception = row.querySelector('.tool-policy').value !== 'inherit';
-   row.hidden = !row.querySelector('details').textContent.toLowerCase().includes(query) || (view === 'exceptions' && !exception) || (view === 'changes' && !row.dataset.change);
+   const policy = row.querySelector('.tool-policy');
+   policy.querySelector('option[value="inherit"]').textContent = 'Default: ' + defaultLabel;
+   const exception = policy.value !== 'inherit';
+   row.hidden = !row.querySelector('details').textContent.toLowerCase().includes(query) || (activeView === 'exceptions' && !exception) || (activeView === 'changes' && !row.dataset.change);
    row.querySelector('.remove-exception').hidden = !exception;
    if (row.hidden) row.querySelector('.tool-select').checked = false;
   }
@@ -72,14 +77,14 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   const exceptions = rows.filter(row => row.querySelector('.tool-policy').value !== 'inherit').length;
   selectAll.checked = visible.length > 0 && selected === visible.length;
   selectAll.indeterminate = selected > 0 && selected < visible.length;
-  card.classList.toggle('bulk-mode', view !== 'exceptions');
-  document.getElementById('tools-heading').textContent = view === 'exceptions' ? 'Exceptions (' + exceptions + ')' : view === 'all' ? 'All tools (' + rows.length + ')' : 'New or changed tools';
-  document.getElementById('add-exception').hidden = view !== 'exceptions';
-  document.getElementById('bulk-actions').hidden = view === 'exceptions';
+  card.classList.toggle('bulk-mode', activeView !== 'exceptions');
+  document.getElementById('tools-heading').textContent = query ? 'Search results (' + visible.length + ')' : view === 'exceptions' ? 'Exceptions (' + exceptions + ')' : view === 'all' ? 'All tools (' + rows.length + ')' : 'New or changed tools';
+  document.getElementById('add-exception').hidden = activeView !== 'exceptions';
+  document.getElementById('bulk-actions').hidden = activeView === 'exceptions';
   document.getElementById('selection-count').textContent = selected + ' selected';
   document.querySelectorAll('[data-policy]').forEach(button => { button.disabled = selected === 0; });
-  document.querySelectorAll('[data-view]').forEach(button => { button.hidden = button.dataset.view === view; });
-  document.getElementById('tool-count').textContent = view === 'exceptions' ? (rows.length - exceptions) + ' tools use the default' : visible.length + ' of ' + rows.length + ' tools shown';
+  document.querySelectorAll('[data-view]').forEach(button => { button.hidden = !query && button.dataset.view === view; });
+  document.getElementById('tool-count').textContent = activeView === 'exceptions' ? (rows.length - exceptions) + ' tools use the default' : visible.length + ' of ' + rows.length + ' tools shown';
   document.getElementById('no-matches').hidden = visible.length !== 0;
   document.getElementById('no-matches').textContent = rows.length === 0 ? 'No tools yet. Refresh tools to discover what this server offers.' : query ? 'No matching tools.' : view === 'exceptions' ? 'No exceptions. All tools use the connection default.' : 'No new or changed tools in this review.';
  }
@@ -102,7 +107,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
   row.querySelector('.tool-policy').addEventListener('change', edited);
   row.querySelector('.remove-exception').addEventListener('click', () => {
    row.querySelector('.tool-policy').value = 'inherit'; edited();
-   (view === 'exceptions' ? document.getElementById('add-exception') : row.querySelector('.tool-policy')).focus();
+   (row.hidden ? document.getElementById('add-exception') : row.querySelector('.tool-policy')).focus();
   });
  });
  document.querySelectorAll('[data-policy]').forEach(button => button.addEventListener('click', () => {
