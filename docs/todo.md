@@ -69,7 +69,8 @@ separate copies of this matrix in each document.
 - [ ] Test consistent backup and restore with separately protected encryption keys.
 - [ ] Design credential/key rotation, session revocation and retention procedures.
 - [x] Bound browser-added upstream responses and tool discovery.
-- [ ] Bound login-state allocation and request rates.
+- [x] Bound pending browser OIDC login states and expiry cleanup.
+- [ ] Bound request rates, including unauthenticated login traffic.
 - [ ] Add connection diagnostics without leaking tokens or tool payloads.
 - [ ] Define complete audit coverage, then add independent archival/checkpointing.
 - [x] Add repeatable CI checks and create the Buildkite pipeline.

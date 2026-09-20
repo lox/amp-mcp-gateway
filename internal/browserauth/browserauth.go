@@ -25,10 +25,11 @@ import (
 )
 
 const (
-	sessionCookie = "mcp_gateway_session"
-	stateCookie   = "mcp_gateway_oidc"
-	sessionTTL    = 12 * time.Hour
-	stateTTL      = 10 * time.Minute
+	sessionCookie    = "mcp_gateway_session"
+	stateCookie      = "mcp_gateway_oidc"
+	sessionTTL       = 12 * time.Hour
+	stateTTL         = 10 * time.Minute
+	maxPendingLogins = 128
 )
 
 type subjectKey struct{}
@@ -192,13 +193,22 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
-	expires := a.now().Add(stateTTL)
 	a.mu.Lock()
-	for k, v := range a.states {
-		if !v.expires.After(a.now()) {
-			delete(a.states, k)
+	now := a.now()
+	// The capacity limit also bounds expiry work and contention with callbacks.
+	if len(a.states) >= maxPendingLogins {
+		for k, v := range a.states {
+			if !v.expires.After(now) {
+				delete(a.states, k)
+			}
 		}
 	}
+	if len(a.states) >= maxPendingLogins {
+		a.mu.Unlock()
+		http.Error(w, "too many pending logins; try again later", http.StatusServiceUnavailable)
+		return
+	}
+	expires := now.Add(stateTTL)
 	a.states[state] = pendingState{nonce: nonce, verifier: verifier, expires: expires}
 	a.mu.Unlock()
 	a.setSignedCookie(w, stateCookie, cookieValue{State: state, Expires: expires.Unix()}, stateTTL)

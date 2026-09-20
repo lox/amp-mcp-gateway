@@ -144,6 +144,20 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 				app.ServeHTTP(w, r)
 				return w
 			}
+			if tt.name == "generic OIDC without domain" {
+				for i := 1; i < 128; i++ {
+					w := httptest.NewRecorder()
+					app.ServeHTTP(w, httptest.NewRequest("GET", "/login", nil))
+					if w.Code != http.StatusSeeOther {
+						t.Fatalf("fill login capacity: status=%d", w.Code)
+					}
+				}
+				excess := httptest.NewRecorder()
+				app.ServeHTTP(excess, httptest.NewRequest("GET", "/login", nil))
+				if excess.Code != http.StatusServiceUnavailable {
+					t.Fatalf("full login capacity: status=%d", excess.Code)
+				}
+			}
 			res := callback()
 			want := http.StatusUnauthorized
 			if tt.wantSuccess {
@@ -168,6 +182,13 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			if session != tt.wantSuccess {
 				t.Fatal("incorrect session issuance")
+			}
+			if tt.name == "generic OIDC without domain" {
+				fresh := httptest.NewRecorder()
+				app.ServeHTTP(fresh, httptest.NewRequest("GET", "/login", nil))
+				if fresh.Code != http.StatusSeeOther {
+					t.Fatalf("callback did not release login capacity: status=%d", fresh.Code)
+				}
 			}
 			if callback().Code != http.StatusBadRequest {
 				t.Fatal("OAuth state replay accepted")

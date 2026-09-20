@@ -244,6 +244,10 @@ If the browser reports `authentication failed`, check Fly logs for
 `missing_id_token`, `id_token_verification`, `nonce`, `owner` or `hosted_domain`.
 These logs contain fixed stage names, not tokens, provider responses or user claims.
 Start a fresh login after a failure; callback state is single-use.
+The gateway retains at most 128 pending browser logins. At capacity, it removes
+expired states and returns HTTP 503 for excess attempts without invalidating
+existing logins. This bounds retained state and cleanup work; deployments still
+need request-rate controls to limit sustained login traffic.
 
 To reproduce the deployment:
 
