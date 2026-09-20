@@ -423,6 +423,10 @@ are durable local records, **not independently tamper-proof evidence**: an opera
 with database access can change them. Discovery, rejected malformed requests,
 browser logins and token refreshes do not yet have audit events. Tool results can
 contain sensitive data and are returned only to the authenticated owner/client.
+The UI pretty-prints schemas, arguments and JSON results only when the added
+whitespace stays within twice the compact input size plus 4 KiB. Deeper or larger
+expansions use complete compact JSON instead; approval arguments and stored
+results are never truncated or changed by presentation.
 
 ## Connect real services deliberately
 
