@@ -23,6 +23,10 @@ func googleOAuthEndpoints(authorize, token string) bool {
 	return authorize == "https://accounts.google.com/o/oauth2/v2/auth" && token == "https://oauth2.googleapis.com/token"
 }
 
+func dropboxOAuthEndpoints(authorize, token string) bool {
+	return authorize == "https://www.dropbox.com/oauth2/authorize" && token == "https://api.dropboxapi.com/oauth2/token"
+}
+
 // Register installs the OAuth connect and callback handlers on mux.
 func (m *Manager) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /connections/{id}/connect", m.connectHandler)
@@ -60,6 +64,9 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 		// Google needs offline access and renewed consent to issue a refresh
 		// token when this client already has a grant through another connection.
 		options = append(options, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
+	}
+	if dropboxOAuthEndpoints(c.config.OAuth.AuthURL, c.config.OAuth.TokenURL) {
+		options = append(options, oauth2.SetAuthURLParam("token_access_type", "offline"))
 	}
 	if c.config.OAuth.Resource != "" {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
