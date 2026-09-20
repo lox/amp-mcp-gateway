@@ -69,6 +69,13 @@ That demo tool requires approval. You review the account and exact arguments in
 the browser, then approve or deny. The request and its outcome are saved, so the
 agent can check back later without keeping the connection open.
 
+For verified Amp calls, you can instead approve future calls to that exact tool
+for **this thread** or **this project**, for one hour. This allows any schema-valid
+arguments, not just those on the approval page. Grants are revocable from the
+dashboard, remain bound to your Amp user, and never override a block. Project
+scope is offered only when Amp supplies a signed project identity. See
+[scope, expiry and invalidation rules](docs/dev.md#scoped-approvals).
+
 Finished calls show the result first, with JSON formatted for reading. Expand
 **Raw MCP response** for the full response, or **Request details** and
 **Identity & audit** for the arguments and attribution.

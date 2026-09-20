@@ -236,6 +236,9 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	}
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpUserID, o.AmpThreadID = identity.UserID, identity.ThreadID
+	o.AmpProjectID, o.AmpWorkspaceID = identity.ProjectID, identity.WorkspaceID
+	// Keep existing request IDs replayable across this upgrade. Project claims
+	// belong to the immutable first submission; retries never change its authority.
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
 }
@@ -299,20 +302,48 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
+	mux.HandleFunc("POST /grants/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if err := g.store.RevokeGrant(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context())); err != nil {
+			http.Error(w, "Grant unavailable or already revoked.", 409)
+			return
+		}
+		http.Redirect(w, r, "/#grants", 303)
+	})
 	mux.HandleFunc("GET /operations/{id}", g.operation)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
 		decision := r.PathValue("decision")
-		if decision != "approve" && decision != "deny" {
+		if decision != "approve" && decision != "deny" && decision != "approve-thread" && decision != "approve-project" {
 			http.NotFound(w, r)
 			return
 		}
-		if err := g.store.Decide(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context()), decision == "approve"); err != nil {
-			http.Error(w, "Operation expired or already decided.", 409)
+		var err error
+		if scope, ok := strings.CutPrefix(decision, "approve-"); ok {
+			err = g.approveScope(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context()), scope)
+		} else {
+			err = g.store.Decide(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context()), decision == "approve")
+		}
+		if err != nil {
+			http.Error(w, "Operation expired, changed, already decided or missing verified scope identity.", 409)
 			return
 		}
 		http.Redirect(w, r, "/operations/"+r.PathValue("id"), 303)
 	})
 	return auth.Require(http.NewCrossOriginProtection().Handler(mux))
+}
+
+func (g *Gateway) approveScope(ctx context.Context, id, actor, scope string) error {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	o, err := g.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	t, ok := g.tools[o.Tool]
+	if !ok || t.Policy != "require_approval" || g.cfg.AmpUserID == "" ||
+		o.AmpUserID != g.cfg.AmpUserID || !ampThreadID.MatchString(o.AmpThreadID) || actor != g.cfg.OwnerSubject {
+		return errors.New("scoped approval unavailable")
+	}
+	return g.store.ApproveScope(ctx, id, actor, scope, g.bindings[o.Tool])
 }
 
 func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -326,6 +357,11 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "audit unavailable", 503)
 		return
 	}
+	grants, err := g.store.Grants(r.Context(), g.cfg.OwnerSubject)
+	if err != nil {
+		http.Error(w, "grants unavailable", 503)
+		return
+	}
 	g.mu.RLock()
 	connections := make([]map[string]any, 0, len(g.cfg.Connections))
 	for _, c := range g.cfg.Connections {
@@ -337,7 +373,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 			c["AuthStatus"] = m.OAuthStatus(r.Context(), c["ID"].(string))
 		}
 	}
-	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
+	g.render(w, map[string]any{"Operations": ops, "Events": events, "Grants": grants, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	o, err := g.store.Get(r.Context(), r.PathValue("id"))

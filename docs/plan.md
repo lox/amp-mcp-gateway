@@ -85,8 +85,13 @@ gateway credentials. Google browser login requires both the exact subject and
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
 issuer check using this orb. The owner confirmed real Google browser login.
-General client-facing MCP OAuth discovery, scopes, per-thread grants and revocation are
-deferred; the current bridge is specific to Amp orbs.
+General client-facing MCP OAuth discovery and scopes remain deferred; the current
+bridge is specific to Amp orbs. Browser-created one-hour tool grants now narrow
+reusable approvals to a verified thread or the signed workspace/project pair,
+always within the configured owner and Amp user. They allow any schema-valid
+arguments, not resource-filtered mandates. Expiry and revocation are checked at
+atomic claim; catalogue saves and OAuth reconnects revoke grants. See
+[the scope contract](dev.md#scoped-approvals) for consent and invalidation rules.
 
 ### 4. Authority, account identity and meaningful approvals
 

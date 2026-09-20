@@ -22,15 +22,16 @@ separate copies of this matrix in each document.
 | Real integrations | Partial | DeepWiki discovery verified in the demo; Buildkite reads, browser approval and denial verified in production. Live Google Sheets/Drive/Gmail metadata discovery verified; Google consent, execution and refresh still need validation. |
 | Connection UI | Partial | Add server, saved OAuth status, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or health dashboard yet. |
 | OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Amp workload authentication verified against Fly; demo/legacy bearer retained. |
-| Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
+| Multiple users / workloads | Partial | One owner and Amp user; thread/project tool grants, but no multi-user isolation or per-agent credentials. |
 | On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. New tools inherit defaults after save; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, approve/deny, ten-minute expiry and status polling. |
+| Scoped approvals | Implemented | Human-created one-hour grants for one pinned tool, verified owner/user/thread or signed workspace/project pair; any schema-valid arguments. Browser revocation and separate grant-use audit. |
 | Effect previews | Planned | Exact payload only; no before/after effect or resource-state-aware approval. |
-| Bounded mandates | Planned | No resource-scoped grants, call budgets, standing grants or subagent delegation. |
+| Bounded mandates | Partial | Time-bounded thread/project grants; no resource filters, call budgets or subagent delegation. |
 | Duplicate / restart safety | Implemented | Idempotency keys, atomic claims and persisted approvals; ambiguous outcomes are not retried. |
-| Revocation | Partial | Token/key rotation, configuration changes and reconnect invalidation; no per-run/grant stop control. |
+| Revocation | Partial | Browser grant revocation, expiry, configuration changes and reconnect invalidation; already claimed calls cannot be cancelled. |
 | Tool-definition review | Partial | Refresh shows additions, changes and removals. Unchanged exceptions persist; changed allowed tools require approval and blocks persist. No automatic refresh or drift detection. |
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
 | Tamper-evident archive | Planned | No independent archive, signed checkpoints, immutable retention or receipts. |

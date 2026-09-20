@@ -27,21 +27,24 @@ type Store struct {
 
 // Operation is an immutable request with mutable execution state.
 type Operation struct {
-	ID          string          `json:"id"`
-	Tool        string          `json:"tool"`
-	Connection  string          `json:"connection"`
-	Account     string          `json:"account"`
-	Subject     string          `json:"subject"`
-	AmpUserID   string          `json:"amp_user_id,omitempty"`
-	AmpThreadID string          `json:"amp_thread_id,omitempty"`
-	Model       string          `json:"model_reported,omitempty"`
-	Arguments   map[string]any  `json:"arguments"`
-	Digest      string          `json:"digest"`
-	Binding     string          `json:"binding"`
-	Status      string          `json:"status"`
-	Created     int64           `json:"created"`
-	Expires     int64           `json:"expires"`
-	Result      json.RawMessage `json:"result,omitempty"`
+	ID             string          `json:"id"`
+	Tool           string          `json:"tool"`
+	Connection     string          `json:"connection"`
+	Account        string          `json:"account"`
+	Subject        string          `json:"subject"`
+	AmpUserID      string          `json:"amp_user_id,omitempty"`
+	AmpThreadID    string          `json:"amp_thread_id,omitempty"`
+	AmpProjectID   string          `json:"amp_project_id,omitempty"`
+	AmpWorkspaceID string          `json:"amp_workspace_id,omitempty"`
+	GrantID        string          `json:"grant_id,omitempty"`
+	Model          string          `json:"model_reported,omitempty"`
+	Arguments      map[string]any  `json:"arguments"`
+	Digest         string          `json:"digest"`
+	Binding        string          `json:"binding"`
+	Status         string          `json:"status"`
+	Created        int64           `json:"created"`
+	Expires        int64           `json:"expires"`
+	Result         json.RawMessage `json:"result,omitempty"`
 }
 
 // Event records a durable state transition without tool payloads or credentials.
@@ -92,6 +95,7 @@ func Open(path, key string) (*Store, error) {
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, match_key TEXT NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
 	if err != nil {
@@ -183,6 +187,9 @@ func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) er
 	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
 		return err
 	}
+	if err := revokeAllGrants(ctx, tx, "catalogue-changed"); err != nil {
+		return err
+	}
 	for _, e := range events {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) VALUES(?,?,?,unixepoch())", e.Operation, e.Kind, e.Actor); err != nil {
 			return err
@@ -219,6 +226,9 @@ func (s *Store) Reauthorize(ctx context.Context, id string, b []byte) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO tokens VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", id, s.seal("token:"+id, b)); err != nil {
+		return err
+	}
+	if err := revokeAllGrants(ctx, tx, "connection-reauthorized"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -264,6 +274,22 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return o, err
 	}
+	// A grant only replaces require_approval, never an explicit block or allow.
+	if o.Status == "pending" && o.AmpUserID != "" && o.AmpThreadID != "" {
+		for _, scope := range []string{"thread", "project"} {
+			if scope == "project" && o.AmpProjectID == "" {
+				continue
+			}
+			err = tx.QueryRowContext(ctx, "SELECT id FROM grants WHERE match_key=? AND revoked=0 AND expires>? ORDER BY expires DESC,id LIMIT 1", grantKey(o, scope), time.Now().Unix()).Scan(&o.GrantID)
+			if err == nil {
+				o.Status = "ready"
+				break
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return o, err
+			}
+		}
+	}
 	b, err := json.Marshal(o)
 	if err != nil {
 		return o, err
@@ -278,6 +304,11 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
+	if o.GrantID != "" {
+		if err = event(ctx, tx, o.ID, "grant-authorized", "grant:"+o.GrantID); err != nil {
+			return o, err
+		}
+	}
 	return o, tx.Commit()
 }
 
@@ -288,6 +319,10 @@ func event(ctx context.Context, tx *sql.Tx, id, kind, actor string) error {
 
 // Decide consumes an unexpired approval once; it cannot modify the stored request.
 func (s *Store) Decide(ctx context.Context, id, actor string, approve bool) error {
+	return s.decide(ctx, id, actor, approve, "", "")
+}
+
+func (s *Store) decide(ctx context.Context, id, actor string, approve bool, scope, binding string) error {
 	status := "denied"
 	if approve {
 		status = "ready"
@@ -297,6 +332,15 @@ func (s *Store) Decide(ctx context.Context, id, actor string, approve bool) erro
 		return err
 	}
 	defer tx.Rollback()
+	if scope != "" {
+		o, err := s.decode(tx.QueryRowContext(ctx, "SELECT id,status,payload FROM operations WHERE id=?", id))
+		if err != nil {
+			return err
+		}
+		if err := s.createGrant(ctx, tx, o, actor, scope, binding); err != nil {
+			return err
+		}
+	}
 	r, err := tx.ExecContext(ctx, "UPDATE operations SET status=? WHERE id=? AND status='pending' AND expires>?", status, id, time.Now().Unix())
 	if err != nil {
 		return err
@@ -337,6 +381,24 @@ func (s *Store) Claim(ctx context.Context) (Operation, error) {
 	}
 	if err != nil {
 		return o, err
+	}
+	if o.GrantID != "" {
+		var valid int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM grants WHERE id=? AND revoked=0 AND expires>?", o.GrantID, now).Scan(&valid); err != nil {
+			return o, err
+		}
+		if valid != 1 {
+			if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE id=?", o.ID); err != nil {
+				return o, err
+			}
+			if err := event(ctx, tx, o.ID, "denied", "grant-expired-or-revoked:"+o.GrantID); err != nil {
+				return o, err
+			}
+			if err := tx.Commit(); err != nil {
+				return o, err
+			}
+			return Operation{}, sql.ErrNoRows
+		}
 	}
 	if err = event(ctx, tx, o.ID, "running", "gateway"); err != nil {
 		return o, err

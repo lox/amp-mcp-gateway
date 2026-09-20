@@ -31,6 +31,7 @@ func TestAmpIdentity(t *testing.T) {
 	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
 	mint := func(change func(map[string]any)) string {
 		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "user:user-owner:thread:" + thread, "user_id": "user-owner", "thread_id": thread, "token_use": "exchanged", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
+		claims["project_id"], claims["workspace_id"] = "signed-project", "signed-workspace"
 		change(claims)
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
 		if err != nil {
@@ -92,7 +93,7 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submit %v %v", result, err)
 	}
 	o, err := s.Get(t.Context(), "amp-request-001")
-	if err != nil || o.AmpUserID != "user-owner" || o.AmpThreadID != thread || o.Subject != "owner" {
+	if err != nil || o.AmpUserID != "user-owner" || o.AmpThreadID != thread || o.Subject != "owner" || o.AmpProjectID != "signed-project" || o.AmpWorkspaceID != "signed-workspace" {
 		t.Fatalf("identity not persisted: %+v %v", o, err)
 	}
 	events, err := s.Events(t.Context())
