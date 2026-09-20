@@ -102,6 +102,10 @@ credentials are saved, not that the provider has confirmed they still work. Fetc
 tools to check access. An expired token without a refresh token shows **Reconnect
 required**; a storage error shows **Status unavailable** rather than implying the
 account is disconnected. Viewing status never refreshes credentials.
+Use the Connect/Reconnect button to start authorization: initiation requires an
+owner-authenticated, same-origin POST. Direct GET links do not start a grant.
+The response opens the provider in a new navigation, preserving the gateway's
+`form-action 'self'` policy; a Continue link is available if JavaScript is disabled.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
 Discovered authorization and token endpoints must share an origin, except for

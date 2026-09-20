@@ -455,7 +455,7 @@ func TestOAuthStatusPage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, text := range []string{">" + tc.status + "</span>", tc.help, ">" + tc.action + "</a>", `role="status"`} {
+			for _, text := range []string{">" + tc.status + "</span>", tc.help, ">" + tc.action + "</button>", `role="status"`} {
 				if !strings.Contains(w.Body.String(), text) {
 					t.Fatalf("missing %q", text)
 				}
@@ -490,8 +490,8 @@ func TestDashboardOAuthStatus(t *testing.T) {
 			if status == "Not connected" {
 				action = "Connect"
 			}
-			inline := `</span><small><a href="/connections/oauth/connect">` + action + `</a></small></p>`
-			if !strings.Contains(body, inline) || strings.Count(body, `href="/connections/oauth/connect"`) != 1 {
+			inline := `</span><form method="post" action="/connections/oauth/connect"><button>` + action + `</button></form></div>`
+			if !strings.Contains(body, inline) || strings.Count(body, `action="/connections/oauth/connect"`) != 1 {
 				t.Fatal("connection action must appear once, beside status")
 			}
 		})

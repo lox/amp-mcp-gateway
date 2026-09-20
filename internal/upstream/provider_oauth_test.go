@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -69,11 +68,8 @@ func TestGoogleOAuthDiscovery(t *testing.T) {
 			mux := http.NewServeMux()
 			m.Register(mux)
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, httptest.NewRequest("GET", "/connections/sheets/connect", nil))
-			location, err := url.Parse(w.Header().Get("Location"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/connections/sheets/connect", nil))
+			location := authorizationLocation(t, w)
 			q := location.Query()
 			for key, want := range map[string]string{"access_type": "offline", "prompt": "consent", "token_access_type": "", "code_challenge_method": "S256", "client_id": "existing-client", "redirect_uri": "https://gateway.example/connections/sheets/callback", "scope": "https://www.googleapis.com/auth/spreadsheets.readonly"} {
 				if q.Get(key) != want {

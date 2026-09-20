@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"html/template"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +21,11 @@ type reauthorizer interface {
 
 const stateCookie = "mcp_gateway_oauth_state"
 
+var authorizationPage = template.Must(template.New("authorize").Parse(`<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Continue to provider</title>
+<p>Continuing to your provider. <a href="{{.}}">Continue to sign in</a></p>
+<script>window.location.replace({{.}});</script></html>`))
+
 func googleOAuthEndpoints(authorize, token string) bool {
 	return authorize == "https://accounts.google.com/o/oauth2/v2/auth" && token == "https://oauth2.googleapis.com/token"
 }
@@ -29,7 +36,7 @@ func dropboxOAuthEndpoints(authorize, token string) bool {
 
 // Register installs the OAuth connect and callback handlers on mux.
 func (m *Manager) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /connections/{id}/connect", m.connectHandler)
+	mux.HandleFunc("POST /connections/{id}/connect", m.connectHandler)
 	mux.HandleFunc("GET /connections/{id}/callback", m.callbackHandler)
 }
 
@@ -72,7 +79,13 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
 	}
 	location := m.oauthConfig(c.config).AuthCodeURL(state, options...)
-	http.Redirect(w, r, location, http.StatusFound)
+	// A form redirect to another origin can be blocked by form-action 'self'.
+	// Finish the POST here, then start a top-level navigation with an escaped URL.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := authorizationPage.Execute(w, location); err != nil {
+		slog.Error("could not render OAuth authorization handoff")
+	}
 }
 
 func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
