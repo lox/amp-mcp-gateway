@@ -119,11 +119,17 @@ configuration can still use loopback fixtures. Discovery is limited to 500 tools
 
 The suggested connection default is **Require approval**. The page starts with
 **Exceptions**. **Add exception** opens the full tool list; choose a permission
-for any tool you want to override. Under **All tools**, search, select visible
-tools and click a bulk permission button. Edits are staged until **Save changes**.
-Filtering clears hidden selections. The remove button or **Use connection default**
-removes an exception; **Use default** does the same in bulk. Expand a tool to read its
-description and schema; names and read-only annotations never grant permissions.
+for any tool you want to override. Searching from any view searches all tools in
+the connection. Clearing the query restores that view. Inherited permissions show
+**Default: Require approval**, **Default: Allow** or **Default: Block**, reflecting
+the current draft default. Explicit exceptions keep their own permission.
+Select visible tools and click a bulk permission button. Edits are staged until
+**Save changes**. Filtering clears hidden selections. The remove button or the
+**Default: …** option removes an exception; **Use default** does the same in bulk.
+Expand a tool to read its description and schema; names and read-only annotations
+never grant permissions.
+
+![Search finds tools that inherit the connection default](images/tool-search.png)
 
 Existing saved permissions are preserved as explicit exceptions on upgrade.
 To adopt the default for them, select them in bulk and choose **Use default**
