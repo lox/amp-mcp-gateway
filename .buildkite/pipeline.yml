@@ -1,9 +1,14 @@
 agents:
   queue: default
 
+# Attach the hosted volume used automatically by setup-go and mise.
+cache: ".buildkite/cache-volume"
+
 steps:
   - label: ":go: Test and build"
     key: check
+    plugins:
+      - setup-go#v0.1.0: ~
     command: .buildkite/check
     timeout_in_minutes: 15
 
@@ -11,6 +16,9 @@ steps:
     key: deploy
     depends_on: check
     if: build.branch == "main" && build.pull_request.id == null
+    plugins:
+      - mise#v1.1.5:
+          install_args: flyctl
     command: .buildkite/deploy
     concurrency: 1
     concurrency_group: lox-mcp-gateway-production

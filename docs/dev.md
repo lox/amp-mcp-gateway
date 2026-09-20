@@ -256,7 +256,13 @@ request can start it again. Snapshots do not replace a tested backup/restore pro
 `default` queue. The GitHub webhook builds branches and pull requests; fork PRs
 are disabled. The pipeline uploads `.buildkite/pipeline.yml` from the checkout.
 
-Checks run setup, build both Go commands, race tests, vet and formatting checks.
+Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
+run formatting checks, race tests, vet and builds of both Go commands. A hosted
+cache volume retains the mise toolchains and Go module/build caches; cache misses
+fall back to normal downloads and compilation. The deploy job installs only
+`flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote
+Docker builder still builds the production image from source.
+
 Fly config validation runs in the authenticated deploy job. Only non-PR `main`
 builds deploy after checks pass. Deploys
 share one concurrency slot, skip superseded main commits, use Fly's rolling
