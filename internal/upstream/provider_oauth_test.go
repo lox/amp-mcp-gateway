@@ -111,11 +111,8 @@ func TestDropboxOAuthDiscovery(t *testing.T) {
 			mux := http.NewServeMux()
 			m.Register(mux)
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, httptest.NewRequest("GET", "/connections/dropbox/connect", nil))
-			location, err := url.Parse(w.Header().Get("Location"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			mux.ServeHTTP(w, httptest.NewRequest("POST", "/connections/dropbox/connect", nil))
+			location := authorizationLocation(t, w)
 			q := location.Query()
 			for key, want := range map[string]string{"token_access_type": "offline", "access_type": "", "prompt": "", "code_challenge_method": "S256", "client_id": "existing-client", "redirect_uri": "https://gateway.example/connections/dropbox/callback", "scope": "files.metadata.read", "resource": "https://mcp.dropbox.com/mcp"} {
 				if q.Get(key) != want {
