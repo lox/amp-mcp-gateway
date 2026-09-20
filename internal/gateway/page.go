@@ -21,6 +21,18 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 <div class="bearer-fields field"><label for="connection-token">Bearer token</label><input id="connection-token" name="token" type="password" autocomplete="new-password"><small>Stored encrypted. Never shown again.</small></div>
 <div class="oauth-fields"><p class="help">We discover OAuth settings and try to register a client. You’ll review the authorization server and scopes before signing in.</p><details><summary>Use an existing OAuth client</summary><div class="field"><label for="client-id">Client ID</label><input id="client-id" name="client_id" value="{{.Values.client_id}}" maxlength="1024"></div><div class="field"><label for="client-secret">Client secret <small>(if required)</small></label><input id="client-secret" name="client_secret" type="password" autocomplete="new-password"></div><p class="help endpoint">Register this callback, replacing CONNECTION-NAME with the name above:<br><code>{{.BaseURL}}/connections/CONNECTION-NAME/callback</code></p></details></div>
 </div><p class="note">No tools are enabled when you add a server. Adding a connection or saving policies cancels queued requests; running calls must finish first.</p><div class="actions"><button class="primary">Add server</button><a class="button" href="/">Cancel</a></div></form></div>
+{{else if .PolicyProposal}}
+<div class="permissions"><a href="/">← Connections</a><h1>Review policy proposal</h1>
+<p class="note">An agent proposed these changes. Nothing has been applied. Only you can apply or discard this entire batch. Tool names are not safety classifications.</p>
+{{if .Proposal.Identity.UserID}}<p>Verified Amp user: <code>{{.Proposal.Identity.UserID}}</code><br>Verified thread: <a href="https://ampcode.com/threads/{{.Proposal.Identity.ThreadID}}">{{.Proposal.Identity.ThreadID}}</a></p>{{else}}<p>Authenticated bearer agent. No verified Amp user or thread identity.</p>{{end}}
+<p class="help">Expires {{.Proposal.Expires.UTC.Format "15:04:05 UTC"}}. Any catalogue change invalidates this proposal. A restart also discards it.</p>
+{{range .Connections}}<section class="card"><h2>{{.ID}}</h2><p>Connection default: <strong>{{.Before}} → {{.After}}</strong></p>
+<p class="help">All saved tools shown below. Unspecified exceptions are preserved. “Use default” follows the connection default, including future tools.</p>
+<div class="scroll"><table><thead><tr><th>Tool</th><th>Exception before → after</th><th>Effective before → after</th></tr></thead><tbody>
+{{range .Rows}}<tr><td><code>{{.ID}}</code></td><td>{{.Before}} → {{.After}}</td><td><strong>{{.BeforeEffective}} → {{.AfterEffective}}</strong>{{if and (eq .Before .After) (eq .BeforeEffective .AfterEffective)}} <small>(unchanged)</small>{{end}}</td></tr>{{end}}
+</tbody></table></div></section>{{end}}
+<p class="help">Applying cancels queued requests. Running calls must finish first. This applies the stored proposal, not editable form values.</p>
+<div class="actions"><form method="post" action="/policy-proposals/{{.Ticket}}/apply"><button class="primary">Apply proposed changes</button></form><form method="post" action="/policy-proposals/{{.Ticket}}/discard"><button>Discard proposal</button></form></div></div>
 {{else if .ToolReview}}
 <div class="permissions"><a href="/">← Connections</a>
 <div class="connection-heading"><h1>{{.Connection.ID}}</h1>

@@ -10,12 +10,46 @@ tested; real provider execution still needs validation.
 
 ## How it works
 
-The agent gets three tools:
+The agent gets three execution tools and one policy proposal tool:
 
 - `find_tools` searches the configured tools and returns their argument schemas.
 - `call_tools` submits a call to a specific tool. It either queues it, denies it,
   or returns a link for human approval.
 - `get_operation` checks the status and retrieves the result.
+- `propose_policy_changes` prepares an immutable batch for human browser review;
+  it cannot apply policies or approve its own proposal.
+
+For example, propose a connection default and explicit tool exceptions:
+
+```json
+{
+  "changes": [{
+    "connection": "notes",
+    "default_policy": "require_approval",
+    "tools": {"notes.create": "deny"}
+  }]
+}
+```
+
+Use exact saved tool IDs. Omitted defaults and exceptions stay unchanged; policies
+are `allow`, `require_approval`, or `deny`. Tool exceptions also accept `inherit`
+to remove an exception. No tool-name-based safety classification is performed.
+The tool returns one `review_url` and `expires_at` for up to 32 connections.
+Only the signed-in owner can apply or discard the entire batch. The review shows
+defaults, exceptions, and effective permissions before and after, including
+unchanged tools and blocks. Changing a default also affects tools that inherit it.
+
+Proposals expire after ten minutes, are lost on restart, and become invalid after
+any catalogue change. Opening ordinary permission pages or creating another
+proposal does not replace an existing proposal. At most 32 proposals may be open.
+Applying uses the existing atomic catalogue save: queued calls are revoked and
+running calls must finish first. Proposal, apply, and discard events are audited;
+the apply event commits with the policies. Verified Amp user/thread attribution
+comes only from workload authentication; bearer clients have no verified Amp
+identity. These links do not authorize access without human browser login.
+If prompted to sign in, reopen the review link after signing in.
+
+![Reviewing an agent-proposed policy batch in the disposable demo](docs/images/policy-proposal.png)
 
 For example, after finding `notes.create`, the agent calls `call_tools` with:
 

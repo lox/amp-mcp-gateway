@@ -49,14 +49,15 @@ type Backend interface {
 
 // Gateway owns validated tools and execution policy.
 type Gateway struct {
-	mu       sync.RWMutex // catalogue publication, submission and discovery snapshots
-	cfg      Config
-	store    *store.Store
-	backend  Backend
-	tools    map[string]Tool
-	schemas  map[string]*jsonschema.Schema
-	bindings map[string]string
-	drafts   map[string]toolDraft
+	mu        sync.RWMutex // catalogue publication, submission and discovery snapshots
+	cfg       Config
+	store     *store.Store
+	backend   Backend
+	tools     map[string]Tool
+	schemas   map[string]*jsonschema.Schema
+	bindings  map[string]string
+	drafts    map[string]toolDraft
+	proposals map[string]policyProposal
 }
 
 // New validates and compiles the pinned tool catalogue.
@@ -138,7 +139,7 @@ func (g *Gateway) result(o store.Operation) operationResult {
 	return operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
 }
 
-// MCP serves three standard MCP tools behind a revocable owner bearer token.
+// MCP serves execution and policy proposal tools behind a revocable owner bearer token.
 func (g *Gateway) MCP(token string) http.Handler {
 	h := g.mcpHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +154,10 @@ func (g *Gateway) MCP(token string) http.Handler {
 
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-gateway", Version: "0.1.0"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection default and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
+		out, err := g.proposePolicies(ctx, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
 		g.mu.RLock()
 		defer g.mu.RUnlock()

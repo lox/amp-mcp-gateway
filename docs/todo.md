@@ -12,7 +12,8 @@ separate copies of this matrix in each document.
 
 | Capability | Status | Current behavior / remaining gap |
 | --- | --- | --- |
-| One MCP endpoint | Implemented | Streamable HTTP with `find_tools`, `call_tools`, `get_operation`. |
+| One MCP endpoint | Implemented | Streamable HTTP with `find_tools`, `call_tools`, `get_operation`, `propose_policy_changes`. |
+| Agent policy proposals | Implemented | Immutable multi-connection batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |

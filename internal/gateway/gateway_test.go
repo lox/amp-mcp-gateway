@@ -195,8 +195,12 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	}
 	defer session.Close()
 	tools, err := session.ListTools(t.Context(), nil)
-	if err != nil || len(tools.Tools) != 3 {
+	if err != nil || len(tools.Tools) != 4 {
 		t.Fatalf("tools %#v %v", tools, err)
+	}
+	proposal, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "propose_policy_changes", Arguments: policyInput{Changes: []policyChange{{Connection: "notes", Default: "deny"}}}})
+	if err != nil || proposal.IsError || g.cfg.defaultPolicy("notes") != "require_approval" {
+		t.Fatalf("proposal changed authority or failed: %v %v", proposal, err)
 	}
 	found, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "find_tools", Arguments: map[string]any{"query": "notes"}})
 	if err != nil || found.IsError {
