@@ -206,20 +206,26 @@ func (m *Manager) Call(ctx context.Context, connection, tool string, args map[st
 func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.ClientSession) error) error {
 	c, ok := m.connection(id)
 	if !ok {
-		return fmt.Errorf("unknown connection %q", id)
+		return failure("credentials", fmt.Errorf("unknown connection %q", id), 0)
 	}
 	httpClient, err := m.httpClient(ctx, c)
 	if err != nil {
-		return err
+		return failure("credentials", err, 0)
 	}
+	observed := &statusTransport{base: httpClient.Transport}
+	httpClient.Transport = observed
 	transport := &mcp.StreamableClientTransport{Endpoint: c.config.URL, HTTPClient: httpClient, MaxRetries: -1, DisableStandaloneSSE: true}
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-gateway", Version: "1"}, nil)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("connect upstream: %w", err)
+		return failure("connect", err, int(observed.status.Load()))
 	}
 	defer session.Close()
-	return fn(session)
+	observed.status.Store(0)
+	if err := fn(session); err != nil {
+		return failure("request", err, int(observed.status.Load()))
+	}
+	return nil
 }
 
 func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.Client, error) {

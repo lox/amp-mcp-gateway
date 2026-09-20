@@ -20,12 +20,16 @@ import (
 )
 
 type fixtureBackend struct {
-	calls atomic.Int32
-	fail  bool
+	calls   atomic.Int32
+	fail    bool
+	callErr error
 }
 
 func (b *fixtureBackend) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
 	b.calls.Add(1)
+	if b.callErr != nil {
+		return nil, b.callErr
+	}
 	if b.fail {
 		return nil, errors.New("lost response")
 	}
@@ -119,6 +123,28 @@ func TestApprovalExecutesStoredArgumentsExactlyOnce(t *testing.T) {
 }
 
 func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
+	t.Run("safe diagnostic persisted", func(t *testing.T) {
+		g, s, b := fixture(t)
+		b.callErr = &upstream.Failure{Stage: "request", Kind: "jsonrpc", RPCCode: new(int64(0))}
+		o, err := g.submit(t.Context(), input("diagnostic-call", "private"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+			t.Fatal(err)
+		}
+		runWorker(t, g)
+		o = await(t, s, o.ID, "unknown")
+		var result struct {
+			Diagnostic upstream.Failure `json:"diagnostic"`
+		}
+		if err := json.Unmarshal(o.Result, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Diagnostic.Stage != "request" || result.Diagnostic.Kind != "jsonrpc" || result.Diagnostic.RPCCode == nil || *result.Diagnostic.RPCCode != 0 {
+			t.Fatalf("missing diagnostic: %s", o.Result)
+		}
+	})
 	t.Run("changed account", func(t *testing.T) {
 		g, s, b := fixture(t)
 		o, err := g.submit(t.Context(), input("account-change", "private"))

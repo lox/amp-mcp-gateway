@@ -273,7 +273,15 @@ func (g *Gateway) Run(ctx context.Context) error {
 			var raw json.RawMessage
 			if callErr != nil {
 				status = "unknown"
-				raw = json.RawMessage(`{"message":"No reliable upstream outcome. Inspect the upstream before retrying."}`)
+				var diagnostic *upstream.Failure
+				errors.As(callErr, &diagnostic)
+				raw, err = json.Marshal(struct {
+					Message    string            `json:"message"`
+					Diagnostic *upstream.Failure `json:"diagnostic,omitempty"`
+				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic})
+				if err != nil {
+					return err
+				}
 			} else {
 				raw, err = json.Marshal(result)
 				if err != nil {
