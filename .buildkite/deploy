@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH="$HOME/.local/bin:$PATH"
 
 if [[ "${BUILDKITE_BRANCH:-}" != main || "${BUILDKITE_PULL_REQUEST:-false}" != false ]]; then
   echo 'Only non-PR main builds can deploy.' >&2
@@ -19,12 +18,11 @@ if [[ "$head" != "$latest" ]]; then
   exit 0
 fi
 
-.agents/setup
 # Fetch only in the deploy job, never upload the credential or print it.
 set +x
 FLY_API_TOKEN=$(buildkite-agent secret get MCP_GATEWAY_FLY_DEPLOY)
 export FLY_API_TOKEN
-mise exec -- flyctl config validate
-mise exec -- flyctl deploy --app lox-mcp-gateway --remote-only --ha=false --yes
+flyctl config validate
+flyctl deploy --app lox-mcp-gateway --remote-only --ha=false --yes
 curl --fail --silent --show-error --retry 5 --retry-delay 2 --max-time 20 \
   https://lox-mcp-gateway.fly.dev/healthz

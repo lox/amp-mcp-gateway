@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH="$HOME/.local/bin:$PATH"
-.agents/setup
+# setup-go installs Go; do not auto-install unrelated tools from mise.toml.
+export MISE_AUTO_INSTALL=false
 mise run check
+mise run build
