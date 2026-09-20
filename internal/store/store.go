@@ -265,14 +265,14 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, s.seal("operation:"+o.ID, b)); err != nil {
 		return o, err
 	}
-	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account}); err != nil {
-		return o, err
-	}
 	actor := o.Subject
 	if o.AmpUserID != "" {
 		actor = "amp:" + o.AmpUserID
 	}
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
+		return o, err
+	}
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account}); err != nil {
 		return o, err
 	}
 	return o, tx.Commit()
