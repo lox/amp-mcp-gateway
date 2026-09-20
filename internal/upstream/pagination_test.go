@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -55,8 +56,14 @@ func TestDiscoveryCursorBudget(t *testing.T) {
 				if (err != nil) != tc.wantError || int(pages.Load()) != tc.wantPages {
 					t.Fatalf("pages=%d error=%v", pages.Load(), err)
 				}
-				if tc.wantError && tc.name != "cycle" && !strings.Contains(err.Error(), "catalogue exceeds") {
-					t.Fatalf("wrong rejection: %v", err)
+				if tc.wantError {
+					var diagnostic *Failure
+					if !errors.As(err, &diagnostic) || diagnostic.Stage != "request" {
+						t.Fatalf("missing request diagnostic: %v", err)
+					}
+					if tc.name != "cycle" && (diagnostic.Unwrap() == nil || !strings.Contains(diagnostic.Unwrap().Error(), "catalogue exceeds")) {
+						t.Fatalf("wrong rejection cause: %v", diagnostic.Unwrap())
+					}
 				}
 			})
 		}
