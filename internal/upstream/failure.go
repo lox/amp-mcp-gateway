@@ -19,7 +19,7 @@ type Failure struct {
 	Stage      string `json:"stage"`
 	Kind       string `json:"kind"`
 	HTTPStatus int    `json:"http_status,omitempty"`
-	RPCCode    int64  `json:"rpc_code,omitempty"`
+	RPCCode    *int64 `json:"rpc_code,omitempty"`
 	cause      error
 }
 
@@ -42,7 +42,7 @@ func failure(stage string, err error, status int) error {
 			f.HTTPStatus = tokenErr.Response.StatusCode
 		}
 	case errors.As(err, &rpcErr):
-		f.Kind, f.RPCCode = "jsonrpc", rpcErr.Code
+		f.Kind, f.RPCCode = "jsonrpc", new(rpcErr.Code)
 	case status != 0:
 		f.Kind = "http"
 	case errors.As(err, &networkErr):

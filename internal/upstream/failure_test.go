@@ -31,16 +31,25 @@ func TestFailureRedactsProviderDetails(t *testing.T) {
 		{"http", errors.New("secret-canary"), 403, "http", 403, 0},
 		{"oauth", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 401}, Body: []byte("secret-canary"), ErrorDescription: "secret-canary"}, 0, "oauth_token", 401, 0},
 		{"rpc", &jsonrpc.Error{Code: -32602, Message: "secret-canary", Data: json.RawMessage(`"secret-canary"`)}, 0, "jsonrpc", 0, -32602},
+		{"rpc zero", &jsonrpc.Error{Code: 0, Message: "secret-canary"}, 0, "jsonrpc", 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := failure("request", tc.err, tc.status)
 			var f *Failure
-			if !errors.As(err, &f) || f.Stage != "request" || f.Kind != tc.kind || f.HTTPStatus != tc.http || f.RPCCode != tc.rpc {
+			if !errors.As(err, &f) || f.Stage != "request" || f.Kind != tc.kind || f.HTTPStatus != tc.http {
 				t.Fatalf("incorrect diagnostic: %#v", f)
 			}
 			raw, errJSON := json.Marshal(f)
 			if errJSON != nil {
 				t.Fatal(errJSON)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			code, present := fields["rpc_code"]
+			if present != (tc.kind == "jsonrpc") || (present && string(code) != fmt.Sprint(tc.rpc)) {
+				t.Fatalf("incorrect serialized RPC code: %s", raw)
 			}
 			if strings.Contains(string(raw)+err.Error(), "secret-canary") {
 				t.Fatal("provider details leaked")
@@ -85,7 +94,7 @@ func TestSessionFailureStage(t *testing.T) {
 		m := newTestManager(t, s.URL, Connection{ID: "one", URL: s.URL, NoAuth: true})
 		_, err := m.Call(t.Context(), "one", "secret-canary", map[string]any{})
 		var f *Failure
-		if !errors.As(err, &f) || f.Stage != "request" || f.Kind != "jsonrpc" || f.RPCCode != -32602 || f.HTTPStatus != 0 {
+		if !errors.As(err, &f) || f.Stage != "request" || f.Kind != "jsonrpc" || f.RPCCode == nil || *f.RPCCode != -32602 || f.HTTPStatus != 0 {
 			t.Fatalf("wrong failure: %#v", f)
 		}
 	})

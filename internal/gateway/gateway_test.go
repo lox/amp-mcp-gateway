@@ -125,7 +125,7 @@ func TestApprovalExecutesStoredArgumentsExactlyOnce(t *testing.T) {
 func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 	t.Run("safe diagnostic persisted", func(t *testing.T) {
 		g, s, b := fixture(t)
-		b.callErr = &upstream.Failure{Stage: "request", Kind: "jsonrpc", RPCCode: -32602}
+		b.callErr = &upstream.Failure{Stage: "request", Kind: "jsonrpc", RPCCode: new(int64(0))}
 		o, err := g.submit(t.Context(), input("diagnostic-call", "private"))
 		if err != nil {
 			t.Fatal(err)
@@ -141,7 +141,7 @@ func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 		if err := json.Unmarshal(o.Result, &result); err != nil {
 			t.Fatal(err)
 		}
-		if result.Diagnostic.Stage != "request" || result.Diagnostic.Kind != "jsonrpc" || result.Diagnostic.RPCCode != -32602 {
+		if result.Diagnostic.Stage != "request" || result.Diagnostic.Kind != "jsonrpc" || result.Diagnostic.RPCCode == nil || *result.Diagnostic.RPCCode != 0 {
 			t.Fatalf("missing diagnostic: %s", o.Result)
 		}
 	})
