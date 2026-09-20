@@ -105,8 +105,11 @@ account is disconnected. Viewing status never refreshes credentials.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
 Discovered authorization and token endpoints must share an origin, except for
-Google's exact published pair: `https://accounts.google.com/o/oauth2/v2/auth`
-and `https://oauth2.googleapis.com/token`, discovered from Google's issuer.
+Google and Dropbox's exact published pairs, discovered from their respective issuers:
+
+- Google: `https://accounts.google.com/o/oauth2/v2/auth` and `https://oauth2.googleapis.com/token`.
+- Dropbox: `https://www.dropbox.com/oauth2/authorize` and `https://api.dropboxapi.com/oauth2/token`.
+
 Other split-origin providers are rejected. Dynamic registration responses with
 expiring client secrets are also rejected; registration renewal is not implemented.
 
@@ -151,6 +154,23 @@ read and browser approval/denial before disabling the original direct connection
 For Sheets, use a disposable spreadsheet. Verify refresh/reconnect before relying
 on the gateway as the only route. Successful discovery alone does not prove that
 Google granted access or that a tool call will succeed.
+
+### Dropbox
+
+In **Add MCP**, use connection name `dropbox`, URL `https://mcp.dropbox.com/mcp`
+and **OAuth**. Dropbox advertises dynamic client registration; try that first.
+If it rejects registration, supply an existing OAuth client with this callback:
+
+```text
+https://lox-mcp-gateway.fly.dev/connections/dropbox/callback
+```
+
+Review the advertised scopes before connecting; they include write access.
+The gateway requests `token_access_type=offline` so Dropbox can issue a refresh
+token. Fetch tools, keep **Require approval** as the default, and explicitly allow
+only the reads you want. Verify a harmless read, approval/denial and token refresh
+before removing the direct connection. Discovery support does not establish that
+registration, consent or real calls have succeeded.
 
 ### Defaults, exceptions and refreshes
 
