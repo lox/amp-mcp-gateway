@@ -13,6 +13,8 @@ tested; real provider execution still needs validation.
 The agent gets three execution tools and one policy proposal tool:
 
 - `find_tools` searches the configured tools and returns their argument schemas.
+  Queries allow at most 1,024 UTF-8 bytes and 32 distinct case-insensitive terms.
+  Empty queries return all permitted tools; repeated terms do not change matches.
 - `call_tools` submits a call to a specific tool. It either queues it, denies it,
   or returns a link for human approval.
 - `get_operation` checks the status and retrieves the result.
