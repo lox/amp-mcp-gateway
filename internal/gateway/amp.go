@@ -16,9 +16,11 @@ const ampIssuer = "https://ampcode.com/api/workload-identity"
 var ampThreadID = regexp.MustCompile(`^T-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type ampIdentity struct {
-	UserID   string `json:"user_id"`
-	ThreadID string `json:"thread_id"`
-	TokenUse string `json:"token_use"`
+	UserID      string `json:"user_id"`
+	ThreadID    string `json:"thread_id"`
+	ProjectID   string `json:"project_id"`
+	WorkspaceID string `json:"workspace_id"`
+	TokenUse    string `json:"token_use"`
 }
 type ampIdentityKey struct{}
 

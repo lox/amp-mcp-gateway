@@ -383,6 +383,54 @@ the verified Amp user and thread link; the Google subject identifies the separat
 human approval. Model labels remain unverified. This is workload authentication,
 not an implementation of MCP OAuth discovery or a general OAuth authorization server.
 
+### Scoped approvals
+
+**Approve once** remains an exact-arguments approval. For Amp-authenticated calls,
+expand **Approve future calls for one hour** to also create a thread or project
+grant. Both approve the current stored request once; only new submissions can use
+the grant. Existing pending requests are not swept into it.
+
+- A grant covers one exact pinned tool and connection, with **any schema-valid
+  arguments**, including writes. There is no argument filter, call budget or
+  effect preview. Only the signed-in browser owner can create or revoke it.
+- Thread grants match the configured browser owner, verified Amp user and signed
+  thread/workspace identity. Project grants match owner, Amp user and the exact
+  signed `project_id` / `workspace_id` pair, allowing that user's other threads.
+  An absent workspace claim must match an absent workspace claim.
+- [Amp's workload OIDC documentation](https://ampcode.com/docs/orbs/handling-secrets#oidc)
+  documents these signed claims (checked September 2026). The gateway extracts
+  them only after signature, issuer, audience, expiry and token-use verification.
+  It never accepts project IDs from tool arguments, headers or thread URLs.
+  No signed project claim means no project-grant option; bearer clients have no
+  scoped-grant option. Project names and project ownership are not inferred.
+- Grants expire one hour after browser consent and survive an unchanged restart.
+  Revoke them under **Scoped approvals** on the dashboard. Expiry/revocation is
+  checked both at submission and atomic claim. A queued call whose grant becomes
+  invalid is denied; already claimed calls cannot be cancelled or undone.
+- Catalogue saves (including policy proposals) and OAuth reconnects permanently
+  revoke **all** grants, conservatively, in the same transaction as queue
+  invalidation. Normal OAuth token refresh does not revoke grants. Tool, schema,
+  effective policy, connection or identity configuration changes also prevent
+  fingerprint matching and dispatch. Startup-file changes use fingerprint
+  matching, so restoring an identical configuration can reuse an unexpired,
+  unrevoked grant. Explicit blocks always win.
+- Audit events distinguish `grant-created:thread` / `grant-created:project` with
+  the human actor from `grant-authorized` with the grant ID, and record revocation.
+  Each scoped execution stores that ID and its own verified calling identity.
+  Unknown outcomes and idempotent retries behave exactly as one-time calls do.
+  Upgrading preserves existing request IDs; a retry retains the original stored
+  identity and cannot add project claims or create new authority.
+
+Grants do not isolate operation visibility: all authenticated threads of the
+configured Amp user can still read the owner's operations. Existing `allow`
+policies remain owner-wide. There is no delegation or general policy engine.
+
+To exercise this against disposable fixtures, set `GATEWAY_DEMO_AMP_USER_ID` to
+your immutable Amp user ID before starting the demo. It then uses real Amp OIDC
+instead of its shared bearer token. Mint tokens for the demo's exact BaseURL;
+browser login remains `demo-only`. Unset `GATEWAY_OIDC_SECRET` in this demo process
+if inherited from production secrets. No real provider credentials are needed.
+
 ## What approval actually guarantees
 
 The gateway persists intent before returning an operation ID. Approval changes only

@@ -226,13 +226,15 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
-	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
-	request.AddCookie(cookie)
-	request.Header.Set("Origin", "https://evil.example")
-	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, request)
-	if res.Code != 403 {
-		t.Fatal("cross-origin approval accepted")
+	for _, path := range []string{"/operations/protocol-test/approve", "/operations/protocol-test/approve-thread", "/operations/protocol-test/approve-project", "/grants/protocol-test/revoke"} {
+		request = httptest.NewRequest("POST", path, nil)
+		request.AddCookie(cookie)
+		request.Header.Set("Origin", "https://evil.example")
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, request)
+		if res.Code != 403 {
+			t.Fatalf("cross-origin consent accepted: %s", path)
+		}
 	}
 	o, _ := s.Get(t.Context(), "protocol-test")
 	if o.Status != "pending" {

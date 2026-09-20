@@ -64,6 +64,9 @@ func Start(ctx context.Context, baseURL, token string) (gateway.Config, http.Han
 		{ID: "reference.echo", Connection: "reference", Name: "echo", Description: "Read back reference text", Policy: "allow", InputSchema: schema},
 		{ID: "notes.create", Connection: "notes", Name: "create_note", Description: "Create a disposable note", Policy: "require_approval", InputSchema: schema},
 	}}
+	// Optional real workload authentication for scoped-approval development.
+	// This does not fabricate identity or change the disposable browser login.
+	cfg.AmpUserID = os.Getenv("GATEWAY_DEMO_AMP_USER_ID")
 	mux := http.NewServeMux()
 	for _, spec := range []struct{ path, name string }{{"/read", "echo"}, {"/write", "create_note"}} {
 		s := mcp.NewServer(&mcp.Implementation{Name: "demo-fixture", Version: "1"}, nil)
