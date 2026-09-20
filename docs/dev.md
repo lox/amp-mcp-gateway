@@ -249,6 +249,36 @@ Open the portal URL printed by that command. It uses the same demo-only password
 Use the helper client inside the orb; ordinary remote MCP clients cannot bypass
 Amp's portal authentication using the gateway bearer token alone.
 
+#### Real-account debugging through a private portal
+
+`mcp-gateway -orb-portal-auth -config <isolated-config>` uses Amp's portal identity
+instead of Google browser login. This is an explicit development option, not a
+production authentication alternative. It requires:
+
+- `AMP_ORB=1` and `BaseURL` exactly matching the service's `PUBLIC_URL`.
+- A literal loopback `Listen`, such as `127.0.0.1:<PORT>`.
+- Your exact `AmpUserID` and `OwnerSubject: "amp-portal:<AmpUserID>"`.
+- Empty `Issuer`, `ClientID` and `HostedDomain`; no `-demo` flag.
+- A separate database and fresh encryption/session keys, never production data.
+
+Keep the portal private. The app requires `X-Amp-Authenticated: amp-user=yes`
+and an exact `X-Amp-User-ID` match on every browser request, from the loopback
+proxy and for the configured host. Missing identity returns 403; cookies cannot
+bypass it. Google callback/login is not used, and logout directs you to sign out
+of Amp. Browser actions are attributed to `amp-portal:<AmpUserID>`.
+
+This relies on [Amp's portal identity headers](https://ampcode.com/docs/orbs/portals).
+They are not signed: all processes and agents inside the owning orb are trusted.
+Never expose the backend or place an untrusted proxy in front of it. Environment
+guards prevent accidental activation, not a malicious operator from changing
+the environment. Orb-internal portal requests bypass external Amp login and may
+not have identity headers; test those headers locally only as a trusted-proxy
+fixture, not as proof of external sign-in.
+
+MCP workload authentication, browser CSRF protection and upstream OAuth stay
+enabled. Register each upstream callback against the portal origin (for Dropbox,
+`/connections/dropbox/callback`). No Google browser callback is needed in this mode.
+
 ### Fly: Amp clients and Google browser login
 
 The disposable `lox-mcp-gateway-test` app has been destroyed. Its replacement,
