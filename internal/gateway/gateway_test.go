@@ -35,6 +35,15 @@ func (b *fixtureBackend) Call(ctx context.Context, connection, tool string, args
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool + ":" + args["text"].(string)}}}, nil
 }
+func (b *fixtureBackend) Binding(string) string { return "" }
+
+type bindingBackend struct {
+	fixtureBackend
+	binding string
+}
+
+func (b *bindingBackend) Binding(string) string { return b.binding }
+
 func fixture(t *testing.T) (*Gateway, *store.Store, *fixtureBackend) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
@@ -184,6 +193,35 @@ func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 			t.Fatal("unknown call retried")
 		}
 	})
+}
+
+func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	b := &bindingBackend{binding: "browser-and-tab-one"}
+	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "browser", Account: "selected tab", Browser: true}}, Tools: []Tool{{ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := input("pairing-change", "click target")
+	in.Calls[0].ToolID = "browser.click"
+	o, err := g.submit(t.Context(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	b.binding = "browser-and-tab-two"
+	runWorker(t, g)
+	await(t, s, o.ID, "denied")
+	if b.calls.Load() != 0 {
+		t.Fatal("stale browser approval dispatched to a different tab")
+	}
 }
 
 type bearer struct{ token string }

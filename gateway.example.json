@@ -7,10 +7,17 @@
   "ClientID": "gateway-browser",
   "Connections": [
     {"ID":"reference","URL":"https://reference.example.com/mcp","Account":"Your reference account","TokenEnv":"REFERENCE_TOKEN"},
-    {"ID":"notes","URL":"https://notes.example.com/mcp","Account":"Your notes account","OAuth":{"ClientID":"registered-upstream-client","ClientSecretEnv":"NOTES_CLIENT_SECRET","AuthURL":"https://notes.example.com/authorize","TokenURL":"https://notes.example.com/token","Scopes":["notes:write"]}}
+    {"ID":"notes","URL":"https://notes.example.com/mcp","Account":"Your notes account","OAuth":{"ClientID":"registered-upstream-client","ClientSecretEnv":"NOTES_CLIENT_SECRET","AuthURL":"https://notes.example.com/authorize","TokenURL":"https://notes.example.com/token","Scopes":["notes:write"]}},
+    {"ID":"browser","Account":"Selected Chrome tab","Browser":true}
   ],
   "Tools": [
     {"ID":"reference.echo","Connection":"reference","Name":"echo","Description":"Read reference text","Policy":"allow","InputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}},
-    {"ID":"notes.create","Connection":"notes","Name":"create_note","Description":"Create a note","Policy":"require_approval","InputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}
+    {"ID":"notes.create","Connection":"notes","Name":"create_note","Description":"Create a note","Policy":"require_approval","InputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}},
+    {"ID":"browser.snapshot","Connection":"browser","Name":"snapshot","Description":"Read the selected Chrome tab's URL, title and accessibility tree","Policy":"allow","InputSchema":{"type":"object","additionalProperties":false}},
+    {"ID":"browser.screenshot","Connection":"browser","Name":"screenshot","Description":"Capture the visible area of the selected Chrome tab","Policy":"allow","InputSchema":{"type":"object","additionalProperties":false}},
+    {"ID":"browser.click","Connection":"browser","Name":"click","Description":"Click an accessibility-tree backend node in the selected Chrome tab","Policy":"require_approval","InputSchema":{"type":"object","properties":{"backend_node_id":{"type":"integer","minimum":1}},"required":["backend_node_id"],"additionalProperties":false}},
+    {"ID":"browser.type","Connection":"browser","Name":"type","Description":"Replace text in an accessibility-tree backend node in the selected Chrome tab","Policy":"require_approval","InputSchema":{"type":"object","properties":{"backend_node_id":{"type":"integer","minimum":1},"text":{"type":"string","maxLength":10000},"submit":{"type":"boolean"}},"required":["backend_node_id","text"],"additionalProperties":false}},
+    {"ID":"browser.scroll","Connection":"browser","Name":"scroll","Description":"Scroll the selected Chrome tab vertically","Policy":"allow","InputSchema":{"type":"object","properties":{"delta_y":{"type":"number","minimum":-10000,"maximum":10000}},"required":["delta_y"],"additionalProperties":false}},
+    {"ID":"browser.navigate","Connection":"browser","Name":"navigate","Description":"Navigate the selected Chrome tab to an HTTP(S) URL","Policy":"require_approval","InputSchema":{"type":"object","properties":{"url":{"type":"string","pattern":"^https?://","maxLength":2000}},"required":["url"],"additionalProperties":false}}
   ]
 }

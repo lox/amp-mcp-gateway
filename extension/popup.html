@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Amp MCP Gateway</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <div class="eyebrow">Amp MCP Gateway</div>
+    <h1>Share this tab</h1>
+    <p id="tab" class="tab">Loading active tab…</p>
+    <div id="status" class="status">Checking connection…</div>
+    <form id="pair">
+      <label for="gateway">Gateway URL</label>
+      <input id="gateway" name="gateway" type="url" placeholder="https://gateway.example.com" required>
+      <label for="code">Pairing code</label>
+      <input id="code" name="code" autocomplete="off" spellcheck="false" required>
+      <button type="submit">Pair and share</button>
+    </form>
+    <button id="disconnect" class="secondary" type="button" hidden>Stop sharing</button>
+    <p class="footnote">Only this tab is shared. Chrome shows a debugging banner while control is active.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
