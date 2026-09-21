@@ -239,12 +239,12 @@ func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.Clien
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-gateway", Version: "1"}, nil)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return failure("connect", err, int(observed.status.Load()))
+		return observed.failure("connect", err)
 	}
 	defer session.Close()
-	observed.status.Store(0)
+	observed.reset()
 	if err := fn(session); err != nil {
-		return failure("request", err, int(observed.status.Load()))
+		return observed.failure("request", err)
 	}
 	return nil
 }

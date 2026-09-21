@@ -480,8 +480,22 @@ New upstream execution errors include a `diagnostic` object in the stored result
 and `get_operation` response. It records the stage (`credentials`, `connect` or
 `request`), a fixed error category, and HTTP/JSON-RPC error codes when available.
 The HTTP code is the last observed non-success response during that stage, not
-proof of which request failed. Provider messages, bodies, headers, URLs and
-arguments are excluded. These details do not authorize retries or change the
+proof of which request failed. On HTTP 400/401/403, an optional `diagnostic.http`
+adds a fixed `reason` and troubleshooting `hint` for recognized authentication
+errors: `authentication_rejected`, `invalid_token`, or `insufficient_scope`.
+For example, Dropbox's authentication-provider rejection suggests checking the
+app permissions and reconnecting OAuth. This is guidance, not a definitive cause.
+
+Only complete error bodies up to 4 KiB with `text/plain` or `application/json`
+content types are classified. Arbitrary messages, JSON error descriptions,
+HTML and oversized bodies are never copied into diagnostics. The response is
+replayed unchanged to the MCP SDK. OAuth token exchanges are not inspected.
+Dropbox HTTP errors may also include `diagnostic.http.request_id`: only the
+32-character lowercase hexadecimal `X-Dropbox-Request-Id` from
+`mcp.dropbox.com` is accepted. Other headers, URLs and arguments are excluded.
+Diagnostics use the operation's existing encrypted storage; there is no raw-body
+capture or new log stream. Unrecognized errors retain the existing status/code
+diagnostic. These details do not authorize retries or change the
 `unknown` status. Older records and restart-recovered operations may have no
 diagnostic; it cannot be reconstructed after the fact.
 
