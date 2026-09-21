@@ -141,7 +141,8 @@ Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.
 Local stdio and legacy SSE servers are not supported by this flow. Static trusted
 configuration can still use loopback fixtures. Discovery is limited to 500 tools,
-2 MiB of tool definitions and a 30-second timeout. Schemas must be self-contained.
+2 MiB of tool definitions plus pagination cursors and a 30-second timeout. Schemas
+must be self-contained.
 
 ### Google Sheets, Drive and Gmail
 

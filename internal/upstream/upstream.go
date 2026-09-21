@@ -180,7 +180,7 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 			if err != nil {
 				return err
 			}
-			bytes += len(raw)
+			bytes += len(raw) + len(result.NextCursor)
 			if bytes > 2<<20 {
 				return errors.New("tool catalogue exceeds 2 MiB")
 			}
