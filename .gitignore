@@ -3,8 +3,17 @@ bin/
 gateway.json
 .env
 .env.*
+.envrc
+*.key
+*.pem
+*.p12
+*.pfx
 *.db
 *.db-*
 *.db.lock
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 .amp/portals/
 .amp/in/

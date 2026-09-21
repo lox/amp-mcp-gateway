@@ -1,12 +1,12 @@
 {
   "Listen": "[::]:8080",
-  "BaseURL": "https://lox-mcp-gateway.fly.dev",
+  "BaseURL": "https://gateway.example.com",
   "Database": "/data/gateway.db",
   "OwnerSubject": "REPLACE_WITH_GOOGLE_SUB",
   "Issuer": "https://accounts.google.com",
   "ClientID": "REPLACE_WITH_DEDICATED_GOOGLE_CLIENT_ID",
-  "HostedDomain": "ljd.cc",
-  "AmpUserID": "user_01JW0JJB50N2XEF2K0B5RHT8AB",
+  "HostedDomain": "example.com",
+  "AmpUserID": "user_REPLACE_ME",
   "Connections": [],
   "Tools": []
 }

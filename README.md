@@ -122,7 +122,8 @@ A few limits worth knowing:
 - Amp orbs can authenticate with short-lived identity tokens; requests link back
   to their thread. Browser approvals use a separate OIDC login.
 - Google Workspace login can require both your domain and your exact account.
-  The owner has verified live Google login. The local demo uses a shared token.
+  Validate the configured identity provider before relying on a deployment. The
+  local demo uses a shared fixture token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
 - New work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB
