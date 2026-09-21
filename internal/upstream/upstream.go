@@ -236,7 +236,7 @@ func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.Clien
 	observed := &statusTransport{base: httpClient.Transport}
 	httpClient.Transport = observed
 	transport := &mcp.StreamableClientTransport{Endpoint: c.config.URL, HTTPClient: httpClient, MaxRetries: -1, DisableStandaloneSSE: true}
-	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-gateway", Version: "1"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "1"}, nil)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return observed.failure("connect", err)

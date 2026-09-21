@@ -1,6 +1,6 @@
-# mcp-gateway
+# Amp MCP Gateway
 
-Single-owner Go MCP gateway. Use mise: `.agents/setup`, then `mise run check`.
+Single-owner Go MCP gateway for Amp. Use mise: `.agents/setup`, then `mise run check`.
 Keep dependencies deliberate; use the official MCP SDK rather than handwritten JSON-RPC.
 
 ## Invariants

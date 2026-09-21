@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"ampcode.com/lox/mcp-gateway/internal/store"
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 // catalogue becomes the source of truth after the first browser save. Identity

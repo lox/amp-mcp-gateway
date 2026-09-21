@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ampcode.com/lox/mcp-gateway/internal/store"
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

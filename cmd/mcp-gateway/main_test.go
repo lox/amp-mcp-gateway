@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"ampcode.com/lox/mcp-gateway/internal/gateway"
+	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 )
 
 func TestPortalStartupGuard(t *testing.T) {

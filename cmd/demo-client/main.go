@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"ampcode.com/lox/mcp-gateway/internal/demo"
+	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

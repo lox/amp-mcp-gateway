@@ -12,7 +12,7 @@ See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
 Prerequisites: Linux or macOS, Git and curl. Setup installs mise if absent and the
 pinned Go toolchain. Run commands from the repository root.
 
-Clone the private repository with `gh repo clone lox/mcp-gateway` and enter the
+Clone the private repository with `gh repo clone lox/amp-mcp-gateway` and enter the
 checkout. GitHub authentication is required. Then:
 
 ```sh

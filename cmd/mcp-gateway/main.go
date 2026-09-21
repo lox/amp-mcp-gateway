@@ -17,11 +17,11 @@ import (
 	"syscall"
 	"time"
 
-	"ampcode.com/lox/mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/mcp-gateway/internal/demo"
-	"ampcode.com/lox/mcp-gateway/internal/gateway"
-	"ampcode.com/lox/mcp-gateway/internal/store"
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
+	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"golang.org/x/sync/errgroup"
 )
 

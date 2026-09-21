@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 func TestPolicyProposalBatch(t *testing.T) {

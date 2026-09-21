@@ -1,4 +1,4 @@
-module ampcode.com/lox/mcp-gateway
+module ampcode.com/lox/amp-mcp-gateway
 
 go 1.26.8
 

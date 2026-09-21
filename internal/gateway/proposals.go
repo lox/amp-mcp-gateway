@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"ampcode.com/lox/mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/mcp-gateway/internal/store"
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 type policyChange struct {
