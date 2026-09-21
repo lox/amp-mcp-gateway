@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Amp MCP Gateway Browser Bridge",
+  "version": "0.1.0",
+  "description": "Share one selected Chrome tab with an MCP gateway.",
+  "permissions": ["debugger", "storage", "tabs"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Share this tab with MCP Gateway",
+    "default_popup": "popup.html"
+  }
+}

@@ -28,6 +28,8 @@ type catalogue struct {
 
 // LoadCatalogue restores browser-managed connections and policies before startup validation.
 func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
+	configuredConnections := append([]upstream.Connection(nil), cfg.Connections...)
+	configuredTools := append([]Tool(nil), cfg.Tools...)
 	raw, err := s.LoadCatalogue(ctx)
 	if err != nil || raw == nil {
 		return err
@@ -35,6 +37,27 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	var c catalogue
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return err
+	}
+	savedConnections := make(map[string]upstream.Connection, len(c.Connections))
+	for _, connection := range c.Connections {
+		savedConnections[connection.ID] = connection
+	}
+	for _, connection := range configuredConnections {
+		if !connection.Browser {
+			continue
+		}
+		if saved, ok := savedConnections[connection.ID]; ok {
+			if !saved.Browser {
+				return errors.New("configured browser connection conflicts with saved MCP connection")
+			}
+			continue
+		}
+		c.Connections = append(c.Connections, connection)
+		for _, tool := range configuredTools {
+			if tool.Connection == connection.ID {
+				c.Tools = append(c.Tools, tool)
+			}
+		}
 	}
 	cfg.Connections, cfg.Tools = c.Connections, c.Tools
 	cfg.ToolDefaults = c.ToolDefaults

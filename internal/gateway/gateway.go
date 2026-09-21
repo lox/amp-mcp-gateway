@@ -44,6 +44,7 @@ type Config struct {
 // Backend is the upstream transport boundary.
 type Backend interface {
 	Call(context.Context, string, string, map[string]any) (*mcp.CallToolResult, error)
+	Binding(string) string
 }
 
 // Gateway owns validated tools and execution policy.
@@ -111,6 +112,10 @@ func digest(v any) string {
 	b, _ := json.Marshal(v)
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+func (g *Gateway) binding(tool Tool) string {
+	return digest([]string{g.bindings[tool.ID], g.backend.Binding(tool.Connection)})
 }
 
 type findInput struct {
@@ -237,7 +242,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = conn.Account
 		}
 	}
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpUserID, o.AmpThreadID = identity.UserID, identity.ThreadID
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
@@ -261,7 +266,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			}
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
-			valid := ok && t.Policy != "deny" && g.bindings[o.Tool] == o.Binding
+			valid := ok && t.Policy != "deny" && g.binding(t) == o.Binding
 			g.mu.RUnlock()
 			if !valid {
 				if err := g.store.Finish(ctx, o, "denied", nil); err != nil {
@@ -340,11 +345,13 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	g.mu.RLock()
 	connections := make([]map[string]any, 0, len(g.cfg.Connections))
 	for _, c := range g.cfg.Connections {
-		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
+		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil, "Browser": c.Browser})
 	}
 	g.mu.RUnlock()
 	for _, c := range connections {
-		c["Health"] = m.Health(r.Context(), c["ID"].(string))
+		if !c["Browser"].(bool) {
+			c["Health"] = m.Health(r.Context(), c["ID"].(string))
+		}
 	}
 	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }

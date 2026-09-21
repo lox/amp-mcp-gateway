@@ -76,6 +76,37 @@ storage; do not commit it or paste it into a chat. The demo helper reads it dire
 The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
 the final MCP URL when overriding `-url`.
 
+## Share a Chrome tab
+
+The demo and example configuration include a reverse-connected `browser`
+connection. It lets an orb inspect and control one explicitly selected tab in a
+normal Chrome profile without exposing a listener on your machine.
+
+1. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
+   and select this checkout's `extension` directory.
+2. Sign in to the gateway dashboard and click **Pair extension** on the browser
+   connection. Create a pairing code.
+3. Open the tab you want to share, open the extension, and paste the displayed
+   gateway URL and pairing code.
+4. Find `browser` tools through MCP. `browser.snapshot` returns accessibility-tree
+   `backend_node_id` values for `browser.click` and `browser.type`.
+
+The available tools are `browser.snapshot`, `browser.screenshot`, `browser.scroll`,
+`browser.click`, `browser.type`, and `browser.navigate`. The example policies allow
+viewing and scrolling directly while requiring approval for click, type, and
+navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
+tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
+uploads, and the desktop remain inaccessible.
+
+The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
+connect to `/mcp`. Pairing credentials live only in gateway memory and Chrome
+session storage, so restarting either side requires pairing again. Re-pairing,
+revocation, or selecting a new share generation invalidates queued approvals.
+Once a browser mutation is dispatched, a disconnect or extension-reported error
+marks its outcome unknown and is never replayed automatically.
+Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
+orbs before using the extension outside the local demo.
+
 ## Connect a remote MCP
 
 After signing in, click **Add MCP**. As a public read-only example:

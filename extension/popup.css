@@ -1,0 +1,21 @@
+:root {
+  color: #172b26;
+  background: #f6f7f3;
+  font: 14px/1.45 system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; width: 360px; }
+main { padding: 22px; }
+.eyebrow { color: #216442; font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+h1 { font-size: 25px; letter-spacing: -.5px; margin: 4px 0 8px; }
+.tab { color: #586b62; margin: 0 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status { background: #eaf0e8; border-radius: 7px; margin-bottom: 18px; padding: 10px 12px; }
+.status.connected { background: #dff3e5; color: #175e37; }
+.status.error { background: #fde9e5; color: #9c3724; }
+label { display: block; font-size: 12px; font-weight: 650; margin: 12px 0 5px; }
+input { background: white; border: 1px solid #bccdc0; border-radius: 6px; color: inherit; font: inherit; padding: 10px; width: 100%; }
+button { background: #216442; border: 1px solid #216442; border-radius: 6px; color: white; cursor: pointer; font: inherit; font-weight: 650; margin-top: 16px; padding: 10px 14px; width: 100%; }
+button:disabled { cursor: wait; opacity: .65; }
+.secondary { background: white; color: #9f3535; border-color: #d9b7b7; }
+.footnote { color: #6d786d; font-size: 11px; margin: 16px 0 0; }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -99,21 +100,29 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	g, err := gateway.New(cfg, s, m)
+	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
 	if err != nil {
 		return err
 	}
-	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: os.Getenv("GATEWAY_OIDC_SECRET"), OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	g, err := gateway.New(cfg, s, browser)
+	if err != nil {
+		return err
+	}
+	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	authCfg.TrustedClientIPHeader = *clientIPHeader
 	if authCfg.TrustedClientIPHeader == "" && os.Getenv("FLY_APP_NAME") != "" {
 		authCfg.TrustedClientIPHeader = "Fly-Client-IP"
 	}
 	if *portalAuth {
 		authCfg.PortalUserID = cfg.AmpUserID
-		authCfg.ClientSecret = ""
 	}
 	if *demoMode {
 		authCfg.DemoPassword = "demo-only"
+	}
+	if !*demoMode && !*portalAuth {
+		authCfg.Issuer = cfg.Issuer
+		authCfg.ClientID = cfg.ClientID
+		authCfg.ClientSecret = os.Getenv("GATEWAY_OIDC_SECRET")
 	}
 	auth, err := browserauth.New(ctx, authCfg)
 	if err != nil {
@@ -131,6 +140,10 @@ func run() error {
 		mcpHandler = g.MCP(secrets.GatewayToken)
 	}
 	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/browser/connect", browser.Socket())
+	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI()))
+	mux.Handle("/browser", browserUI)
+	mux.Handle("/browser/", browserUI)
 	mux.Handle("/", g.UI(auth, m))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))

@@ -1,0 +1,192 @@
+package browserbridge
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
+	"github.com/gorilla/websocket"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type fallbackBackend struct{ calls int }
+
+func (b *fallbackBackend) Call(_ context.Context, connection, tool string, _ map[string]any) (*mcp.CallToolResult, error) {
+	b.calls++
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool}}}, nil
+}
+
+func browserManager(t *testing.T) (*Manager, *fallbackBackend) {
+	t.Helper()
+	fallback := &fallbackBackend{}
+	m, err := New("https://gateway.example", []upstream.Connection{
+		{ID: "browser", Account: "Selected tab", Browser: true},
+		{ID: "remote", URL: "https://remote.example/mcp", Account: "Remote", TokenEnv: "TOKEN"},
+	}, fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, fallback
+}
+
+func connectExtension(t *testing.T, m *Manager, code, install, share string, tab int) *websocket.Conn {
+	t.Helper()
+	hash := sha256.Sum256([]byte(code))
+	m.mu.Lock()
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	m.mu.Unlock()
+	server := httptest.NewServer(m.Socket())
+	t.Cleanup(server.Close)
+	header := http.Header{"Origin": []string{"chrome-extension://extension-id"}}
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.Close() })
+	if err := ws.WriteJSON(wireMessage{Type: "hello", PairingCode: code, InstallID: install, ShareID: share, TabID: tab, TabTitle: "Example", TabURL: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	var paired wireMessage
+	if err := ws.ReadJSON(&paired); err != nil || paired.Type != "paired" {
+		t.Fatalf("pairing response %#v, %v", paired, err)
+	}
+	return ws
+}
+
+func TestRoutesBrowserCallsOverReverseConnection(t *testing.T) {
+	m, fallback := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	binding := m.Binding("browser")
+	if binding == "" || binding == "unpaired" {
+		t.Fatalf("missing paired binding %q", binding)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		var command wireMessage
+		if err := ws.ReadJSON(&command); err != nil {
+			done <- err
+			return
+		}
+		if command.Type != "command" || command.Tool != "snapshot" || command.Arguments["full"] != true {
+			done <- errors.New("unexpected command")
+			return
+		}
+		done <- ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Result: json.RawMessage(`{"title":"Example","url":"https://example.com"}`)})
+	}()
+
+	result, err := m.Call(t.Context(), "browser", "snapshot", map[string]any{"full": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "Example") {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if fallback.calls != 0 {
+		t.Fatal("browser call reached HTTP fallback")
+	}
+
+	remote, err := m.Call(t.Context(), "remote", "echo", nil)
+	if err != nil || remote.Content[0].(*mcp.TextContent).Text != "remote/echo" || fallback.calls != 1 {
+		t.Fatalf("fallback result %#v, %v", remote, err)
+	}
+}
+
+func TestReadErrorIsDefiniteToolFailure(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	go func() {
+		var command wireMessage
+		_ = ws.ReadJSON(&command)
+		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "snapshot unavailable"})
+	}()
+	result, err := m.Call(t.Context(), "browser", "snapshot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || result.Content[0].(*mcp.TextContent).Text != "snapshot unavailable" {
+		t.Fatalf("unexpected result %#v", result)
+	}
+}
+
+func TestMutationErrorHasUnknownOutcome(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	go func() {
+		var command wireMessage
+		_ = ws.ReadJSON(&command)
+		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "input command failed"})
+	}()
+	result, err := m.Call(t.Context(), "browser", "type", map[string]any{"backend_node_id": 7, "text": "changed"})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("ambiguous mutation returned %#v, %v", result, err)
+	}
+}
+
+func TestDisconnectAfterDispatchHasUnknownOutcome(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	go func() {
+		var command wireMessage
+		_ = ws.ReadJSON(&command)
+		ws.Close()
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if result, err := m.Call(ctx, "browser", "click", map[string]any{"backend_node_id": 7}); err == nil || result != nil {
+		t.Fatalf("ambiguous disconnect returned %#v, %v", result, err)
+	}
+}
+
+func TestPairingIdentityChangesWithShareGeneration(t *testing.T) {
+	m, _ := browserManager(t)
+	first := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	firstBinding := m.Binding("browser")
+	first.Close()
+	second := connectExtension(t, m, "pairing-secret", "install-one", "share-two", 42)
+	if secondBinding := m.Binding("browser"); secondBinding == firstBinding {
+		t.Fatal("new share generation did not change operation binding")
+	}
+	second.Close()
+}
+
+func TestScreenshotBecomesMCPImageContent(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString([]byte("fake-png"))
+	result, err := resultToMCP(json.RawMessage(`{"mime_type":"image/png","screenshot_data":"` + png + `","url":"https://example.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Content) != 2 || string(result.Content[1].(*mcp.ImageContent).Data) != "fake-png" {
+		t.Fatalf("unexpected screenshot content %#v", result.Content)
+	}
+	if strings.Contains(result.Content[0].(*mcp.TextContent).Text, "screenshot_data") {
+		t.Fatal("duplicated screenshot bytes in text content")
+	}
+}
+
+func TestSocketRejectsWebPageOrigins(t *testing.T) {
+	m, _ := browserManager(t)
+	server := httptest.NewServer(m.Socket())
+	defer server.Close()
+	header := http.Header{"Origin": []string{"https://evil.example"}}
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, response, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("web page origin accepted: response %#v, error %v", response, err)
+	}
+}

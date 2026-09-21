@@ -45,6 +45,32 @@ func formRequest(h http.Handler, cookie *http.Cookie, method, path string, value
 	return w
 }
 
+func TestLoadCatalogueAddsConfiguredBrowserToOlderSavedCatalogue(t *testing.T) {
+	_, s, _ := fixture(t)
+	saved := catalogue{
+		Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/notes", NoAuth: true}},
+		Tools:       []Tool{{ID: "notes.read", Connection: "notes", Name: "read", Policy: "allow", InputSchema: map[string]any{"type": "object"}}},
+	}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+		t.Fatal(err)
+	}
+	browserTool := Tool{ID: "browser.snapshot", Connection: "browser", Name: "snapshot", Policy: "allow", InputSchema: map[string]any{"type": "object"}}
+	cfg := Config{
+		Connections: []upstream.Connection{{ID: "browser", Account: "Selected tab", Browser: true}},
+		Tools:       []Tool{browserTool},
+	}
+	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Connections) != 2 || cfg.Connections[1].ID != "browser" || len(cfg.Tools) != 2 || cfg.Tools[1].ID != browserTool.ID {
+		t.Fatalf("browser configuration not merged: connections=%#v tools=%#v", cfg.Connections, cfg.Tools)
+	}
+}
+
 func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	g, s, _ := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
