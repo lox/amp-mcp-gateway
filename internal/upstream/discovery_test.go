@@ -71,8 +71,8 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	app := http.NewServeMux()
 	m.Register(app)
 	login := httptest.NewRecorder()
-	app.ServeHTTP(login, httptest.NewRequest("GET", "/connections/notes/connect", nil))
-	location, _ := url.Parse(login.Header().Get("Location"))
+	app.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/connections/notes/connect", nil))
+	location := authorizationLocation(t, login)
 	if location.Query().Get("resource") != origin+"/mcp" || location.Query().Get("code_challenge_method") != "S256" {
 		t.Fatal("authorization missing resource or PKCE")
 	}
@@ -85,6 +85,11 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	app.ServeHTTP(w, r)
 	if w.Code != 303 || w.Header().Get("Location") != "/connections/notes/tools" {
 		t.Fatalf("callback: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	app.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatal("callback state replay accepted")
 	}
 }
 

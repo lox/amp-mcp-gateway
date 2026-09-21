@@ -104,6 +104,11 @@ test or a tool-list fetch succeeded at the displayed time, not continuous monito
 or verified account identity. Test observations reset to **Not tested** on restart
 or reauthorization. Viewing status does not contact the provider.
 
+Use the Connect/Reconnect button to start authorization: initiation requires an
+owner-authenticated, same-origin POST. Direct GET links do not start a grant.
+The response opens the provider in a new navigation, preserving the gateway's
+`form-action 'self'` policy; a Continue link is available if JavaScript is disabled.
+
 The gateway checks OAuth grants every minute, refreshing tokens within two minutes
 of expiry even while idle. Expired tokens also refresh on use. Credentials, rotated
 refresh tokens, last-refresh times and refresh outcomes are encrypted and survive

@@ -455,7 +455,7 @@ func TestOAuthStatusPage(t *testing.T) {
 			if status == "Not connected" {
 				action = "Connect OAuth"
 			}
-			for _, text := range []string{">" + status + "</span>", "Safe health explanation", ">" + action + "</a>", `role="status"`, `method="post" action="/connections/notes/test"`, ">Test connection</button>"} {
+			for _, text := range []string{">" + status + "</span>", "Safe health explanation", ">" + action + "</button>", `formaction="/connections/notes/connect"`, `role="status"`, `method="post" action="/connections/notes/test"`, ">Test connection</button>"} {
 				if !strings.Contains(w.Body.String(), text) {
 					t.Fatalf("missing %q", text)
 				}
@@ -566,7 +566,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, ">Test connection</button>") != 2 {
 				t.Fatal("missing status or test action")
 			}
-			if strings.Count(body, `href="/connections/oauth/connect"`) != 1 || strings.Contains(body, `href="/connections/public/connect"`) {
+			if strings.Count(body, `formaction="/connections/oauth/connect"`) != 1 || strings.Contains(body, `formaction="/connections/public/connect"`) {
 				t.Fatal("reconnect action must appear only for OAuth")
 			}
 		})

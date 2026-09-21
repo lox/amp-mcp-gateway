@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -75,7 +74,7 @@ func TestEmptyCatalogue(t *testing.T) {
 	mux := http.NewServeMux()
 	m.Register(mux)
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("GET", "/connections/unconfigured/connect", nil))
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/connections/unconfigured/connect", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("unconfigured OAuth route returned %d", w.Code)
 	}
@@ -178,7 +177,7 @@ func TestOAuthStateTamperingAndMissingSecret(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	m.Register(mux)
-	r := httptest.NewRequest(http.MethodGet, "/connections/one/connect", nil)
+	r := httptest.NewRequest(http.MethodPost, "/connections/one/connect", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {
@@ -188,7 +187,7 @@ func TestOAuthStateTamperingAndMissingSecret(t *testing.T) {
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	cookie := w.Result().Cookies()[0]
-	location, _ := url.Parse(w.Header().Get("Location"))
+	location := authorizationLocation(t, w)
 	callback := httptest.NewRequest(http.MethodGet, "/connections/one/callback?state=tampered&code=x", nil)
 	callback.AddCookie(cookie)
 	w = httptest.NewRecorder()

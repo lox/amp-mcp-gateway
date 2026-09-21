@@ -13,7 +13,7 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
 {{define "connection-health"}}<section class="connection-status" aria-label="Connection health">
 <div class="connection-health" role="status">{{template "health" .Health}}</div>
 <form class="connection-test actions" method="post" action="/connections/{{.ID}}/test"><button>Test connection</button>
-{{if .OAuth}}<a class="button" href="/connections/{{.ID}}/connect">{{if and .Health (eq .Health.Status "Not connected")}}Connect OAuth{{else}}Reconnect OAuth{{end}}</a>{{end}}</form>
+{{if .OAuth}}<button formaction="/connections/{{.ID}}/connect">{{if and .Health (eq .Health.Status "Not connected")}}Connect OAuth{{else}}Reconnect OAuth{{end}}</button>{{end}}</form>
 <p class="help test-error" role="alert" hidden></p></section>{{end}}
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mcp-gateway · Activity</title><style>
@@ -165,6 +165,7 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
 {{end}}<footer>Local durable audit · encrypted payloads · not independently tamper-proof · no automatic write retries</footer></main>
 <script>
 document.querySelectorAll('.connection-test').forEach(form => form.addEventListener('submit', async event => {
+  if (event.submitter?.hasAttribute('formaction')) return;
   event.preventDefault();
   const section = form.closest('.connection-status'), button = form.querySelector('button'), error = section.querySelector('.test-error');
   button.disabled = true; button.textContent = 'Testing…'; error.hidden = true;
