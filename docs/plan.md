@@ -51,8 +51,9 @@ tools back to approval, and keeps blocks. Saves revoke queued authority and reje
 stale reviews. OAuth status distinguishes saved credentials from verified access.
 Agents can propose immutable batches of defaults and exceptions with one browser
 review link. Proposals expire after ten minutes and cannot apply their own changes.
-Public DeepWiki discovery is verified in the demo; the owner confirmed Buildkite
-OAuth and tool discovery for `lox`. Real provider execution remains to be tested.
+Public DeepWiki discovery is verified in the demo; Buildkite OAuth and tool
+discovery have been validated against a real account. Real provider execution
+remains to be tested.
 
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
@@ -80,11 +81,11 @@ one allowed user ID. A signed thread ID is required, stored and linked from the
 approval page. All that user's threads share authority; there is no delegation tree.
 The local bridge mints a token for each HTTP request, without storing long-lived
 gateway credentials. Google browser login requires both the exact subject and
-`hd=ljd.cc`. Both identities map explicitly to one configured owner.
+configured hosted-domain claim. Both identities map explicitly to one configured owner.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
-issuer check using this orb. The owner confirmed real Google browser login.
+issuer check using this orb. A real Google browser login has also been validated.
 General client-facing MCP OAuth discovery, scopes, per-thread grants and revocation are
 deferred; the current bridge is specific to Amp orbs.
 
@@ -103,11 +104,11 @@ account or delegation cannot reuse an approval or exceed a mandate.
 
 ### 5. Single-owner Fly deployment — initial deployment running
 
-The demo app has been destroyed. `lox-mcp-gateway` runs on public Fly HTTPS with
-one Machine and volume, separate environment secrets, Google login configuration
-and Amp workload authentication. The tool catalogue is empty; startup now permits
-that state without fake connections. Live health, Amp discovery, unauthorized
-rejection and Google redirect checks passed. The owner confirmed browser login.
+An initial single-owner deployment runs on public Fly HTTPS with one Machine and
+volume, separate environment secrets, Google login configuration and Amp workload
+authentication. The tool catalogue is empty; startup now permits that state without
+fake connections. Live health, Amp discovery, unauthorized rejection, Google
+redirect and browser-login checks passed.
 The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registration
 and deployment. Buildkite tests changes and deploys non-PR `main` builds serially;
 its app-scoped Fly secret is configured and deployment has passed. Tailscale is optional additional

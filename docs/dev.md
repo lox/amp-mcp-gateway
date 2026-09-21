@@ -12,8 +12,8 @@ See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
 Prerequisites: Linux or macOS, Git and curl. Setup installs mise if absent and the
 pinned Go toolchain. Run commands from the repository root.
 
-Clone the private repository with `gh repo clone lox/amp-mcp-gateway` and enter the
-checkout. GitHub authentication is required. Then:
+Clone the repository with `gh repo clone lox/amp-mcp-gateway` and enter the
+checkout. Then:
 
 ```sh
 .agents/setup
@@ -157,9 +157,9 @@ by another MCP client, keeping its existing redirect URIs. Add a gateway callbac
 for each connection name (replace the hostname for another deployment):
 
 ```text
-https://lox-mcp-gateway.fly.dev/connections/google-sheets/callback
-https://lox-mcp-gateway.fly.dev/connections/google-drive/callback
-https://lox-mcp-gateway.fly.dev/connections/google-gmail/callback
+https://gateway.example.com/connections/google-sheets/callback
+https://gateway.example.com/connections/google-drive/callback
+https://gateway.example.com/connections/google-gmail/callback
 ```
 
 In **Add MCP**, select OAuth and expand **Use an existing OAuth client**. Enter
@@ -194,7 +194,7 @@ For this gateway, register a Dropbox app and use its app key and secret under
 **Use an existing OAuth client**, with this callback:
 
 ```text
-https://lox-mcp-gateway.fly.dev/connections/dropbox/callback
+https://gateway.example.com/connections/dropbox/callback
 ```
 
 Review the advertised scopes before connecting; they include write access.
@@ -312,13 +312,11 @@ enabled. Register each upstream callback against the portal origin (for Dropbox,
 
 ### Fly: Amp clients and Google browser login
 
-The disposable `lox-mcp-gateway-test` app has been destroyed. Its replacement,
-`lox-mcp-gateway`, is deployed at https://lox-mcp-gateway.fly.dev with Google
-credentials and owner restrictions configured. Health, authenticated Amp discovery,
-unauthenticated rejection and the Google redirect are checked; the owner has
-confirmed a successful real browser login.
-`fly.toml` uses public HTTPS, one Machine in Sydney, and `/data/gateway.db` on a
-persistent volume. It does not run demo mode or fake providers.
+A Fly deployment needs Google credentials, exact owner restrictions and a public
+HTTPS origin. `fly.toml` uses one Machine in Sydney and `/data/gateway.db` on a
+persistent volume. It does not run demo mode or fake providers. Before relying on
+a deployment, verify health, authenticated Amp discovery, unauthenticated rejection
+and a complete browser login against its configured identity provider.
 
 Hosted-domain login requests `openid email`, as required by Google's OIDC flow;
 authorization still uses the verified subject and `hd` claim, not the email address.
@@ -344,15 +342,16 @@ the listener directly. Missing, malformed or repeated header values reject login
 with HTTP 400. Another proxy in front of Fly needs its own admission controls;
 otherwise its users share Fly's source limit.
 
-To reproduce the deployment:
+To configure a deployment:
 
-1. Register a dedicated Google OAuth **Web application** client in the `ljd.cc`
-   Workspace organisation. Use an internal consent screen where available and the
-   exact redirect URI `https://lox-mcp-gateway.fly.dev/auth/callback`.
+1. Register a dedicated Google OAuth **Web application** client in your Workspace
+   organisation. Use an internal consent screen where available and the exact
+   redirect URI `https://gateway.example.com/auth/callback`, replacing the host.
 2. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set the client ID and
    your stable Google `sub`, obtained from a verified Google sign-in. Keep
-   `HostedDomain: "ljd.cc"`. Both domain and exact owner must match; an email suffix
-   or the `hd` login hint is not authorization. There is no first-login takeover.
+   `HostedDomain` set to your Workspace domain. Both domain and exact owner must
+   match; an email suffix or the `hd` login hint is not authorization. There is no
+   first-login takeover.
 3. Confirm `AmpUserID` is your immutable Amp ID. All orb threads created by that
    user share the configured owner's tool authority and can read its operations.
    Project restrictions and per-thread permissions are not implemented.
@@ -364,8 +363,9 @@ To reproduce the deployment:
 Import configuration without printing it or putting it into process arguments:
 
 ```sh
+export FLY_APP=your-app-name
 { printf 'GATEWAY_CONFIG='; base64 < gateway.json | tr -d '\n'; printf '\n'; } |
-  fly secrets import --stage --app lox-mcp-gateway
+  fly secrets import --stage --app "$FLY_APP"
 ```
 
 Use `fly secrets import --stage` with protected stdin for the three secret values
@@ -376,11 +376,11 @@ Do not set `GATEWAY_TOKEN`: setting `AmpUserID` disables shared-token MCP access
 Once configuration is complete, create the volume and public addresses once:
 
 ```sh
-fly volumes create gateway_data --region syd --size 1 --app lox-mcp-gateway
-fly ips allocate-v6 --app lox-mcp-gateway
-fly ips allocate-v4 --shared --app lox-mcp-gateway
+fly volumes create gateway_data --region syd --size 1 --app "$FLY_APP"
+fly ips allocate-v6 --app "$FLY_APP"
+fly ips allocate-v4 --shared --app "$FLY_APP"
 fly config validate
-fly deploy --remote-only --ha=false
+fly deploy --app "$FLY_APP" --remote-only --ha=false
 fly checks list
 ```
 
@@ -394,9 +394,9 @@ request can start it again. Snapshots do not replace a tested backup/restore pro
 
 ### Buildkite CI and deployment
 
-[lox/mcp-gateway](https://buildkite.com/lox/mcp-gateway) uses the Hosted cluster's
-`default` queue. The GitHub webhook builds branches and pull requests; fork PRs
-are disabled. The pipeline uploads `.buildkite/pipeline.yml` from the checkout.
+The Buildkite pipeline uses a hosted cluster's `default` queue. The GitHub webhook
+builds branches and pull requests; fork PRs are disabled. The pipeline uploads
+`.buildkite/pipeline.yml` from the checkout.
 
 Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
 run formatting checks, race tests, vet and builds of both Go commands. A hosted
@@ -415,14 +415,14 @@ are not automatically cancelled by a newer commit.
 machine, not an organisation-wide token:
 
 ```sh
-fly tokens create deploy --app lox-mcp-gateway --name buildkite --expiry 2160h
+fly tokens create deploy --app "$FLY_APP" --name buildkite --expiry 2160h
 ```
 
 Store it as the Buildkite secret **`MCP_GATEWAY_FLY_DEPLOY`** in the **Hosted**
-cluster (`9bd6538f-929f-4d0b-a667-6931e99428ce`). Restrict its agent access with:
+cluster. Restrict its agent access to the deployment pipeline with:
 
 ```yaml
-- pipeline_id: "01a0b80e-45e5-412e-a3a5-87d7aac08b8c"
+- pipeline_id: "YOUR_BUILDKITE_PIPELINE_ID"
   build_branch: "main"
   build_source: "webhook"
 ```
@@ -444,7 +444,7 @@ Run `mise run build`, then add a command-based MCP entry in the orb's Amp settin
   "amp.mcpServers": {
     "gateway": {
       "command": "/path/to/mcp-gateway/bin/amp-mcp",
-      "args": ["-url", "https://lox-mcp-gateway.fly.dev/mcp"]
+      "args": ["-url", "https://gateway.example.com/mcp"]
     }
   }
 }

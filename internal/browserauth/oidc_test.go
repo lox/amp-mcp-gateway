@@ -33,10 +33,10 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 		wantReason   string
 	}{
 		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
-		{name: "valid hosted domain", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "owner-123", wantSuccess: true},
-		{name: "missing hosted domain claim", hostedDomain: "ljd.cc", claimSubject: "owner-123", wantReason: "hosted_domain"},
-		{name: "wrong hosted domain claim", hostedDomain: "ljd.cc", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
-		{name: "same domain wrong owner", hostedDomain: "ljd.cc", claimDomain: "ljd.cc", claimSubject: "other-owner", wantReason: "owner"},
+		{name: "valid hosted domain", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "owner-123", wantSuccess: true},
+		{name: "missing hosted domain claim", hostedDomain: "example.com", claimSubject: "owner-123", wantReason: "hosted_domain"},
+		{name: "wrong hosted domain claim", hostedDomain: "example.com", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
+		{name: "same domain wrong owner", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", wantReason: "owner"},
 		{name: "wrong nonce", claimSubject: "owner-123", wantReason: "nonce"},
 		{name: "wrong audience", claimSubject: "owner-123", wantReason: "id_token_verification"},
 		{name: "expired", claimSubject: "owner-123", wantReason: "id_token_verification"},

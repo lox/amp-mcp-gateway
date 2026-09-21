@@ -58,7 +58,7 @@ separate copies of this matrix in each document.
 - [x] Verify Amp workload issuer and reject wrong user/audience/signature/expiry/token use.
 - [x] Persist verified Amp user and thread link separately from model metadata.
 - [x] Add an orb MCP bridge that mints short-lived tokens per HTTP request.
-- [x] Register Google web client and configure exact owner subject plus `ljd.cc` domain.
+- [x] Register Google web client and configure exact owner subject plus hosted-domain restriction.
 - [x] Validate live Google login.
 - [ ] Validate a real provider call through production browser approval.
 - [ ] Add general client-facing OAuth discovery/scopes if non-orb clients need it.
@@ -67,7 +67,7 @@ separate copies of this matrix in each document.
 
 - [x] Validate the private Fly demo, then retire its app and disposable data.
 - [x] Select Fly public HTTPS with Google browser and Amp workload authentication.
-- [x] Deploy `lox-mcp-gateway` after Google registration and separate secrets are supplied.
+- [x] Deploy the single-owner Fly app after Google registration and separate secrets are supplied.
 - [ ] Test consistent backup and restore with separately protected encryption keys.
 - [ ] Design credential/key rotation, session revocation and retention procedures.
 - [x] Bound browser-added upstream responses and tool discovery.
