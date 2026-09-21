@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +33,7 @@ func main() {
 }
 func run() error {
 	demoMode := flag.Bool("demo", false, "use disposable local upstreams and demo-only browser password")
+	portalAuth := flag.Bool("orb-portal-auth", false, "development only: trust owner identity from the local Amp portal proxy (requires loopback listen)")
 	configPath := flag.String("config", "gateway.json", "production configuration file")
 	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	base := flag.String("base-url", "http://localhost:8080", "canonical browser origin")
@@ -79,6 +82,11 @@ func run() error {
 	if cfg.Listen != "" {
 		*listen = cfg.Listen
 	}
+	if *portalAuth {
+		if err := validatePortalAuth(cfg, *listen, *demoMode); err != nil {
+			return err
+		}
+	}
 	s, err := store.Open(cfg.Database, secrets.EncryptionKey)
 	if err != nil {
 		return err
@@ -99,6 +107,10 @@ func run() error {
 	authCfg.TrustedClientIPHeader = *clientIPHeader
 	if authCfg.TrustedClientIPHeader == "" && os.Getenv("FLY_APP_NAME") != "" {
 		authCfg.TrustedClientIPHeader = "Fly-Client-IP"
+	}
+	if *portalAuth {
+		authCfg.PortalUserID = cfg.AmpUserID
+		authCfg.ClientSecret = ""
 	}
 	if *demoMode {
 		authCfg.DemoPassword = "demo-only"
@@ -135,6 +147,7 @@ func run() error {
 	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return g.Run(ctx) })
+	group.Go(func() error { return m.RunRefresh(ctx) })
 	group.Go(func() error {
 		slog.Info("gateway listening", "address", *listen, "demo", *demoMode)
 		err := server.ListenAndServe()
@@ -150,4 +163,12 @@ func run() error {
 		return server.Shutdown(shutdown)
 	})
 	return group.Wait()
+}
+
+func validatePortalAuth(cfg gateway.Config, listen string, demo bool) error {
+	address, err := netip.ParseAddrPort(listen)
+	if err != nil || !address.Addr().IsLoopback() || os.Getenv("AMP_ORB") != "1" || os.Getenv("PUBLIC_URL") == "" || strings.TrimSuffix(os.Getenv("PUBLIC_URL"), "/") != cfg.BaseURL || demo || cfg.AmpUserID == "" || cfg.OwnerSubject != "amp-portal:"+cfg.AmpUserID || cfg.Issuer != "" || cfg.ClientID != "" || cfg.HostedDomain != "" {
+		return errors.New("orb portal auth requires AMP_ORB=1, BaseURL matching PUBLIC_URL, literal loopback listen, AmpUserID, OwnerSubject=amp-portal:<AmpUserID>, and no OIDC/demo configuration")
+	}
+	return nil
 }

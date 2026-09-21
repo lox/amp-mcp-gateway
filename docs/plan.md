@@ -15,7 +15,8 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 ## Settled first-pass choices
 
 - Go, the official MCP Go SDK, standard HTTP handlers and server-rendered HTML.
-- One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`.
+- One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`,
+  and `propose_policy_changes` for human-only application of policy batches.
 - Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
 - Single owner, one process, one SQLite disk. Persist intent before dispatch.
 - Google Workspace OIDC for the browser; Amp workload OIDC for orb MCP calls.
@@ -48,6 +49,8 @@ defaults (initially require approval) cover new tools, with explicit exceptions
 and bulk editing. Refresh preserves unchanged choices, sends changed allowed
 tools back to approval, and keeps blocks. Saves revoke queued authority and reject
 stale reviews. OAuth status distinguishes saved credentials from verified access.
+Agents can propose immutable batches of defaults and exceptions with one browser
+review link. Proposals expire after ten minutes and cannot apply their own changes.
 Public DeepWiki discovery is verified in the demo; the owner confirmed Buildkite
 OAuth and tool discovery for `lox`. Real provider execution remains to be tested.
 

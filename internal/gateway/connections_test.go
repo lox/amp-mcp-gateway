@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"ampcode.com/lox/mcp-gateway/internal/browserauth"
@@ -443,56 +444,130 @@ func TestConnectionDefaultExecution(t *testing.T) {
 }
 
 func TestOAuthStatusPage(t *testing.T) {
-	for _, tc := range []struct{ status, help, action string }{
-		{"Connected", "OAuth credentials saved. Fetch tools to check access", "Reconnect OAuth"},
-		{"Not connected", "Connect your provider account", "Connect OAuth"},
-		{"Reconnect required", "saved token has expired", "Reconnect OAuth"},
-		{"Status unavailable", "Could not read saved credentials", "Reconnect OAuth"},
-	} {
-		t.Run(tc.status, func(t *testing.T) {
+	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Refresh uncertain", "Refresh delayed", "Refresh paused", "Status unavailable"} {
+		t.Run(status, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"ToolReview": true, "Connection": map[string]any{"ID": "notes", "OAuth": true, "AuthStatus": tc.status}})
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Connection": map[string]any{"ID": "notes", "OAuth": true, "Health": upstream.Health{Status: status, Detail: "Safe health explanation"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, text := range []string{">" + tc.status + "</span>", tc.help, ">" + tc.action + "</a>", `role="status"`} {
+			action := "Reconnect OAuth"
+			if status == "Not connected" {
+				action = "Connect OAuth"
+			}
+			for _, text := range []string{">" + status + "</span>", "Safe health explanation", ">" + action + "</a>", `role="status"`, `method="post" action="/connections/notes/test"`, ">Test connection</button>"} {
 				if !strings.Contains(w.Body.String(), text) {
 					t.Fatalf("missing %q", text)
 				}
 			}
-			open := strings.Contains(w.Body.String(), `<details class="auth-details" open>`)
-			if open != (tc.status != "Connected") {
-				t.Fatal("authorization details should collapse only when connected")
+		})
+	}
+}
+
+func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
+	g, s, _ := fixture(t)
+	var requests, calls atomic.Int32
+	var unavailable atomic.Bool
+	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
+	remote.AddTool(&mcp.Tool{Name: "write", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		calls.Add(1)
+		return &mcp.CallToolResult{}, nil
+	})
+	protocol := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return remote }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if unavailable.Load() {
+			http.Error(w, "private-provider-canary", 503)
+			return
+		}
+		protocol.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	g.cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	for _, tc := range []struct {
+		cookie *http.Cookie
+		origin string
+		want   int
+	}{
+		{nil, "", 303}, {cookie, "https://attacker.example", 403},
+	} {
+		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
+		if tc.cookie != nil {
+			r.AddCookie(tc.cookie)
+		}
+		r.Header.Set("Origin", tc.origin)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.want || requests.Load() != 0 {
+			t.Fatal("unauthorized test reached upstream")
+		}
+	}
+	before := digest(g.catalogue())
+	for _, fail := range []bool{false, true} {
+		unavailable.Store(fail)
+		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
+		r.AddCookie(cookie)
+		r.Header.Set("Accept", "text/vnd.gateway.health+html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := "Healthy"
+		if fail {
+			want = "Test failed"
+		}
+		if w.Code != 200 || !strings.Contains(w.Body.String(), ">"+want+"</span>") || !strings.Contains(w.Body.String(), "Last tested:") || strings.Contains(w.Body.String(), "private-provider-canary") {
+			t.Fatalf("incorrect safe health response: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if calls.Load() != 0 || digest(g.catalogue()) != before {
+		t.Fatal("test executed tool or changed catalogue")
+	}
+	if len(g.drafts) != 0 {
+		t.Fatal("test created permission drafts")
+	}
+}
+
+func TestHealthDisclosure(t *testing.T) {
+	for _, status := range []string{"Healthy", "Not tested", "Reconnect required", "Refresh uncertain", "Updating credentials"} {
+		t.Run(status, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			if err := page.ExecuteTemplate(w, "health", upstream.Health{Status: status, Detail: "Health explanation", Refresh: "Refresh explanation"}); err != nil {
+				t.Fatal(err)
+			}
+			body := w.Body.String()
+			end := strings.Index(body, "</details>")
+			if end < 0 || strings.Contains(body, " open") || !strings.Contains(body[:end], "Refresh explanation") {
+				t.Fatal("diagnostics must be collapsed by default")
+			}
+			warning := status != "Healthy" && status != "Not tested"
+			if strings.Contains(body[end:], "Health explanation") != warning {
+				t.Fatal("only actionable health explanations should remain visible")
 			}
 		})
 	}
 }
 
 func TestDashboardOAuthStatus(t *testing.T) {
-	for _, status := range []string{"Connected", "Not connected", "Reconnect required", "Status unavailable"} {
+	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Status unavailable"} {
 		t.Run(status, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			err := page.Execute(w, map[string]any{"Connections": []map[string]any{
-				{"ID": "oauth", "OAuth": true, "AuthStatus": status},
-				{"ID": "public", "OAuth": false},
+				{"ID": "oauth", "OAuth": true, "Health": upstream.Health{Status: status}},
+				{"ID": "public", "OAuth": false, "Health": upstream.Health{Status: "Not tested"}},
 			}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			body := w.Body.String()
-			if !strings.Contains(body, "OAuth · "+status) || strings.Count(body, "OAuth · ") != 1 {
-				t.Fatal("missing OAuth status or status shown on non-OAuth card")
+			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, ">Test connection</button>") != 2 {
+				t.Fatal("missing status or test action")
 			}
-			if status == "Connected" && !strings.Contains(body, "Credentials saved; provider access not verified.") {
-				t.Fatal("connected status must not imply verified access")
-			}
-			action := "Reconnect"
-			if status == "Not connected" {
-				action = "Connect"
-			}
-			inline := `</span><small><a href="/connections/oauth/connect">` + action + `</a></small></p>`
-			if !strings.Contains(body, inline) || strings.Count(body, `href="/connections/oauth/connect"`) != 1 {
-				t.Fatal("connection action must appear once, beside status")
+			if strings.Count(body, `href="/connections/oauth/connect"`) != 1 || strings.Contains(body, `href="/connections/public/connect"`) {
+				t.Fatal("reconnect action must appear only for OAuth")
 			}
 		})
 	}
@@ -505,7 +580,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	}
 	h, cookie := adminUI(t, g, m)
 	w := formRequest(h, cookie, "GET", "/", nil)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "OAuth · Not connected") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") {
 		t.Fatal("dashboard did not load credential status")
 	}
 }

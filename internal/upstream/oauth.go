@@ -23,6 +23,10 @@ func googleOAuthEndpoints(authorize, token string) bool {
 	return authorize == "https://accounts.google.com/o/oauth2/v2/auth" && token == "https://oauth2.googleapis.com/token"
 }
 
+func dropboxOAuthEndpoints(authorize, token string) bool {
+	return authorize == "https://www.dropbox.com/oauth2/authorize" && token == "https://api.dropboxapi.com/oauth2/token"
+}
+
 // Register installs the OAuth connect and callback handlers on mux.
 func (m *Manager) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /connections/{id}/connect", m.connectHandler)
@@ -61,6 +65,9 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 		// token when this client already has a grant through another connection.
 		options = append(options, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
 	}
+	if dropboxOAuthEndpoints(c.config.OAuth.AuthURL, c.config.OAuth.TokenURL) {
+		options = append(options, oauth2.SetAuthURLParam("token_access_type", "offline"))
+	}
 	if c.config.OAuth.Resource != "" {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
 	}
@@ -95,7 +102,10 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthHTTPClient(c.config))
+	h := oauthHTTPClient(c.config)
+	observed := &tokenTransport{base: h.Transport}
+	h.Transport = observed
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, h)
 	options := []oauth2.AuthCodeOption{oauth2.VerifierOption(pending.verifier)}
 	if c.config.OAuth.Resource != "" {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
@@ -105,13 +115,17 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization exchange failed", http.StatusBadGateway)
 		return
 	}
-	raw, err := json.Marshal(token)
+	raw, err := json.Marshal(&credentials{Token: *token, AuthStyle: observed.style})
 	if err == nil {
 		c.mu.Lock()
 		if replacement, ok := m.store.(reauthorizer); ok {
 			err = replacement.Reauthorize(ctx, tokenKey(c.config), raw)
 		} else {
 			err = m.store.SaveToken(ctx, tokenKey(c.config), raw)
+		}
+		if err == nil {
+			c.check = Health{}
+			c.grant++
 		}
 		c.mu.Unlock()
 	}

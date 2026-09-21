@@ -161,7 +161,7 @@ func (s *Store) LoadCatalogue(ctx context.Context) ([]byte, error) {
 
 // SaveCatalogue commits configuration and revokes queued approvals atomically.
 // Running operations must finish before their authority can change.
-func (s *Store) SaveCatalogue(ctx context.Context, b []byte) error {
+func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -183,7 +183,18 @@ func (s *Store) SaveCatalogue(ctx context.Context, b []byte) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
 		return err
 	}
+	for _, e := range events {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) VALUES(?,?,?,unixepoch())", e.Operation, e.Kind, e.Actor); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// RecordEvent records a payload-free review lifecycle event.
+func (s *Store) RecordEvent(ctx context.Context, e Event) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) VALUES(?,?,?,unixepoch())", e.Operation, e.Kind, e.Actor)
+	return err
 }
 
 // Reauthorize invalidates queued requests when a human replaces an OAuth grant.

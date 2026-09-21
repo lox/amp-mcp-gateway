@@ -51,6 +51,7 @@ type Config struct {
 	// TrustedClientIPHeader requires an ingress that overwrites this header and
 	// prevents clients from reaching the listener directly. Empty uses RemoteAddr.
 	TrustedClientIPHeader string
+	PortalUserID          string // Explicit orb-only trusted-proxy authentication; never a cookie identity.
 }
 
 // Auth owns browser authentication state and handlers.
@@ -63,6 +64,7 @@ type Auth struct {
 	owner          string
 	hostedDomain   string
 	clientIPHeader string
+	portalUserID   string
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
@@ -107,6 +109,13 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		states:         make(map[string]pendingState),
 		now:            time.Now,
 	}
+	if c.PortalUserID != "" {
+		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.HostedDomain != "" || base.Scheme != "https" || c.OwnerSubject != "amp-portal:"+c.PortalUserID {
+			return nil, errors.New("browserauth: portal mode requires HTTPS, an Amp portal owner and no OIDC/demo configuration")
+		}
+		a.portalUserID = c.PortalUserID
+		return a, nil
+	}
 	if c.Demo {
 		if c.DemoPassword == "" {
 			return nil, errors.New("browserauth: DemoPassword is required in demo mode")
@@ -148,6 +157,17 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 // Register registers the authentication endpoints on mux.
 func (a *Auth) Register(mux *http.ServeMux) {
 	cop := http.NewCrossOriginProtection()
+	if a.portalUserID != "" {
+		mux.Handle("GET /login", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		})))
+		mux.Handle("POST /logout", cop.Handler(a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a.clearCookie(w, sessionCookie)
+			fmt.Fprintln(w, "This development instance uses your Amp portal identity. Sign out of Amp to end browser access.")
+		}))))
+		mux.HandleFunc("/auth/callback", http.NotFound)
+		return
+	}
 	mux.Handle("/login", cop.Handler(http.HandlerFunc(a.login)))
 	mux.Handle("/auth/callback", http.HandlerFunc(a.callback))
 	mux.Handle("/logout", cop.Handler(http.HandlerFunc(a.logout)))
@@ -157,6 +177,14 @@ func (a *Auth) Register(mux *http.ServeMux) {
 // adds the authenticated subject to the request context.
 func (a *Auth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.portalUserID != "" {
+			if !a.portalOwner(r) {
+				http.Error(w, "This development gateway requires the owner's authenticated Amp portal.", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, a.owner)))
+			return
+		}
 		sub, ok := a.sessionSubject(r)
 		if !ok || sub != a.owner {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -164,6 +192,26 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, sub)))
 	})
+}
+
+// Portal headers are trusted only from the local proxy. Other orb processes are
+// inside this trust boundary; this is not suitable for a shared/untrusted host.
+func (a *Auth) portalOwner(r *http.Request) bool {
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil || !peer.Addr().IsLoopback() || r.Host != a.baseURL.Host || len(r.Header.Values("X-Amp-User-ID")) != 1 || r.Header.Get("X-Amp-User-ID") != a.portalUserID || len(r.Header.Values("X-Amp-Authenticated")) != 1 {
+		return false
+	}
+	seen, authenticated := false, false
+	for _, entry := range strings.Split(r.Header.Get("X-Amp-Authenticated"), ",") {
+		key, value, _ := strings.Cut(strings.TrimSpace(entry), "=")
+		if key == "amp-user" {
+			if seen {
+				return false
+			}
+			seen, authenticated = true, value == "yes"
+		}
+	}
+	return authenticated
 }
 
 // Subject returns the authenticated subject installed by Require, or an empty

@@ -76,8 +76,8 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	if location.Query().Get("resource") != origin+"/mcp" || location.Query().Get("code_challenge_method") != "S256" {
 		t.Fatal("authorization missing resource or PKCE")
 	}
-	if location.Query().Has("access_type") || location.Query().Has("prompt") {
-		t.Fatal("Google consent parameters leaked to another provider")
+	if location.Query().Has("access_type") || location.Query().Has("prompt") || location.Query().Has("token_access_type") {
+		t.Fatal("provider-specific consent parameters leaked to another provider")
 	}
 	r := httptest.NewRequest("GET", "/connections/notes/callback?code=fixture&state="+url.QueryEscape(location.Query().Get("state")), nil)
 	r.AddCookie(login.Result().Cookies()[0])

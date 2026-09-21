@@ -49,7 +49,7 @@ type OAuthConfig struct {
 	AuthStyle       oauth2.AuthStyle `json:",omitempty"`
 }
 
-// TokenStore persists JSON-encoded oauth2.Token values. A missing token is nil, nil.
+// TokenStore persists JSON-encoded credentials. A missing token is nil, nil.
 type TokenStore interface {
 	LoadToken(context.Context, string) ([]byte, error)
 	SaveToken(context.Context, string, []byte) error
@@ -68,6 +68,8 @@ type Manager struct {
 type managedConnection struct {
 	config Connection
 	mu     sync.Mutex
+	check  Health
+	grant  uint64
 }
 
 type pendingState struct {
@@ -157,6 +159,13 @@ func (m *Manager) connection(id string) (*managedConnection, bool) {
 func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	c, ok := m.connection(connection)
+	if !ok {
+		return nil, errors.New("unknown connection")
+	}
+	c.mu.Lock()
+	grant := c.grant
+	c.mu.Unlock()
 	var tools []*mcp.Tool
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		cursor := ""
@@ -189,6 +198,18 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 			seen[cursor] = true
 		}
 	})
+	c.mu.Lock()
+	if c.grant == grant {
+		c.check = Health{Status: "Healthy", Detail: "MCP initialization and tool listing succeeded. No tools were executed.", CheckedAt: time.Now().UTC()}
+		if err != nil {
+			c.check.Status, c.check.Detail = "Test failed", "Could not initialize MCP or list tools. Check the provider and try again."
+			var f *Failure
+			if errors.As(err, &f) && (f.HTTPStatus == 401 || f.HTTPStatus == 403) {
+				c.check.Detail = "Provider rejected access. Check permissions and credentials; reconnect OAuth if authorization was revoked."
+			}
+		}
+	}
+	c.mu.Unlock()
 	return tools, err
 }
 
@@ -206,20 +227,26 @@ func (m *Manager) Call(ctx context.Context, connection, tool string, args map[st
 func (m *Manager) withSession(ctx context.Context, id string, fn func(*mcp.ClientSession) error) error {
 	c, ok := m.connection(id)
 	if !ok {
-		return fmt.Errorf("unknown connection %q", id)
+		return failure("credentials", fmt.Errorf("unknown connection %q", id), 0)
 	}
 	httpClient, err := m.httpClient(ctx, c)
 	if err != nil {
-		return err
+		return failure("credentials", err, 0)
 	}
+	observed := &statusTransport{base: httpClient.Transport}
+	httpClient.Transport = observed
 	transport := &mcp.StreamableClientTransport{Endpoint: c.config.URL, HTTPClient: httpClient, MaxRetries: -1, DisableStandaloneSSE: true}
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-gateway", Version: "1"}, nil)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("connect upstream: %w", err)
+		return failure("connect", err, int(observed.status.Load()))
 	}
 	defer session.Close()
-	return fn(session)
+	observed.status.Store(0)
+	if err := fn(session); err != nil {
+		return failure("request", err, int(observed.status.Load()))
+	}
+	return nil
 }
 
 func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.Client, error) {
@@ -250,7 +277,7 @@ func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.C
 	if token == nil {
 		return nil, fmt.Errorf("connection %q is not authorized", c.config.ID)
 	}
-	source := &persistingTokenSource{manager: m, connection: c}
+	source := &persistingTokenSource{manager: m, connection: c, ctx: ctx}
 	base.Transport = &oauth2.Transport{Source: source, Base: transport}
 	return base, nil
 }
@@ -267,27 +294,7 @@ func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(clone)
 }
 
-// OAuthStatus describes saved credentials, not provider-side validity. It never
-// refreshes credentials or contacts the provider.
-func (m *Manager) OAuthStatus(ctx context.Context, id string) string {
-	c, ok := m.connection(id)
-	if !ok || c.config.OAuth == nil {
-		return "Not connected"
-	}
-	token, err := m.loadToken(ctx, c)
-	if err != nil {
-		return "Status unavailable"
-	}
-	if token == nil || token.AccessToken == "" {
-		return "Not connected"
-	}
-	if !token.Valid() && token.RefreshToken == "" {
-		return "Reconnect required"
-	}
-	return "Connected"
-}
-
-func (m *Manager) loadToken(ctx context.Context, c *managedConnection) (*oauth2.Token, error) {
+func (m *Manager) loadToken(ctx context.Context, c *managedConnection) (*credentials, error) {
 	raw, err := m.store.LoadToken(ctx, tokenKey(c.config))
 	if err != nil {
 		return nil, fmt.Errorf("load OAuth token: %w", err)
@@ -295,7 +302,7 @@ func (m *Manager) loadToken(ctx context.Context, c *managedConnection) (*oauth2.
 	if raw == nil {
 		return nil, nil
 	}
-	var token oauth2.Token
+	var token credentials
 	if err := json.Unmarshal(raw, &token); err != nil {
 		return nil, fmt.Errorf("decode OAuth token: %w", err)
 	}
@@ -305,39 +312,11 @@ func (m *Manager) loadToken(ctx context.Context, c *managedConnection) (*oauth2.
 type persistingTokenSource struct {
 	manager    *Manager
 	connection *managedConnection
+	ctx        context.Context
 }
 
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
-	c := s.connection
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Reload under the per-connection lock so concurrent requests share rotation.
-	token, err := s.manager.loadToken(context.Background(), c)
-	if err != nil {
-		return nil, err
-	}
-	if token == nil {
-		return nil, errors.New("connection is not authorized")
-	}
-	if token.Valid() {
-		return token, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthHTTPClient(c.config))
-	refreshed, err := s.manager.oauthConfig(c.config).TokenSource(ctx, token).Token()
-	if err != nil {
-		return nil, fmt.Errorf("refresh OAuth token: %w", err)
-	}
-	raw, err := json.Marshal(refreshed)
-	if err != nil {
-		return nil, fmt.Errorf("encode OAuth token: %w", err)
-	}
-	if err := s.manager.store.SaveToken(ctx, tokenKey(c.config), raw); err != nil {
-		return nil, fmt.Errorf("save refreshed OAuth token: %w", err)
-	}
-	return refreshed, nil
+	return s.manager.refresh(s.ctx, s.connection, false)
 }
 
 func tokenKey(c Connection) string {

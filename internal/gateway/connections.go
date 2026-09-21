@@ -57,7 +57,7 @@ func (cfg Config) defaultPolicy(id string) string {
 }
 
 // Caller holds g.mu. Validate before persistence; publish only after commit.
-func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager) error {
+func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, events ...store.Event) error {
 	next := g.cfg
 	next.Connections, next.Tools = c.Connections, c.Tools
 	next.ToolDefaults = c.ToolDefaults
@@ -73,13 +73,14 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	if err != nil {
 		return err
 	}
-	if err := g.store.SaveCatalogue(ctx, raw); err != nil {
+	if err := g.store.SaveCatalogue(ctx, raw, events...); err != nil {
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
 	m.Install(manager)
 	g.cfg.Connections, g.cfg.Tools = c.Connections, c.Tools
 	g.cfg.ToolDefaults = c.ToolDefaults
 	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
+	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.
 	return nil
 }
 
@@ -149,11 +150,38 @@ func (g *Gateway) newDraft(draft toolDraft) (string, error) {
 var connectionID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,60}$`)
 
 func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
+	mux.HandleFunc("GET /policy-proposals/{ticket}", g.reviewPolicies)
+	mux.HandleFunc("POST /policy-proposals/{ticket}/{decision}", func(w http.ResponseWriter, r *http.Request) { g.decidePolicies(w, r, m) })
 	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, nil, "") })
 	mux.HandleFunc("POST /connections", func(w http.ResponseWriter, r *http.Request) { g.addConnection(w, r, m) })
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/discover", func(w http.ResponseWriter, r *http.Request) { g.discoverTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.saveTools(w, r, m) })
+	mux.HandleFunc("POST /connections/{id}/test", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		g.mu.RLock()
+		exists := false
+		for _, c := range g.cfg.Connections {
+			if c.ID == id {
+				exists = true
+			}
+		}
+		g.mu.RUnlock()
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		// Only presentation-safe health is returned, never provider errors or tools.
+		_ = m.TestConnection(r.Context(), id)
+		if r.Header.Get("Accept") == "text/vnd.gateway.health+html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := page.ExecuteTemplate(w, "health", m.Health(r.Context(), id)); err != nil {
+				http.Error(w, "could not render connection status", 500)
+			}
+			return
+		}
+		http.Redirect(w, r, "/connections/"+id+"/tools", http.StatusSeeOther)
+	})
 }
 
 func (g *Gateway) addPage(w http.ResponseWriter, values map[string]string, message string) {
@@ -260,9 +288,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.NotFound(w, nil)
 		return
 	}
-	if connection["OAuth"] == true {
-		connection["AuthStatus"] = m.OAuthStatus(r.Context(), id)
-	}
+	connection["Health"] = m.Health(r.Context(), id)
 	rows := []map[string]any{}
 	added, changed := 0, 0
 	for _, tool := range tools {
