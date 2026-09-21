@@ -33,6 +33,7 @@ separate copies of this matrix in each document.
 | Revocation | Partial | Token/key rotation, configuration changes and reconnect invalidation; no per-run/grant stop control. |
 | Tool-definition review | Partial | Refresh shows additions, changes and removals. Unchanged exceptions persist; changed allowed tools require approval and blocks persist. No automatic refresh or drift detection. |
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
+| Execution diagnostics | Partial | Stored stage and protocol codes; fixed hints for recognized HTTP authentication errors and validated Dropbox request IDs. No arbitrary response-body capture or distributed tracing. |
 | Tamper-evident archive | Planned | No independent archive, signed checkpoints, immutable retention or receipts. |
 | Local / orb development | Implemented | mise, pinned Go, setup script, supervised demo, helper client, race tests and vet. |
 | Tailscale / Fly deployment | Partial | Fly HTTPS deployment healthy with separate secrets and browser-managed connections. Tailscale optional, unconfigured. |

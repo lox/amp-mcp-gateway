@@ -125,7 +125,7 @@ func TestApprovalExecutesStoredArgumentsExactlyOnce(t *testing.T) {
 func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 	t.Run("safe diagnostic persisted", func(t *testing.T) {
 		g, s, b := fixture(t)
-		b.callErr = &upstream.Failure{Stage: "request", Kind: "jsonrpc", RPCCode: new(int64(0))}
+		b.callErr = &upstream.Failure{Stage: "request", Kind: "http", HTTPStatus: 400, HTTP: &upstream.HTTPDiagnostic{Reason: "authentication_rejected", Hint: "Check permissions and reconnect OAuth.", RequestID: "627206d2959f464d9c48ac656ab05b56"}}
 		o, err := g.submit(t.Context(), input("diagnostic-call", "private"))
 		if err != nil {
 			t.Fatal(err)
@@ -141,8 +141,12 @@ func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 		if err := json.Unmarshal(o.Result, &result); err != nil {
 			t.Fatal(err)
 		}
-		if result.Diagnostic.Stage != "request" || result.Diagnostic.Kind != "jsonrpc" || result.Diagnostic.RPCCode == nil || *result.Diagnostic.RPCCode != 0 {
+		if result.Diagnostic.Stage != "request" || result.Diagnostic.Kind != "http" || result.Diagnostic.HTTPStatus != 400 || result.Diagnostic.HTTP == nil || *result.Diagnostic.HTTP != *(b.callErr.(*upstream.Failure).HTTP) {
 			t.Fatalf("missing diagnostic: %s", o.Result)
+		}
+		returned, err := json.Marshal(g.result(o))
+		if err != nil || !strings.Contains(string(returned), "authentication_rejected") || b.calls.Load() != 1 {
+			t.Fatalf("diagnostic not returned or request retried: %s, %v", returned, err)
 		}
 	})
 	t.Run("changed account", func(t *testing.T) {
