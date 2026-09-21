@@ -97,11 +97,35 @@ provider's metadata and tries dynamic client registration. If registration is
 unavailable, expand **Use an existing OAuth client** and supply its client ID and,
 if required, secret. Register the callback shown in the form with that provider.
 Review the discovered authorization server and scopes before clicking
-**Connect OAuth** (or **Reconnect OAuth**). After authorization, **Connected** means
-credentials are saved, not that the provider has confirmed they still work. Fetch
-tools to check access. An expired token without a refresh token shows **Reconnect
-required**; a storage error shows **Status unavailable** rather than implying the
-account is disconnected. Viewing status never refreshes credentials.
+**Connect OAuth** (or **Reconnect OAuth**). **Test connection**, beside reconnect,
+initializes MCP and lists tools without executing a tool or changing permissions.
+It updates health inline, preserving unsaved tool edits. **Healthy** means that
+test or a tool-list fetch succeeded at the displayed time, not continuous monitoring
+or verified account identity. Test observations reset to **Not tested** on restart
+or reauthorization. Viewing status does not contact the provider.
+
+The gateway checks OAuth grants every minute, refreshing tokens within two minutes
+of expiry even while idle. Expired tokens also refresh on use. Credentials, rotated
+refresh tokens, last-refresh times and refresh outcomes are encrypted and survive
+restarts. No expiry means no proactive schedule; no refresh token means reconnect
+will be needed when access expires. Provider revocation and absolute grant lifetimes
+still require consent again. The gateway must remain running to maintain idle grants.
+
+Connection health distinguishes **Refresh delayed** (a retry after one or two minutes),
+**Refresh paused** (three attempts exhausted; test to resume), **Reconnect required**
+(expired without refresh or `invalid_grant`), **Refresh blocked** (OAuth client/request
+configuration), and **Status unavailable** (storage failure). Only connection failures
+before a socket is acquired and explicit OAuth `server_error`/`temporarily_unavailable`
+rejections are retried. Lost or malformed responses, interrupted refreshes, and failed
+rotation persistence show **Refresh uncertain** and are never replayed, even on restart
+or when testing. Reconnect to recover those grants safely. A bare HTTP 5xx response is
+ambiguous, not proof that a rotating refresh token was unused.
+
+New grants retain the successful exchange's client authentication method. Legacy
+grants use configured `AuthStyle`, or the OAuth default (Basic for confidential
+clients, form parameters for public clients). An explicit HTTP 400/401
+`invalid_client` permits one scheduled switch from legacy Basic to form authentication;
+ambiguous failures never trigger authentication-method probing.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
 Discovered authorization and token endpoints must share an origin, except for
@@ -158,8 +182,10 @@ Google granted access or that a tool call will succeed.
 ### Dropbox
 
 In **Add MCP**, use connection name `dropbox`, URL `https://mcp.dropbox.com/mcp`
-and **OAuth**. Dropbox advertises dynamic client registration; try that first.
-If it rejects registration, supply an existing OAuth client with this callback:
+and **OAuth**. Dropbox advertises dynamic client registration but restricts it to
+[approved clients](https://help.dropbox.com/integrations/connect-dropbox-mcp-server).
+For this gateway, register a Dropbox app and use its app key and secret under
+**Use an existing OAuth client**, with this callback:
 
 ```text
 https://lox-mcp-gateway.fly.dev/connections/dropbox/callback
@@ -246,6 +272,37 @@ amp orb services ensure
 Open the portal URL printed by that command. It uses the same demo-only password.
 Use the helper client inside the orb; ordinary remote MCP clients cannot bypass
 Amp's portal authentication using the gateway bearer token alone.
+
+#### Real-account debugging through a private portal
+
+`mcp-gateway -orb-portal-auth -config <isolated-config>` uses Amp's portal identity
+instead of Google browser login. This is an explicit development option, not a
+production authentication alternative. It requires:
+
+- `AMP_ORB=1` and `BaseURL` matching the service's `PUBLIC_URL` with its trailing
+  slash removed. This keeps the MCP workload-token audience equal to the origin.
+- A literal loopback `Listen`, such as `127.0.0.1:<PORT>`.
+- Your exact `AmpUserID` and `OwnerSubject: "amp-portal:<AmpUserID>"`.
+- Empty `Issuer`, `ClientID` and `HostedDomain`; no `-demo` flag.
+- A separate database and fresh encryption/session keys, never production data.
+
+Keep the portal private. The app requires `X-Amp-Authenticated: amp-user=yes`
+and an exact `X-Amp-User-ID` match on every browser request, from the loopback
+proxy and for the configured host. Missing identity returns 403; cookies cannot
+bypass it. Google callback/login is not used, and logout directs you to sign out
+of Amp. Browser actions are attributed to `amp-portal:<AmpUserID>`.
+
+This relies on [Amp's portal identity headers](https://ampcode.com/docs/orbs/portals).
+They are not signed: all processes and agents inside the owning orb are trusted.
+Never expose the backend or place an untrusted proxy in front of it. Environment
+guards prevent accidental activation, not a malicious operator from changing
+the environment. Orb-internal portal requests bypass external Amp login and may
+not have identity headers; test those headers locally only as a trusted-proxy
+fixture, not as proof of external sign-in.
+
+MCP workload authentication, browser CSRF protection and upstream OAuth stay
+enabled. Register each upstream callback against the portal origin (for Dropbox,
+`/connections/dropbox/callback`). No Google browser callback is needed in this mode.
 
 ### Fly: Amp clients and Google browser login
 
@@ -401,6 +458,15 @@ before contacting the upstream, then records its outcome and audit event togethe
   running operations `unknown`. No automatic dispatch retries occur.
 - `unknown` does not mean failure. Inspect the upstream before deciding what to do.
   There is no exactly-once guarantee across the upstream/network boundary.
+
+New upstream execution errors include a `diagnostic` object in the stored result
+and `get_operation` response. It records the stage (`credentials`, `connect` or
+`request`), a fixed error category, and HTTP/JSON-RPC error codes when available.
+The HTTP code is the last observed non-success response during that stage, not
+proof of which request failed. Provider messages, bodies, headers, URLs and
+arguments are excluded. These details do not authorize retries or change the
+`unknown` status. Older records and restart-recovered operations may have no
+diagnostic; it cannot be reconstructed after the fact.
 
 The browser shows the tool, configured upstream account label, exact arguments,
 request digest and model label. It is **not** an effect preview or a guarantee that

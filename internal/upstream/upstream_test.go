@@ -39,9 +39,9 @@ func TestOAuthStatus(t *testing.T) {
 	c := Connection{ID: "oauth", URL: "https://mcp.example.com", OAuth: &OAuthConfig{ClientID: "client", AuthURL: "https://auth.example.com/authorize", TokenURL: "https://auth.example.com/token"}}
 	for _, tc := range []struct{ name, raw, want string }{
 		{"missing", "", "Not connected"},
-		{"saved", `{"access_token":"private-canary"}`, "Connected"},
+		{"saved", `{"access_token":"private-canary"}`, "Not tested"},
 		{"expired", `{"access_token":"private-canary","expiry":"2000-01-01T00:00:00Z"}`, "Reconnect required"},
-		{"refreshable", `{"access_token":"private-canary","refresh_token":"refresh-canary","expiry":"2000-01-01T00:00:00Z"}`, "Connected"},
+		{"refreshable", `{"access_token":"private-canary","refresh_token":"refresh-canary","expiry":"2000-01-01T00:00:00Z"}`, "Not tested"},
 		{"empty", `{}`, "Not connected"},
 		{"corrupt", `invalid`, "Status unavailable"},
 	} {
@@ -54,7 +54,7 @@ func TestOAuthStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := m.OAuthStatus(t.Context(), c.ID); got != tc.want {
+			if got := m.Health(t.Context(), c.ID).Status; got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 			if s.saves != 0 {
@@ -133,12 +133,12 @@ func TestOAuthRefreshSerializedAndPersisted(t *testing.T) {
 	}
 	c := m.conns["one"]
 	var wg sync.WaitGroup
-	for range 8 {
+	for i := range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			source := &persistingTokenSource{manager: m, connection: c}
-			token, err := source.Token()
+			// Background and on-demand refresh share the same rotation lock.
+			token, err := m.refresh(t.Context(), c, i%2 == 0)
 			if err != nil || token.AccessToken != "fresh" {
 				t.Errorf("Token() = %#v, %v", token, err)
 			}
@@ -147,7 +147,7 @@ func TestOAuthRefreshSerializedAndPersisted(t *testing.T) {
 	wg.Wait()
 	mu.Lock()
 	defer mu.Unlock()
-	if refreshes != 1 || store.saves != 1 || !strings.Contains(string(store.data[tokenKey(oauthConn)]), "rotated") {
+	if refreshes != 1 || store.saves != 2 || !strings.Contains(string(store.data[tokenKey(oauthConn)]), "rotated") {
 		t.Fatalf("refreshes=%d saves=%d", refreshes, store.saves)
 	}
 }

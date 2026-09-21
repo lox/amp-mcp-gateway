@@ -102,7 +102,10 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthHTTPClient(c.config))
+	h := oauthHTTPClient(c.config)
+	observed := &tokenTransport{base: h.Transport}
+	h.Transport = observed
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, h)
 	options := []oauth2.AuthCodeOption{oauth2.VerifierOption(pending.verifier)}
 	if c.config.OAuth.Resource != "" {
 		options = append(options, oauth2.SetAuthURLParam("resource", c.config.OAuth.Resource))
@@ -112,13 +115,17 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization exchange failed", http.StatusBadGateway)
 		return
 	}
-	raw, err := json.Marshal(token)
+	raw, err := json.Marshal(&credentials{Token: *token, AuthStyle: observed.style})
 	if err == nil {
 		c.mu.Lock()
 		if replacement, ok := m.store.(reauthorizer); ok {
 			err = replacement.Reauthorize(ctx, tokenKey(c.config), raw)
 		} else {
 			err = m.store.SaveToken(ctx, tokenKey(c.config), raw)
+		}
+		if err == nil {
+			c.check = Health{}
+			c.grant++
 		}
 		c.mu.Unlock()
 	}
