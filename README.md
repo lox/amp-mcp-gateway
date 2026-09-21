@@ -124,6 +124,9 @@ A few limits worth knowing:
   The owner has verified live Google login. The local demo uses a shared token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
+- New work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB
+  of operation payload and audit field bytes. At most 16 operations can remain
+  pending, ready or running. Existing work can still finish; history is retained.
 - A timed-out call may have run upstream. We mark it `unknown` and don't retry it.
 
 ## Try it
