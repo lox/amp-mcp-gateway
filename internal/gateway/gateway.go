@@ -158,10 +158,13 @@ func (g *Gateway) mcpHandler() http.Handler {
 		return nil, out, err
 	})
 	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
+		words, err := searchTerms(in.Query)
+		if err != nil {
+			return nil, nil, err
+		}
 		g.mu.RLock()
 		defer g.mu.RUnlock()
 		out := []Tool{}
-		words := strings.Fields(strings.ToLower(in.Query))
 		for _, t := range g.tools {
 			if t.Policy == "deny" {
 				continue
@@ -171,6 +174,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 			for _, w := range words {
 				if !strings.Contains(hay, w) {
 					match = false
+					break
 				}
 			}
 			if match {
