@@ -321,6 +321,22 @@ If the browser reports `authentication failed`, check Fly logs for
 `missing_id_token`, `id_token_verification`, `nonce`, `owner` or `hosted_domain`.
 These logs contain fixed stage names, not tokens, provider responses or user claims.
 Start a fresh login after a failure; callback state is single-use.
+The gateway retains at most 128 pending browser logins, with at most eight per
+IPv4 address or IPv6 /64. Excess attempts from one source receive HTTP 429; the
+global limit returns HTTP 503. Expired or consumed states release capacity.
+A browser retry with a valid signed state cookie reuses its live login without
+extending its expiry, including when either limit is full. Existing callbacks
+remain valid. Distributed traffic can still exhaust the global pool, so ingress
+request-rate controls remain useful.
+
+Direct deployments use the TCP peer address and ignore forwarding headers. On
+Fly (`FLY_APP_NAME` set), login admission uses the proxy's
+[`Fly-Client-IP` header](https://fly.io/docs/networking/request-headers/).
+Other trusted ingress deployments can set `-trusted-client-ip-header HEADER`.
+Only enable this when the ingress overwrites the header and clients cannot reach
+the listener directly. Missing, malformed or repeated header values reject login
+with HTTP 400. Another proxy in front of Fly needs its own admission controls;
+otherwise its users share Fly's source limit.
 
 To reproduce the deployment:
 

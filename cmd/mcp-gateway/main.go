@@ -37,6 +37,7 @@ func run() error {
 	configPath := flag.String("config", "gateway.json", "production configuration file")
 	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	base := flag.String("base-url", "http://localhost:8080", "canonical browser origin")
+	clientIPHeader := flag.String("trusted-client-ip-header", "", "client IP header overwritten by trusted ingress; listener must not be directly reachable")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -103,6 +104,10 @@ func run() error {
 		return err
 	}
 	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: os.Getenv("GATEWAY_OIDC_SECRET"), OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	authCfg.TrustedClientIPHeader = *clientIPHeader
+	if authCfg.TrustedClientIPHeader == "" && os.Getenv("FLY_APP_NAME") != "" {
+		authCfg.TrustedClientIPHeader = "Fly-Client-IP"
+	}
 	if *portalAuth {
 		authCfg.PortalUserID = cfg.AmpUserID
 		authCfg.ClientSecret = ""
