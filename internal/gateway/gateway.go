@@ -273,7 +273,15 @@ func (g *Gateway) Run(ctx context.Context) error {
 			var raw json.RawMessage
 			if callErr != nil {
 				status = "unknown"
-				raw = json.RawMessage(`{"message":"No reliable upstream outcome. Inspect the upstream before retrying."}`)
+				var diagnostic *upstream.Failure
+				errors.As(callErr, &diagnostic)
+				raw, err = json.Marshal(struct {
+					Message    string            `json:"message"`
+					Diagnostic *upstream.Failure `json:"diagnostic,omitempty"`
+				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic})
+				if err != nil {
+					return err
+				}
 			} else {
 				raw, err = json.Marshal(result)
 				if err != nil {
@@ -333,9 +341,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	}
 	g.mu.RUnlock()
 	for _, c := range connections {
-		if c["OAuth"] == true {
-			c["AuthStatus"] = m.OAuthStatus(r.Context(), c["ID"].(string))
-		}
+		c["Health"] = m.Health(r.Context(), c["ID"].(string))
 	}
 	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }

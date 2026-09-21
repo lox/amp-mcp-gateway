@@ -85,6 +85,15 @@ Sign in to the gateway and click **Add MCP**. Enter the server URL and choose
 OAuth, a bearer token, or no authentication for a public server. For OAuth, review
 the authorization server and scopes, then sign in with the provider.
 
+Use **Test connection** beside **Reconnect OAuth** to verify access without executing
+tools or changing permissions. Health shows the last test, refresh and access-token
+expiry. OAuth credentials refresh automatically while idle when the provider issues
+a refresh token and expiry; revoked grants and uncertain refresh outcomes still need
+attention. See [credential maintenance and recovery](docs/dev.md#connect-a-remote-mcp)
+for retry and provider limits.
+
+![Connection tests and automatic OAuth refresh in the disposable demo](docs/images/connection-health.png)
+
 Click **Refresh tools**, set a connection default—usually **Require approval**—and
 **Save changes**. Search finds tools across the connection, including those using
 the default. Each result shows its permission; **Default: Require approval**, for
