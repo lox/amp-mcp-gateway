@@ -1,8 +1,9 @@
-# mcp-gateway
+# Amp MCP Gateway
 
-Managing auth for a pile of MCP servers is a pain. This puts them behind one
-connection, keeps their credentials in one place, and lets you require approval
-before an agent calls particular tools.
+Managing auth for a pile of MCP servers in Amp is a pain. Amp MCP Gateway puts
+them behind one connection, keeps their credentials in one place, and lets you
+require approval before Amp calls particular tools. It remains compatible with
+any client that supports Streamable HTTP MCP.
 
 It's self-hosted, written in Go, and still a prototype. The demo works end to end
 with fake services. DeepWiki discovery and Buildkite OAuth/discovery have been

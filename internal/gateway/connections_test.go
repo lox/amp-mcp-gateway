@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"ampcode.com/lox/mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

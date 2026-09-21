@@ -9,5 +9,5 @@ mise trust
 mise install
 echo 'Downloading Go dependencies'
 mise exec -- go mod download
-echo 'Building gateway'
+echo 'Building Amp MCP Gateway'
 mise run build

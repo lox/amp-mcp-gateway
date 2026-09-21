@@ -111,7 +111,7 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 			return nil, errors.New("this provider requires an existing OAuth client ID; register the callback URL shown below")
 		}
 		registered, err := oauthex.RegisterClient(ctx, meta.RegistrationEndpoint, &oauthex.ClientRegistrationMetadata{
-			RedirectURIs: []string{callback}, ClientName: "mcp-gateway", TokenEndpointAuthMethod: "none",
+			RedirectURIs: []string{callback}, ClientName: "amp-mcp-gateway", TokenEndpointAuthMethod: "none",
 			GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"}, Scope: strings.Join(scopes, " "),
 		}, h)
 		if err != nil {

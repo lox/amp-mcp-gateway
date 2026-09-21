@@ -5,5 +5,5 @@ services:
     health: /healthz
     review: false
     portal:
-      title: MCP gateway demo
+      title: Amp MCP Gateway demo
       description: 'Disposable fixtures only. Sign in with password demo-only. Connect notes OAuth before approving a note.'

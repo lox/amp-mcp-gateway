@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"ampcode.com/lox/mcp-gateway/internal/upstream"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 func TestOAuthConnectRequiresOwnerPost(t *testing.T) {
