@@ -2,7 +2,6 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -159,10 +158,13 @@ func (g *Gateway) mcpHandler() http.Handler {
 		return nil, out, err
 	})
 	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
+		words, err := searchTerms(in.Query)
+		if err != nil {
+			return nil, nil, err
+		}
 		g.mu.RLock()
 		defer g.mu.RUnlock()
 		out := []Tool{}
-		words := strings.Fields(strings.ToLower(in.Query))
 		for _, t := range g.tools {
 			if t.Policy == "deny" {
 				continue
@@ -172,6 +174,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 			for _, w := range words {
 				if !strings.Contains(hay, w) {
 					match = false
+					break
 				}
 			}
 			if match {
@@ -351,15 +354,16 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	args, _ := json.MarshalIndent(o.Arguments, "", "  ")
+	args, _ := json.Marshal(o.Arguments)
 	var result struct {
 		Content    []json.RawMessage `json:"content"`
 		Structured json.RawMessage   `json:"structuredContent"`
 	}
 	var blocks []string
 	if json.Unmarshal(o.Result, &result) == nil {
+		structured := prettyJSON(result.Structured)
 		if len(result.Structured) > 0 {
-			blocks = append(blocks, prettyJSON(result.Structured))
+			blocks = append(blocks, structured)
 		}
 		for _, raw := range result.Content {
 			var block struct {
@@ -368,7 +372,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			}
 			if json.Unmarshal(raw, &block) == nil && block.Type == "text" {
 				text := prettyJSON([]byte(block.Text))
-				if len(result.Structured) == 0 || text != prettyJSON(result.Structured) {
+				if len(result.Structured) == 0 || text != structured {
 					blocks = append(blocks, text)
 				}
 			} else {
@@ -381,16 +385,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimPrefix(o.Tool, o.Connection+".")
 	name = strings.ReplaceAll(name, "_", " ")
-	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": string(args), "Owner": g.cfg.OwnerSubject})
-}
-
-// Indent without decoding numbers through float64 or dropping unknown fields.
-func prettyJSON(raw []byte) string {
-	var out bytes.Buffer
-	if json.Indent(&out, raw, "", "  ") == nil {
-		return out.String()
-	}
-	return string(raw)
+	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) render(w http.ResponseWriter, data any) {

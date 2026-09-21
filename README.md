@@ -13,6 +13,8 @@ tested; real provider execution still needs validation.
 The agent gets three execution tools and one policy proposal tool:
 
 - `find_tools` searches the configured tools and returns their argument schemas.
+  Queries allow at most 1,024 UTF-8 bytes and 32 distinct case-insensitive terms.
+  Empty queries return all permitted tools; repeated terms do not change matches.
 - `call_tools` submits a call to a specific tool. It either queues it, denies it,
   or returns a link for human approval.
 - `get_operation` checks the status and retrieves the result.
@@ -122,6 +124,9 @@ A few limits worth knowing:
   The owner has verified live Google login. The local demo uses a shared token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
+- New work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB
+  of operation payload and audit field bytes. At most 16 operations can remain
+  pending, ready or running. Existing work can still finish; history is retained.
 - A timed-out call may have run upstream. We mark it `unknown` and don't retry it.
 
 ## Try it

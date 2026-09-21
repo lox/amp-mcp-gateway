@@ -109,7 +109,10 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 	if identity.UserID != "" {
 		actor = "Amp user " + identity.UserID + " thread " + identity.ThreadID
 	}
-	if err := g.store.RecordEvent(ctx, store.Event{Kind: "policy-proposed", Actor: actor + " · proposal " + digest(ticket)}); err != nil {
+	if err := g.store.AdmitEvent(ctx, store.Event{Kind: "policy-proposed", Actor: actor + " · proposal " + digest(ticket)}); err != nil {
+		if errors.Is(err, store.ErrCapacity) {
+			return policyResult{}, err
+		}
 		return policyResult{}, errors.New("could not record proposal")
 	}
 	g.proposals[ticket] = p

@@ -20,9 +20,10 @@ import (
 
 // Store is a single-process SQLite ledger. Payloads and credentials are encrypted.
 type Store struct {
-	db   *sql.DB
-	aead cipher.AEAD
-	lock *os.File
+	db     *sql.DB
+	aead   cipher.AEAD
+	lock   *os.File
+	limits ledgerUsage
 }
 
 // Operation is an immutable request with mutable execution state.
@@ -88,11 +89,12 @@ func Open(path, key string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, aead: aead, lock: lock}
+	s := &Store{db: db, aead: aead, lock: lock, limits: ledgerUsage{operations: 10000, events: 50000, bytes: 64 << 20, outstanding: 16}}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
 	if err != nil {
 		s.Close()
@@ -108,6 +110,10 @@ CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, o
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.Close()
 		return nil, errors.New("cannot decrypt existing ledger: check encryption key and database integrity")
+	}
+	if err := s.backfillSummaries(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("backfill operation summaries: %w", err)
 	}
 	_, err = db.Exec(`BEGIN; INSERT INTO events(operation,kind,actor,time) SELECT id,'unknown','restart',unixepoch() FROM operations WHERE status='running'; UPDATE operations SET status='unknown' WHERE status='running'; COMMIT;`)
 	if err != nil {
@@ -268,14 +274,25 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err != nil {
 		return o, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, s.seal("operation:"+o.ID, b)); err != nil {
-		return o, err
-	}
 	actor := o.Subject
 	if o.AmpUserID != "" {
 		actor = "amp:" + o.AmpUserID
 	}
+	encrypted := s.seal("operation:"+o.ID, b)
+	delta := ledgerUsage{operations: 1, events: 1, bytes: int64(len(encrypted) + len(o.ID) + len(o.Status) + len(actor))}
+	if o.Status == "pending" || o.Status == "ready" || o.Status == "running" {
+		delta.outstanding = 1
+	}
+	if err := s.checkAdmission(ctx, tx, delta); err != nil {
+		return o, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, encrypted); err != nil {
+		return o, err
+	}
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
+		return o, err
+	}
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account}); err != nil {
 		return o, err
 	}
 	return o, tx.Commit()
@@ -374,24 +391,6 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 		return err
 	}
 	return tx.Commit()
-}
-
-// List returns the most recent operations.
-func (s *Store) List(ctx context.Context) ([]Operation, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id,status,payload FROM operations ORDER BY created DESC,id LIMIT 100")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Operation{}
-	for rows.Next() {
-		o, err := s.decode(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
 }
 
 // Events returns the most recent payload-free audit events.

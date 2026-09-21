@@ -146,7 +146,8 @@ Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.
 Local stdio and legacy SSE servers are not supported by this flow. Static trusted
 configuration can still use loopback fixtures. Discovery is limited to 500 tools,
-2 MiB of tool definitions and a 30-second timeout. Schemas must be self-contained.
+2 MiB of tool definitions plus pagination cursors and a 30-second timeout. Schemas
+must be self-contained.
 
 ### Google Sheets, Drive and Gmail
 
@@ -326,6 +327,22 @@ If the browser reports `authentication failed`, check Fly logs for
 `missing_id_token`, `id_token_verification`, `nonce`, `owner` or `hosted_domain`.
 These logs contain fixed stage names, not tokens, provider responses or user claims.
 Start a fresh login after a failure; callback state is single-use.
+The gateway retains at most 128 pending browser logins, with at most eight per
+IPv4 address or IPv6 /64. Excess attempts from one source receive HTTP 429; the
+global limit returns HTTP 503. Expired or consumed states release capacity.
+A browser retry with a valid signed state cookie reuses its live login without
+extending its expiry, including when either limit is full. Existing callbacks
+remain valid. Distributed traffic can still exhaust the global pool, so ingress
+request-rate controls remain useful.
+
+Direct deployments use the TCP peer address and ignore forwarding headers. On
+Fly (`FLY_APP_NAME` set), login admission uses the proxy's
+[`Fly-Client-IP` header](https://fly.io/docs/networking/request-headers/).
+Other trusted ingress deployments can set `-trusted-client-ip-header HEADER`.
+Only enable this when the ingress overwrites the header and clients cannot reach
+the listener directly. Missing, malformed or repeated header values reject login
+with HTTP 400. Another proxy in front of Fly needs its own admission controls;
+otherwise its users share Fly's source limit.
 
 To reproduce the deployment:
 
@@ -477,6 +494,11 @@ The browser shows the tool, configured upstream account label, exact arguments,
 request digest and model label. It is **not** an effect preview or a guarantee that
 an upstream's implementation has not changed.
 
+The UI pretty-prints schemas, arguments and JSON results only when the added
+whitespace stays within twice the compact input size plus 4 KiB. Deeper or larger
+expansions use complete compact JSON instead; approval arguments and stored
+results are never truncated or changed by presentation.
+
 ## Identity and audit boundaries
 
 With Amp authentication, “on behalf of” maps the verified Amp user to the configured
@@ -494,6 +516,11 @@ are durable local records, **not independently tamper-proof evidence**: an opera
 with database access can change them. Discovery, rejected malformed requests,
 browser logins and token refreshes do not yet have audit events. Tool results can
 contain sensitive data and are returned only to the authenticated owner/client.
+The dashboard reads separate encrypted operation summaries, so listing recent
+activity does not decrypt arguments or results. On the first startup after an
+upgrade, existing operations are backfilled one payload at a time, before restart
+recovery; their original ciphertext is preserved. Back up large ledgers before
+upgrading and allow time for this one-time migration.
 
 ## Connect real services deliberately
 
@@ -534,6 +561,27 @@ revoking browser sessions. Sign-out clears the browser cookie but cannot revoke 
 copied session cookie; sessions otherwise last 12 hours.
 
 ## Verification and limits
+
+New operation and agent policy-proposal admission is bounded by 10,000 retained
+operations, 50,000 audit events, and 64 MiB of encrypted operation payload plus
+audit text-field bytes. There is also a limit of 16 pending, ready or running
+operations. Requests beyond these limits return an MCP tool error and persist
+neither a new intent nor a rejection event. Denied and expired history still
+counts; repeated use of an existing request ID keeps its original result.
+
+Existing approvals, proposal decisions, claims, outcomes, token rotation and
+restart recovery remain available at capacity. Completion can take retained
+usage above the admission thresholds, so these are not physical database or
+filesystem size limits. SQLite overhead, credentials/catalogues and derived
+metadata also consume space; monitor the volume and leave room for outcomes.
+Non-public configured upstreams do not have a universal response-size cap.
+
+History is not automatically deleted. Do not delete operation IDs to free space:
+doing so can allow a replay to dispatch again. Retention with permanent replay
+protection remains separate work. At a retained-history limit, new work stays
+paused; raising the current limits requires a reviewed code change and sufficient
+volume headroom. Over-capacity ledgers can still be opened and inspected after an
+upgrade.
 
 `mise run check` checks formatting, runs the Go suite with the race detector, and
 runs `go vet`. Tests cover the MCP protocol, argument substitution, stale approvals,
