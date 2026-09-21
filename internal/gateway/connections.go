@@ -298,8 +298,8 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		if draft.Changes[tool.ID] == "Changed" {
 			changed++
 		}
-		schema, _ := json.MarshalIndent(tool.InputSchema, "", "  ")
-		rows = append(rows, map[string]any{"Tool": tool, "Schema": string(schema), "Change": draft.Changes[tool.ID]})
+		schema, _ := json.Marshal(tool.InputSchema)
+		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID]})
 	}
 	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
 }
