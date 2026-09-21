@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"ampcode.com/lox/mcp-gateway/internal/store"
+	"ampcode.com/lox/mcp-gateway/internal/upstream"
 )
 
 func TestPrettyJSONExpansion(t *testing.T) {
@@ -65,8 +66,12 @@ func TestDeepJSONPresentation(t *testing.T) {
 	}
 	tool := g.cfg.Tools[0]
 	tool.InputSchema = map[string]any{"type": "object", "x-extra": json.RawMessage(nested)}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	w := httptest.NewRecorder()
-	g.toolsPage(w, httptest.NewRequest("GET", "/connections/notes/tools", nil), nil, "notes", []Tool{tool}, "fixture", "", false)
+	g.toolsPage(w, httptest.NewRequest("GET", "/connections/notes/tools", nil), m, "notes", []Tool{tool}, "fixture", "", false)
 	if w.Body.Len() > 100<<10 || !strings.Contains(html.UnescapeString(w.Body.String()), nested) {
 		t.Fatalf("schema presentation expanded or lost content: %d bytes", w.Body.Len())
 	}
