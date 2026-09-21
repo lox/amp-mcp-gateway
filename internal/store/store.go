@@ -93,6 +93,7 @@ func Open(path, key string) (*Store, error) {
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
 	if err != nil {
 		s.Close()
@@ -108,6 +109,10 @@ CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, o
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.Close()
 		return nil, errors.New("cannot decrypt existing ledger: check encryption key and database integrity")
+	}
+	if err := s.backfillSummaries(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("backfill operation summaries: %w", err)
 	}
 	_, err = db.Exec(`BEGIN; INSERT INTO events(operation,kind,actor,time) SELECT id,'unknown','restart',unixepoch() FROM operations WHERE status='running'; UPDATE operations SET status='unknown' WHERE status='running'; COMMIT;`)
 	if err != nil {
@@ -278,6 +283,9 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account}); err != nil {
+		return o, err
+	}
 	return o, tx.Commit()
 }
 
@@ -374,24 +382,6 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 		return err
 	}
 	return tx.Commit()
-}
-
-// List returns the most recent operations.
-func (s *Store) List(ctx context.Context) ([]Operation, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id,status,payload FROM operations ORDER BY created DESC,id LIMIT 100")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Operation{}
-	for rows.Next() {
-		o, err := s.decode(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
 }
 
 // Events returns the most recent payload-free audit events.
