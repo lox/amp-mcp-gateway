@@ -157,6 +157,31 @@ func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/discover", func(w http.ResponseWriter, r *http.Request) { g.discoverTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.saveTools(w, r, m) })
+	mux.HandleFunc("POST /connections/{id}/test", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		g.mu.RLock()
+		exists := false
+		for _, c := range g.cfg.Connections {
+			if c.ID == id {
+				exists = true
+			}
+		}
+		g.mu.RUnlock()
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		// Only presentation-safe health is returned, never provider errors or tools.
+		_ = m.TestConnection(r.Context(), id)
+		if r.Header.Get("Accept") == "text/vnd.gateway.health+html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := page.ExecuteTemplate(w, "health", m.Health(r.Context(), id)); err != nil {
+				http.Error(w, "could not render connection status", 500)
+			}
+			return
+		}
+		http.Redirect(w, r, "/connections/"+id+"/tools", http.StatusSeeOther)
+	})
 }
 
 func (g *Gateway) addPage(w http.ResponseWriter, values map[string]string, message string) {
@@ -263,9 +288,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.NotFound(w, nil)
 		return
 	}
-	if connection["OAuth"] == true {
-		connection["AuthStatus"] = m.OAuthStatus(r.Context(), id)
-	}
+	connection["Health"] = m.Health(r.Context(), id)
 	rows := []map[string]any{}
 	added, changed := 0, 0
 	for _, tool := range tools {
