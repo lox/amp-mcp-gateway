@@ -25,7 +25,7 @@ type fixtureBackend struct {
 	callErr error
 }
 
-func (b *fixtureBackend) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
+func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
 	b.calls.Add(1)
 	if b.callErr != nil {
 		return nil, b.callErr
@@ -43,6 +43,26 @@ type bindingBackend struct {
 }
 
 func (b *bindingBackend) Binding(string) string { return b.binding }
+
+type sequencedBindingBackend struct {
+	fixtureBackend
+	bindings     []string
+	bindingCalls atomic.Int32
+	expected     atomic.Value
+}
+
+func (b *sequencedBindingBackend) Binding(string) string {
+	i := int(b.bindingCalls.Add(1)) - 1
+	if i >= len(b.bindings) {
+		i = len(b.bindings) - 1
+	}
+	return b.bindings[i]
+}
+
+func (b *sequencedBindingBackend) Call(ctx context.Context, connection, tool, expected string, args map[string]any) (*mcp.CallToolResult, error) {
+	b.expected.Store(expected)
+	return b.fixtureBackend.Call(ctx, connection, tool, expected, args)
+}
 
 func fixture(t *testing.T) (*Gateway, *store.Store, *fixtureBackend) {
 	t.Helper()
@@ -221,6 +241,35 @@ func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
 	await(t, s, o.ID, "denied")
 	if b.calls.Load() != 0 {
 		t.Fatal("stale browser approval dispatched to a different tab")
+	}
+}
+
+func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	b := &sequencedBindingBackend{bindings: []string{"tab-one", "tab-one", "tab-two"}}
+	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := g.submit(t.Context(), input("binding-dispatch", "private"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	await(t, s, o.ID, "succeeded")
+	if got := b.expected.Load(); got != "tab-one" {
+		t.Fatalf("dispatch binding = %v, want tab-one", got)
+	}
+	if calls := b.bindingCalls.Load(); calls != 2 {
+		t.Fatalf("binding read %d times, want one submission read and one worker read", calls)
 	}
 }
 

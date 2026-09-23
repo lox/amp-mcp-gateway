@@ -221,7 +221,7 @@ func TestSessionFailureStage(t *testing.T) {
 		}))
 		defer s.Close()
 		m := newTestManager(t, s.URL, Connection{ID: "one", URL: s.URL, NoAuth: true})
-		_, err := m.Call(t.Context(), "one", "quota", map[string]any{})
+		_, err := m.Call(t.Context(), "one", "quota", "", map[string]any{})
 		var f *Failure
 		if !errors.As(err, &f) || f.Stage != "request" || f.HTTPStatus != 400 || f.HTTP == nil || f.HTTP.Reason != "authentication_rejected" || calls.Load() != 1 {
 			t.Fatalf("missing diagnostic or repeated call: %+v, calls=%d", f, calls.Load())
@@ -243,7 +243,7 @@ func TestSessionFailureStage(t *testing.T) {
 		}))
 		defer s.Close()
 		m := newTestManager(t, s.URL, Connection{ID: "one", URL: s.URL, NoAuth: true})
-		_, err := m.Call(t.Context(), "one", "quota", map[string]any{})
+		_, err := m.Call(t.Context(), "one", "quota", "", map[string]any{})
 		var f *Failure
 		if !errors.As(err, &f) || f.Stage != "connect" || f.Kind != "http" || f.HTTPStatus != 401 {
 			t.Fatalf("wrong failure: %#v", f)
@@ -257,7 +257,7 @@ func TestSessionFailureStage(t *testing.T) {
 		s := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{JSONResponse: true}))
 		defer s.Close()
 		m := newTestManager(t, s.URL, Connection{ID: "one", URL: s.URL, NoAuth: true})
-		_, err := m.Call(t.Context(), "one", "secret-canary", map[string]any{})
+		_, err := m.Call(t.Context(), "one", "secret-canary", "", map[string]any{})
 		var f *Failure
 		if !errors.As(err, &f) || f.Stage != "request" || f.Kind != "jsonrpc" || f.RPCCode == nil || *f.RPCCode != -32602 || f.HTTPStatus != 0 {
 			t.Fatalf("wrong failure: %#v", f)
@@ -266,7 +266,7 @@ func TestSessionFailureStage(t *testing.T) {
 	t.Run("credentials", func(t *testing.T) {
 		m := newTestManager(t, "http://localhost", Connection{ID: "one", URL: "http://localhost", TokenEnv: "MISSING_DIAGNOSTIC_TEST_TOKEN"})
 		t.Setenv("MISSING_DIAGNOSTIC_TEST_TOKEN", "")
-		_, err := m.Call(t.Context(), "one", "quota", nil)
+		_, err := m.Call(t.Context(), "one", "quota", "", nil)
 		var f *Failure
 		if !errors.As(err, &f) || f.Stage != "credentials" {
 			t.Fatalf("wrong failure: %#v", f)

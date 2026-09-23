@@ -226,7 +226,7 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 }
 
 // Call initializes a fresh MCP session and invokes one tool exactly once.
-func (m *Manager) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *Manager) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
 	var result *mcp.CallToolResult
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		var err error

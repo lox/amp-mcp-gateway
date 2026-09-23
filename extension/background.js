@@ -217,8 +217,10 @@ async function click(backendNodeId) {
 async function typeText(backendNodeId, text, submit) {
   await command("DOM.scrollIntoViewIfNeeded", {backendNodeId});
   await command("DOM.focus", {backendNodeId});
-  await command("Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers: 2});
-  await command("Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers: 2});
+  const {os} = await chrome.runtime.getPlatformInfo();
+  const modifiers = selectAllModifier(os);
+  await command("Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
+  await command("Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
   await command("Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
   await command("Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
   await command("Input.insertText", {text});
@@ -227,6 +229,10 @@ async function typeText(backendNodeId, text, submit) {
     await command("Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
   }
   return {typed: backendNodeId, submitted: submit};
+}
+
+function selectAllModifier(platform) {
+  return platform === "mac" ? 4 : 2;
 }
 
 async function scroll(deltaY) {

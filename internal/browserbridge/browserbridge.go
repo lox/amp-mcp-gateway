@@ -30,7 +30,7 @@ const (
 )
 
 type backend interface {
-	Call(context.Context, string, string, map[string]any) (*mcp.CallToolResult, error)
+	Call(context.Context, string, string, string, map[string]any) (*mcp.CallToolResult, error)
 }
 
 // Manager owns browser pairing state and active extension connections. Pairing
@@ -58,6 +58,7 @@ type pairing struct {
 type client struct {
 	manager    *Manager
 	connection string
+	binding    string
 	ws         *websocket.Conn
 
 	writeMu sync.Mutex
@@ -115,6 +116,10 @@ func New(baseURL string, connections []upstream.Connection, fallback backend) (*
 func (m *Manager) Binding(connection string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.binding(connection)
+}
+
+func (m *Manager) binding(connection string) string {
 	if _, ok := m.connections[connection]; !ok {
 		return ""
 	}
@@ -127,16 +132,17 @@ func (m *Manager) Binding(connection string) string {
 
 // Call dispatches browser calls over the reverse connection and delegates all
 // other configured connections to the regular upstream manager.
-func (m *Manager) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding string, args map[string]any) (*mcp.CallToolResult, error) {
 	m.mu.Lock()
 	_, browser := m.connections[connection]
 	c := m.clients[connection]
+	if browser && (m.binding(connection) != expectedBinding || c == nil || c.binding != expectedBinding) {
+		m.mu.Unlock()
+		return nil, errors.New("browser pairing changed before dispatch")
+	}
 	m.mu.Unlock()
 	if !browser {
-		return m.fallback.Call(ctx, connection, tool, args)
-	}
-	if c == nil {
-		return nil, errors.New("paired browser is not connected")
+		return m.fallback.Call(ctx, connection, tool, "", args)
 	}
 	result, err := c.call(ctx, tool, args)
 	if err != nil {
@@ -197,13 +203,13 @@ func (m *Manager) Socket() http.Handler {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Time{})
-		connection, ok := m.accept(hello)
+		connection, binding, ok := m.accept(hello)
 		if !ok {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing rejected"), time.Now().Add(time.Second))
 			ws.Close()
 			return
 		}
-		c := &client{manager: m, connection: connection, ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
+		c := &client{manager: m, connection: connection, binding: binding, ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
 		m.install(c)
 		if err := c.write(wireMessage{Type: "paired"}); err != nil {
 			c.close()
@@ -213,7 +219,7 @@ func (m *Manager) Socket() http.Handler {
 	})
 }
 
-func (m *Manager) accept(hello wireMessage) (string, bool) {
+func (m *Manager) accept(hello wireMessage) (string, string, bool) {
 	hash := sha256.Sum256([]byte(hello.PairingCode))
 	now := m.now()
 	m.mu.Lock()
@@ -231,9 +237,9 @@ func (m *Manager) accept(hello wireMessage) (string, bool) {
 		p.tabTitle = truncate(hello.TabTitle, 200)
 		p.tabURL = truncate(hello.TabURL, 2000)
 		m.pairings[id] = p
-		return id, true
+		return id, m.binding(id), true
 	}
-	return "", false
+	return "", "", false
 }
 
 func (m *Manager) install(c *client) {
