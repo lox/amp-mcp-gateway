@@ -5,7 +5,11 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const event = {addListener() {}};
+function event() {
+  return {listener: null, addListener(listener) { this.listener = listener; }};
+}
+const debuggerDetach = event();
+const tabRemoved = event();
 const storage = {
   get: async () => ({}),
   set: async () => {},
@@ -16,13 +20,13 @@ const commandResponses = [];
 const context = {
   chrome: {
     action: {setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}},
-    debugger: {onDetach: event, sendCommand: async (target, method, params) => {
+    debugger: {onDetach: debuggerDetach, sendCommand: async (target, method, params) => {
       sentCommands.push({tabId: target.tabId, method, params});
       return commandResponses.shift() || {};
     }},
-    runtime: {onInstalled: event, onMessage: event, onStartup: event},
+    runtime: {onInstalled: event(), onMessage: event(), onStartup: event()},
     storage: {local: storage, session: storage},
-    tabs: {get: async () => ({title: "Example", url: "https://example.com"}), onRemoved: event},
+    tabs: {get: async () => ({title: "Example", url: "https://example.com"}), onRemoved: tabRemoved},
   },
   clearInterval,
   clearTimeout,
@@ -34,7 +38,7 @@ const context = {
   WebSocket: class {},
 };
 const source = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
-vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.screenshotForTest = screenshot;`, context);
+vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.screenshotForTest = screenshot; this.configForTest = () => currentConfig; this.drainForTest = () => operationQueue;`, context);
 
 test("select-all uses Command on macOS and Control elsewhere", () => {
   assert.equal(context.selectAllModifierForTest("mac"), 4);
@@ -53,6 +57,29 @@ test("commands stay bound to their captured share and tab", async () => {
     /shared tab changed/,
   );
   assert.equal(sentCommands.length, 0);
+});
+
+test("detach from a replaced tab does not disconnect the new share", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'old-share', tabId: 42}", context);
+  debuggerDetach.listener({tabId: 42});
+  vm.runInNewContext("currentConfig = {shareID: 'new-share', tabId: 84}", context);
+  await context.drainForTest();
+  assert.equal(context.configForTest().tabId, 84);
+});
+
+test("detach from the current tab disconnects its share", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'current-share', tabId: 84}", context);
+  debuggerDetach.listener({tabId: 84});
+  await context.drainForTest();
+  assert.equal(context.configForTest(), null);
+});
+
+test("closing a replaced tab does not disconnect the new share", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'old-share', tabId: 42}", context);
+  tabRemoved.listener(42);
+  vm.runInNewContext("currentConfig = {shareID: 'new-share', tabId: 84}", context);
+  await context.drainForTest();
+  assert.equal(context.configForTest().tabId, 84);
 });
 
 test("screenshots retry at lower quality to stay below the bridge limit", async () => {
