@@ -5,12 +5,15 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/net/idna"
 )
 
 const ampIssuer = "https://ampcode.com/api/workload-identity"
@@ -51,10 +54,34 @@ func ampAudience(raw string) (string, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("Amp workload identity requires an HTTPS origin BaseURL")
 	}
-	host := strings.ToLower(u.Hostname())
-	if port := u.Port(); port != "" && port != "443" {
+	host := u.Hostname()
+	addr, addrErr := netip.ParseAddr(host)
+	if addrErr == nil {
+		if addr.Zone() != "" {
+			return "", errors.New("Amp workload identity BaseURL cannot contain an IPv6 zone")
+		}
+		host = addr.String()
+	} else {
+		if strings.IndexFunc(host, func(r rune) bool { return r != '.' && (r < '0' || r > '9') }) == -1 {
+			return "", errors.New("Amp workload identity BaseURL contains a noncanonical IP address")
+		}
+		host, err = idna.Lookup.ToASCII(host)
+		if err != nil || host == "" {
+			return "", errors.New("Amp workload identity BaseURL contains an invalid hostname")
+		}
+		host = strings.ToLower(host)
+	}
+	port := u.Port()
+	if port != "" {
+		n, err := strconv.ParseUint(port, 10, 16)
+		if err != nil {
+			return "", errors.New("Amp workload identity BaseURL contains an invalid port")
+		}
+		port = strconv.FormatUint(n, 10)
+	}
+	if port != "" && port != "443" {
 		host = net.JoinHostPort(host, port)
-	} else if strings.Contains(host, ":") {
+	} else if addrErr == nil && addr.Is6() {
 		host = "[" + host + "]"
 	}
 	return "https://" + host, nil

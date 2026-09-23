@@ -124,8 +124,11 @@ func TestAmpAudience(t *testing.T) {
 		base, want string
 	}{
 		{"https://GATEWAY.example.com:443/", "https://gateway.example.com"},
+		{"https://gateway.example.com:0443", "https://gateway.example.com"},
 		{"https://gateway.example.com:8443", "https://gateway.example.com:8443"},
+		{"https://bücher.example", "https://xn--bcher-kva.example"},
 		{"https://[2001:db8::1]:443", "https://[2001:db8::1]"},
+		{"https://[2001:0db8:0000:0000:0000:0000:0000:0001]:8443", "https://[2001:db8::1]:8443"},
 	} {
 		t.Run(tc.base, func(t *testing.T) {
 			got, err := ampAudience(tc.base)
@@ -134,7 +137,7 @@ func TestAmpAudience(t *testing.T) {
 			}
 		})
 	}
-	for _, base := range []string{"http://gateway.example.com", "https://gateway.example.com/mcp", "https://user@gateway.example.com"} {
+	for _, base := range []string{"http://gateway.example.com", "https://gateway.example.com/mcp", "https://user@gateway.example.com", "https://127.000.000.001"} {
 		if got, err := ampAudience(base); err == nil {
 			t.Errorf("ampAudience(%q) = %q, want error", base, got)
 		}
