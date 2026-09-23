@@ -151,6 +151,9 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	id, pending, err := c.start(tool, args)
 	m.mu.Unlock()
 	if err != nil {
+		if readOnlyTool(tool) {
+			return toolError("Browser read failed before returning a result."), nil
+		}
 		var beforeDispatch *beforeDispatchError
 		if errors.As(err, &beforeDispatch) {
 			return toolError(beforeDispatch.Error()), nil
@@ -159,6 +162,9 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	}
 	result, err := c.wait(ctx, id, tool, pending)
 	if err != nil {
+		if readOnlyTool(tool) {
+			return toolError("Browser read failed before returning a result."), nil
+		}
 		return nil, err
 	}
 	if result.err != "" {
@@ -166,6 +172,8 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	}
 	return resultToMCP(result.result)
 }
+
+func readOnlyTool(tool string) bool { return tool == "snapshot" || tool == "screenshot" }
 
 func toolError(message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message}}}
@@ -307,7 +315,7 @@ func (c *client) wait(ctx context.Context, id, tool string, result <-chan respon
 		c.remove(id)
 		return response{}, errors.New("browser disconnected before returning an outcome")
 	case r := <-result:
-		if r.err != "" && tool != "snapshot" && tool != "screenshot" {
+		if r.err != "" && !readOnlyTool(tool) {
 			return response{}, fmt.Errorf("browser %s outcome unknown after extension error: %s", tool, r.err)
 		}
 		return r, nil

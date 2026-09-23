@@ -273,6 +273,43 @@ func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
 	}
 }
 
+func TestGetOperationPromotesImageContent(t *testing.T) {
+	g, s, _ := fixture(t)
+	upstreamResult := &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: `{"url":"https://example.com"}`}, &mcp.ImageContent{Data: []byte("image-bytes"), MIMEType: "image/jpeg"}},
+		StructuredContent: map[string]any{"url": "https://example.com", "mime_type": "image/jpeg"},
+	}
+	raw, err := json.Marshal(upstreamResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := store.Operation{ID: "image-result", Tool: "browser.screenshot", Connection: "browser", Status: "succeeded", Result: raw}
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(g.MCP("image-result-token"))
+	defer server.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "image-test", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"image-result-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_operation", Arguments: getInput{ID: o.ID}})
+	if err != nil || result.IsError || len(result.Content) != 2 {
+		t.Fatalf("get_operation = %#v, %v", result, err)
+	}
+	image, ok := result.Content[1].(*mcp.ImageContent)
+	if !ok || image.MIMEType != "image/jpeg" || string(image.Data) != "image-bytes" {
+		t.Fatalf("image content not promoted: %#v", result.Content)
+	}
+	structured, err := json.Marshal(result.StructuredContent)
+	encodedImage := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
+	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") {
+		t.Fatalf("invalid structured operation metadata: %s, %v", structured, err)
+	}
+}
+
 type bearer struct{ token string }
 
 func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {

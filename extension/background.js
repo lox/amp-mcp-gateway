@@ -221,8 +221,14 @@ async function snapshot(target) {
 
 async function screenshot(target) {
   const tab = await chrome.tabs.get(target.tabId);
-  const result = await command(target, "Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
-  return {title: tab.title || "", url: tab.url || "", mime_type: "image/png", screenshot_data: result.data};
+  const maxDataLength = 6 * 1024 * 1024;
+  for (const quality of [70, 50, 30]) {
+    const result = await command(target, "Page.captureScreenshot", {format: "jpeg", quality, captureBeyondViewport: false});
+    if (result.data.length <= maxDataLength) {
+      return {title: tab.title || "", url: tab.url || "", mime_type: "image/jpeg", screenshot_data: result.data};
+    }
+  }
+  throw new Error("Screenshot exceeds the 6 MiB bridge payload limit.");
 }
 
 async function click(target, backendNodeId) {

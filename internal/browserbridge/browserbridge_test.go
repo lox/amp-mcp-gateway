@@ -151,6 +151,20 @@ func TestDisconnectAfterDispatchHasUnknownOutcome(t *testing.T) {
 	}
 }
 
+func TestReadDisconnectIsDefiniteToolFailure(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	go func() {
+		var command wireMessage
+		_ = ws.ReadJSON(&command)
+		ws.Close()
+	}()
+	result, err := m.Call(t.Context(), "browser", "snapshot", m.Binding("browser"), nil)
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("interrupted read returned %#v, %v", result, err)
+	}
+}
+
 func TestPairingIdentityChangesWithShareGeneration(t *testing.T) {
 	m, _ := browserManager(t)
 	first := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
