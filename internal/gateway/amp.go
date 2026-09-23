@@ -51,7 +51,7 @@ func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
 			var identity ampIdentity
 			if err == nil && token.Subject != "" && token.Claims(&identity) == nil &&
 				identity.UserID != "" && identity.UserID == g.cfg.AmpUserID &&
-				identity.TokenUse == "exchanged" && ampThreadID.MatchString(identity.ThreadID) {
+				identity.TokenUse == "mcp" && ampThreadID.MatchString(identity.ThreadID) {
 				next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))
 				return
 			}

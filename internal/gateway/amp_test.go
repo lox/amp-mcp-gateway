@@ -30,7 +30,7 @@ func TestAmpIdentity(t *testing.T) {
 	h := g.ampMCP(verifier)
 	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
 	mint := func(change func(map[string]any)) string {
-		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "user:user-owner:thread:" + thread, "user_id": "user-owner", "thread_id": thread, "token_use": "exchanged", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
+		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "user:user-owner:thread:" + thread, "user_id": "user-owner", "thread_id": thread, "token_use": "mcp", "jti": "token-123", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
 		change(claims)
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
 		if err != nil {
@@ -52,6 +52,7 @@ func TestAmpIdentity(t *testing.T) {
 		"wrong issuer":    func(c map[string]any) { c["iss"] = "https://evil.example" },
 		"wrong audience":  func(c map[string]any) { c["aud"] = "another-service" },
 		"expired":         func(c map[string]any) { c["exp"] = time.Now().Add(-time.Minute).Unix() },
+		"orb token":       func(c map[string]any) { c["token_use"] = "exchanged" },
 		"wrong token use": func(c map[string]any) { c["token_use"] = "request" },
 		"missing thread":  func(c map[string]any) { delete(c, "thread_id") },
 		"unsafe thread":   func(c map[string]any) { c["thread_id"] = "../../evil" },
