@@ -30,7 +30,7 @@ func TestAmpIdentity(t *testing.T) {
 	h := g.ampMCP(verifier)
 	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
 	mint := func(change func(map[string]any)) string {
-		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "user:user-owner:thread:" + thread, "user_id": "user-owner", "thread_id": thread, "token_use": "mcp", "jti": "token-123", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
+		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "workspace:workspace-123:project:project-456:user:user-owner:thread:" + thread, "user_id": "user-owner", "workspace_id": "workspace-123", "project_id": "project-456", "thread_id": thread, "token_use": "mcp", "jti": "token-123", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
 		change(claims)
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
 		if err != nil {
@@ -82,6 +82,16 @@ func TestAmpIdentity(t *testing.T) {
 			t.Fatal("invalid signature/token accepted")
 		}
 	}
+	r := httptest.NewRequest("POST", "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+mint(func(c map[string]any) {
+		delete(c, "workspace_id")
+		delete(c, "project_id")
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatal("optional workspace and project claims were required")
+	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{token}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
 	if err != nil {
@@ -93,16 +103,16 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submit %v %v", result, err)
 	}
 	o, err := s.Get(t.Context(), "amp-request-001")
-	if err != nil || o.AmpUserID != "user-owner" || o.AmpThreadID != thread || o.Subject != "owner" {
+	if err != nil || o.AmpSubject == "" || o.AmpUserID != "user-owner" || o.AmpWorkspaceID != "workspace-123" || o.AmpProjectID != "project-456" || o.AmpThreadID != thread || o.Subject != "owner" {
 		t.Fatalf("identity not persisted: %+v %v", o, err)
 	}
 	events, err := s.Events(t.Context())
 	if err != nil || len(events) != 1 || events[0].Actor != "amp:user-owner" {
 		t.Fatalf("submission actor: %v %v", events, err)
 	}
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	g.render(w, map[string]any{"Operation": o, "Owner": "owner"})
-	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") {
+	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") || !strings.Contains(w.Body.String(), "workspace-123") || !strings.Contains(w.Body.String(), "project-456") {
 		t.Fatal("missing identity link")
 	}
 	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tools", Arguments: input("amp-request-001", "verified caller")})
@@ -110,12 +120,40 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatal("same-thread retry rejected")
 	}
 	// A changed caller thread must not silently reuse another thread's request.
-	ctx := withAmpIdentity(t.Context(), ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723bb"})
+	ctx := withAmpIdentity(t.Context(), ampIdentity{Subject: o.AmpSubject, UserID: "user-owner", WorkspaceID: "workspace-123", ProjectID: "project-456", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723bb"})
 	if _, err := g.submit(ctx, input("amp-request-001", "verified caller")); err == nil {
 		t.Fatal("cross-thread idempotency accepted")
 	}
+	ctx = withAmpIdentity(t.Context(), ampIdentity{Subject: o.AmpSubject, UserID: "user-owner", WorkspaceID: "workspace-123", ProjectID: "project-other", ThreadID: thread})
+	if _, err := g.submit(ctx, input("amp-request-001", "verified caller")); err == nil {
+		t.Fatal("cross-project idempotency accepted")
+	}
 	if _, err := g.submit(t.Context(), input("amp-request-002", "no identity")); err == nil {
 		t.Fatal("missing verified identity accepted")
+	}
+}
+
+func TestAmpStandingApprovalAppliesThroughGateway(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	identity := ampIdentity{Subject: "workspace:workspace-one:project:project-one:user:user-owner:thread:T-01a0b6d8-e50f-7723-941c-60bca63723ba", UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+	ctx := withAmpIdentity(t.Context(), identity)
+	first, err := g.submit(ctx, input("standing-first", "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Approve(t.Context(), first.ID, "owner", "thread"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := g.submit(ctx, input("standing-second", "second"))
+	if err != nil || second.Status != "ready" {
+		t.Fatalf("thread grant did not authorize gateway submission: %s, %v", second.Status, err)
+	}
+	identity.ThreadID = "T-01a0b6d8-e50f-7723-941c-60bca63723bb"
+	identity.Subject = "workspace:workspace-one:project:project-one:user:user-owner:thread:T-01a0b6d8-e50f-7723-941c-60bca63723bb"
+	third, err := g.submit(withAmpIdentity(t.Context(), identity), input("standing-third", "third"))
+	if err != nil || third.Status != "pending" {
+		t.Fatalf("thread grant escaped to another gateway thread: %s, %v", third.Status, err)
 	}
 }
 

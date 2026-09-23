@@ -28,21 +28,26 @@ type Store struct {
 
 // Operation is an immutable request with mutable execution state.
 type Operation struct {
-	ID          string          `json:"id"`
-	Tool        string          `json:"tool"`
-	Connection  string          `json:"connection"`
-	Account     string          `json:"account"`
-	Subject     string          `json:"subject"`
-	AmpUserID   string          `json:"amp_user_id,omitempty"`
-	AmpThreadID string          `json:"amp_thread_id,omitempty"`
-	Model       string          `json:"model_reported,omitempty"`
-	Arguments   map[string]any  `json:"arguments"`
-	Digest      string          `json:"digest"`
-	Binding     string          `json:"binding"`
-	Status      string          `json:"status"`
-	Created     int64           `json:"created"`
-	Expires     int64           `json:"expires"`
-	Result      json.RawMessage `json:"result,omitempty"`
+	ID             string          `json:"id"`
+	Tool           string          `json:"tool"`
+	Connection     string          `json:"connection"`
+	Account        string          `json:"account"`
+	Subject        string          `json:"subject"`
+	AmpSubject     string          `json:"amp_subject,omitempty"`
+	AmpUserID      string          `json:"amp_user_id,omitempty"`
+	AmpWorkspaceID string          `json:"amp_workspace_id,omitempty"`
+	AmpProjectID   string          `json:"amp_project_id,omitempty"`
+	AmpThreadID    string          `json:"amp_thread_id,omitempty"`
+	Model          string          `json:"model_reported,omitempty"`
+	Arguments      map[string]any  `json:"arguments"`
+	Digest         string          `json:"digest"`
+	Binding        string          `json:"binding"`
+	ApprovalScope  string          `json:"approval_scope,omitempty"`
+	ApprovalGrant  string          `json:"approval_grant,omitempty"`
+	Status         string          `json:"status"`
+	Created        int64           `json:"created"`
+	Expires        int64           `json:"expires"`
+	Result         json.RawMessage `json:"result,omitempty"`
 }
 
 // Event records a durable state transition without tool payloads or credentials.
@@ -95,6 +100,7 @@ CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
 	if err != nil {
 		s.Close()
@@ -103,7 +109,7 @@ CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, o
 	// Reject a wrong key before recovery mutates an existing ledger.
 	var id string
 	var payload []byte
-	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
+	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
 	}
@@ -189,6 +195,9 @@ func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) er
 	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "UPDATE approval_grants SET active=0 WHERE active=1"); err != nil {
+		return err
+	}
 	for _, e := range events {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) VALUES(?,?,?,unixepoch())", e.Operation, e.Kind, e.Actor); err != nil {
 			return err
@@ -224,6 +233,9 @@ func (s *Store) Reauthorize(ctx context.Context, id string, b []byte) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
 		return err
 	}
+	if err := s.revokeConnectionGrants(ctx, tx, id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO tokens VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", id, s.seal("token:"+id, b)); err != nil {
 		return err
 	}
@@ -254,6 +266,7 @@ func (s *Store) Get(ctx context.Context, id string) (Operation, error) {
 }
 
 // Submit persists intent and audit atomically. Reusing an ID for another request is rejected.
+// An active standing grant may authorize a request that would otherwise remain pending.
 func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -269,6 +282,19 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return o, err
+	}
+	if o.Status == "pending" {
+		for _, id := range approvalGrantIDs(o) {
+			grant, err := s.activeGrant(ctx, tx, id)
+			if err != nil {
+				return o, err
+			}
+			if grant != nil {
+				o.ApprovalScope, o.ApprovalGrant = grant.Scope, grant.ID
+				o.Status = "ready"
+				break
+			}
+		}
 	}
 	b, err := json.Marshal(o)
 	if err != nil {
@@ -303,8 +329,12 @@ func event(ctx context.Context, tx *sql.Tx, id, kind, actor string) error {
 	return err
 }
 
-// Decide consumes an unexpired approval once; it cannot modify the stored request.
+// Decide consumes an unexpired one-off approval or denial.
 func (s *Store) Decide(ctx context.Context, id, actor string, approve bool) error {
+	return s.decide(ctx, id, actor, approve, "once")
+}
+
+func (s *Store) decide(ctx context.Context, id, actor string, approve bool, scope string) error {
 	status := "denied"
 	if approve {
 		status = "ready"
@@ -324,6 +354,18 @@ func (s *Store) Decide(ctx context.Context, id, actor string, approve bool) erro
 	}
 	if n != 1 {
 		return errors.New("operation no longer awaiting approval or expired")
+	}
+	if approve && scope != "once" {
+		o, err := s.decode(tx.QueryRowContext(ctx, "SELECT id,status,payload FROM operations WHERE id=?", id))
+		if err != nil {
+			return err
+		}
+		if err := s.saveGrant(ctx, tx, o, scope); err != nil {
+			return err
+		}
+		if err := event(ctx, tx, id, "approval-"+scope, actor); err != nil {
+			return err
+		}
 	}
 	if err = event(ctx, tx, id, status, actor); err != nil {
 		return err

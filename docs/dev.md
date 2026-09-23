@@ -453,11 +453,12 @@ stored in Amp. This authentication mode does not apply to local MCP configuratio
 The local demo still uses `demo-client` and its disposable bearer token.
 
 The gateway verifies Amp's fixed issuer and signature, exact audience, expiry,
-`token_use=mcp`, owner user ID and a thread ID. Stored operations include
-the verified Amp user and thread link; the Google subject identifies the separate
-human approval. Model labels remain unverified. All threads owned by the configured
-Amp user are authorized; the gateway does not currently narrow access by workspace
-or project. A valid Amp signature alone is not authorization.
+`token_use=mcp`, owner user ID and a thread ID. Stored operations include the
+verified Amp subject, user and thread plus optional workspace and project claims;
+the Google subject identifies the separate human approval. Model labels remain
+unverified. All threads owned by the configured Amp user can submit requests, but
+standing approval can be narrowed to one thread or one workspace/project. A valid
+Amp signature alone is not authorization.
 
 ## What approval actually guarantees
 
@@ -465,12 +466,17 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- Approval expires ten minutes after submission, including time spent queued.
+- A pending operation can be approved once, for future calls to the same tool and
+  binding in its Amp thread, or for that tool and binding across its Amp project.
+  Project approval is unavailable when Amp supplies no project claim.
+- The pending operation expires ten minutes after submission, including time spent
+  queued. Standing approvals are durable until revoked.
 - Repeated or concurrent approvals cannot dispatch the same operation twice.
 - Changes to the pinned tool, policy, connection, owner, issuer or static upstream
   credential invalidate queued requests when checked at execution.
-- Reconnecting OAuth denies **all** pending/ready requests conservatively. It is
-  refused while any request is running. Submit new requests after reconnecting.
+- Reconnecting OAuth denies **all** pending/ready requests conservatively and
+  revokes standing approvals for that connection. Catalogue changes revoke all
+  standing approvals. Reconfiguration is refused while any request is running.
 - OAuth grants are bound to the connection configuration; changed endpoints require
   reconnecting rather than receiving an existing credential.
 - Timeouts and transport errors become `unknown`; a restart also marks previously
@@ -513,9 +519,11 @@ results are never truncated or changed by presentation.
 ## Identity and audit boundaries
 
 With Amp authentication, “on behalf of” maps the verified Amp user to the configured
-Google owner. The signed thread ID supplies an audit link, not a delegation chain
-or proof of human consent. Other threads belonging to that Amp user share access.
-Legacy bearer mode identifies only the configured owner, not the actual holder.
+Google owner. Signed workspace, project and thread IDs supply approval scope and
+audit context, not a delegation chain or proof of human consent. A standing grant
+also binds the exact tool and connection/configuration digest. Legacy bearer mode
+identifies only the configured owner, not the actual holder, and offers one-shot
+approval only.
 Browser approvals check the owner's OIDC issuer/subject, audience, signature,
 expiry, nonce and configured hosted domain.
 Model identity is explicitly client-reported and unverified; it never grants authority.
@@ -565,11 +573,13 @@ Stop the process before taking a consistent backup of the SQLite database and ke
 the encryption key separately. Losing the key loses the encrypted data. Changing
 the key is not a supported rotation procedure. Changing `AmpUserID` revokes the old
 user on restart and invalidates queued operations. Changing identity configuration
-also invalidates queued approvals; drain work before updating it. There is no
-per-thread revocation or token introspection. In legacy mode, rotate the bearer
-token to revoke access. Rotate the session key when changing OIDC configuration or
-revoking browser sessions. Sign-out clears the browser cookie but cannot revoke a
-copied session cookie; sessions otherwise last 12 hours.
+also invalidates queued approvals; drain work before updating it. Standing thread
+and project approvals can be revoked from the activity page, but there is no Amp
+token introspection or way to stop a thread from submitting new pending requests.
+In legacy mode, rotate the bearer token to revoke access. Rotate the session key
+when changing OIDC configuration or revoking browser sessions. Sign-out clears the
+browser cookie but cannot revoke a copied session cookie; sessions otherwise last
+12 hours.
 
 ## Verification and limits
 
@@ -583,8 +593,8 @@ counts; repeated use of an existing request ID keeps its original result.
 Existing approvals, proposal decisions, claims, outcomes, token rotation and
 restart recovery remain available at capacity. Completion can take retained
 usage above the admission thresholds, so these are not physical database or
-filesystem size limits. SQLite overhead, credentials/catalogues and derived
-metadata also consume space; monitor the volume and leave room for outcomes.
+filesystem size limits. SQLite overhead, standing grants, credentials/catalogues
+and derived metadata also consume space; monitor the volume and leave room for outcomes.
 Non-public configured upstreams do not have a universal response-size cap.
 
 History is not automatically deleted. Do not delete operation IDs to free space:
