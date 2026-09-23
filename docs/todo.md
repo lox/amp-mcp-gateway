@@ -22,7 +22,7 @@ separate copies of this matrix in each document.
 | Real integrations | Partial | DeepWiki discovery verified in the demo; Buildkite reads, browser approval and denial verified in production. Live Google Sheets/Drive/Gmail metadata discovery verified; Google consent, execution and refresh still need validation. |
 | Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | Chrome tab bridge | Partial | Manifest V3 extension reverse-connects one selected HTTP(S) tab for snapshots, screenshots and policy-controlled interaction. Pairing is memory/session-only; multiple tabs and durable device pairing are not implemented. |
-| OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Amp workload authentication verified against Fly; demo/legacy bearer retained. |
+| OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Gateway validation matches Amp's MCP workload token contract; direct remote-definition test remains. Demo/legacy bearer retained. |
 | Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
 | On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
@@ -48,7 +48,8 @@ separate copies of this matrix in each document.
 
 - [ ] Select a provider and disposable account/repository; confirm its MCP auth flow.
 - [ ] Pin a low-risk read and reversible write, including schemas and policy.
-- [ ] Test through the normal Amp client using the orb identity bridge against Fly.
+- [ ] Test through a normal Amp remote MCP definition using Amp Workload Identity
+      against Fly.
 - [ ] Verify upstream-side results for allowed, approved and denied calls.
 - [ ] Exercise expired/revoked tokens, refresh, approval expiry and restart.
 - [ ] Add provider identity introspection or document exactly what cannot be verified.
@@ -58,7 +59,7 @@ separate copies of this matrix in each document.
 
 - [x] Verify Amp workload issuer and reject wrong user/audience/signature/expiry/token use.
 - [x] Persist verified Amp user and thread link separately from model metadata.
-- [x] Add an orb MCP bridge that mints short-lived tokens per HTTP request.
+- [x] Accept Amp's short-lived MCP workload tokens directly from remote definitions.
 - [x] Register Google web client and configure exact owner subject plus hosted-domain restriction.
 - [x] Validate live Google login.
 - [ ] Validate a real provider call through production browser approval.

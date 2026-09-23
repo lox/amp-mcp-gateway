@@ -430,7 +430,7 @@ builds branches and pull requests; fork PRs are disabled. The pipeline uploads
 `.buildkite/pipeline.yml` from the checkout.
 
 Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
-run formatting checks, race tests, vet and builds of both Go commands. A hosted
+run formatting checks, race tests, vet and build the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
 fall back to normal downloads and compilation. The deploy job installs only
 `flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote
@@ -465,33 +465,30 @@ configured and automatic deployment has passed. The policy deliberately rejects
 API/manual builds; use a reviewed main push for normal deployment. Pipeline and
 repository administrators remain trusted to change production code.
 
-### Connect an Amp orb
+### Connect Amp
 
-Run `mise run build`, then add a command-based MCP entry in the orb's Amp settings
-(replace the path with the checkout's absolute path):
+[Amp Workload Identity](https://ampcode.com/docs/customize/mcp#amp-workload-identity)
+must be enabled for both the person configuring the server and each thread owner
+using it. Add the deployed gateway as an Amp-hosted remote MCP definition, not a
+local `amp.mcpServers` or skill entry:
 
-```json
-{
-  "amp.mcpServers": {
-    "gateway": {
-      "command": "/path/to/mcp-gateway/bin/amp-mcp",
-      "args": ["-url", "https://gateway.example.com/mcp"]
-    }
-  }
-}
+```sh
+amp mcp remote add Gateway https://gateway.example.com/mcp \
+  --auth workload-identity --workspace YOUR-WORKSPACE
 ```
 
-The bridge obtains a new ten-minute token via `amp orb id-token` for each HTTP
-request, using the gateway origin as the audience. It never prints tokens, follows
-redirects, or automatically retries ambiguous tool calls. It needs an Amp orb and
-the `amp` executable on PATH; a normal laptop or server-side remote MCP definition
-cannot use this bridge's orb identity. The local demo still uses `demo-client`.
+You can instead select **Amp Workload Identity** in Amp's remote MCP server settings.
+Amp sends a fresh five-minute token on requests, using the normalized gateway origin
+as the audience, and rejects redirects. No gateway credential or OAuth sign-in is
+stored in Amp. This authentication mode does not apply to local MCP configuration.
+The local demo still uses `demo-client` and its disposable bearer token.
 
 The gateway verifies Amp's fixed issuer and signature, exact audience, expiry,
-`token_use=exchanged`, owner user ID and a thread ID. Stored operations include
+`token_use=mcp`, owner user ID and a thread ID. Stored operations include
 the verified Amp user and thread link; the Google subject identifies the separate
-human approval. Model labels remain unverified. This is workload authentication,
-not an implementation of MCP OAuth discovery or a general OAuth authorization server.
+human approval. Model labels remain unverified. All threads owned by the configured
+Amp user are authorized; the gateway does not currently narrow access by workspace
+or project. A valid Amp signature alone is not authorization.
 
 ## What approval actually guarantees
 
