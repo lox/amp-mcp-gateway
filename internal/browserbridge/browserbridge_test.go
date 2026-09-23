@@ -19,7 +19,7 @@ import (
 
 type fallbackBackend struct{ calls int }
 
-func (b *fallbackBackend) Call(_ context.Context, connection, tool string, _ map[string]any) (*mcp.CallToolResult, error) {
+func (b *fallbackBackend) Call(_ context.Context, connection, tool, _ string, _ map[string]any) (*mcp.CallToolResult, error) {
 	b.calls++
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool}}}, nil
 }
@@ -84,7 +84,7 @@ func TestRoutesBrowserCallsOverReverseConnection(t *testing.T) {
 		done <- ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Result: json.RawMessage(`{"title":"Example","url":"https://example.com"}`)})
 	}()
 
-	result, err := m.Call(t.Context(), "browser", "snapshot", map[string]any{"full": true})
+	result, err := m.Call(t.Context(), "browser", "snapshot", binding, map[string]any{"full": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRoutesBrowserCallsOverReverseConnection(t *testing.T) {
 		t.Fatal("browser call reached HTTP fallback")
 	}
 
-	remote, err := m.Call(t.Context(), "remote", "echo", nil)
+	remote, err := m.Call(t.Context(), "remote", "echo", "", nil)
 	if err != nil || remote.Content[0].(*mcp.TextContent).Text != "remote/echo" || fallback.calls != 1 {
 		t.Fatalf("fallback result %#v, %v", remote, err)
 	}
@@ -112,7 +112,7 @@ func TestReadErrorIsDefiniteToolFailure(t *testing.T) {
 		_ = ws.ReadJSON(&command)
 		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "snapshot unavailable"})
 	}()
-	result, err := m.Call(t.Context(), "browser", "snapshot", nil)
+	result, err := m.Call(t.Context(), "browser", "snapshot", m.Binding("browser"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestMutationErrorHasUnknownOutcome(t *testing.T) {
 		_ = ws.ReadJSON(&command)
 		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "input command failed"})
 	}()
-	result, err := m.Call(t.Context(), "browser", "type", map[string]any{"backend_node_id": 7, "text": "changed"})
+	result, err := m.Call(t.Context(), "browser", "type", m.Binding("browser"), map[string]any{"backend_node_id": 7, "text": "changed"})
 	if err == nil || result != nil || !strings.Contains(err.Error(), "outcome unknown") {
 		t.Fatalf("ambiguous mutation returned %#v, %v", result, err)
 	}
@@ -145,7 +145,7 @@ func TestDisconnectAfterDispatchHasUnknownOutcome(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if result, err := m.Call(ctx, "browser", "click", map[string]any{"backend_node_id": 7}); err == nil || result != nil {
+	if result, err := m.Call(ctx, "browser", "click", m.Binding("browser"), map[string]any{"backend_node_id": 7}); err == nil || result != nil {
 		t.Fatalf("ambiguous disconnect returned %#v, %v", result, err)
 	}
 }
@@ -159,6 +159,27 @@ func TestPairingIdentityChangesWithShareGeneration(t *testing.T) {
 	if secondBinding := m.Binding("browser"); secondBinding == firstBinding {
 		t.Fatal("new share generation did not change operation binding")
 	}
+	second.Close()
+}
+
+func TestCallRejectsPairingChangedAfterValidation(t *testing.T) {
+	m, _ := browserManager(t)
+	first := connectExtension(t, m, "first-secret", "install-one", "share-one", 42)
+	expected := m.Binding("browser")
+	second := connectExtension(t, m, "second-secret", "install-two", "share-two", 84)
+
+	result, err := m.Call(t.Context(), "browser", "click", expected, map[string]any{"backend_node_id": 7})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "pairing changed") {
+		t.Fatalf("stale pairing returned %#v, %v", result, err)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var command wireMessage
+	if err := second.ReadJSON(&command); err == nil {
+		t.Fatalf("stale approval dispatched to replacement browser: %#v", command)
+	}
+	first.Close()
 	second.Close()
 }
 

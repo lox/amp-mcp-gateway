@@ -43,7 +43,7 @@ type Config struct {
 
 // Backend is the upstream transport boundary.
 type Backend interface {
-	Call(context.Context, string, string, map[string]any) (*mcp.CallToolResult, error)
+	Call(context.Context, string, string, string, map[string]any) (*mcp.CallToolResult, error)
 	Binding(string) string
 }
 
@@ -115,7 +115,14 @@ func digest(v any) string {
 }
 
 func (g *Gateway) binding(tool Tool) string {
-	return digest([]string{g.bindings[tool.ID], g.backend.Binding(tool.Connection)})
+	return g.bindingWith(tool, g.backend.Binding(tool.Connection))
+}
+
+func (g *Gateway) bindingWith(tool Tool, binding string) string {
+	if binding == "" {
+		return g.bindings[tool.ID]
+	}
+	return g.bindings[tool.ID] + ":" + binding
 }
 
 type findInput struct {
@@ -266,7 +273,12 @@ func (g *Gateway) Run(ctx context.Context) error {
 			}
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
-			valid := ok && t.Policy != "deny" && g.binding(t) == o.Binding
+			expectedBinding := ""
+			valid := false
+			if ok && t.Policy != "deny" {
+				expectedBinding = g.backend.Binding(t.Connection)
+				valid = g.bindingWith(t, expectedBinding) == o.Binding
+			}
 			g.mu.RUnlock()
 			if !valid {
 				if err := g.store.Finish(ctx, o, "denied", nil); err != nil {
@@ -275,7 +287,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 				continue
 			}
 			callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			result, callErr := g.backend.Call(callCtx, t.Connection, t.Name, o.Arguments)
+			result, callErr := g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
 			cancel()
 			status := "succeeded"
 			var raw json.RawMessage

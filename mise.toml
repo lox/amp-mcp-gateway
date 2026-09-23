@@ -1,5 +1,6 @@
 [tools]
 go = "1.26.8"
+node = "22.20.0"
 flyctl = "0.4.104"
 
 [tasks.dev]
@@ -7,8 +8,8 @@ description = "Run disposable local demo (browser password: demo-only)"
 run = "go run ./cmd/mcp-gateway -demo"
 
 [tasks.check]
-description = "Format check, race tests and vet"
-run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./..."
+description = "Format, test and vet Go and extension JavaScript"
+run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./... && node --check extension/background.js && node --check extension/popup.js && node --test extension/background.test.js"
 
 [tasks.build]
 run = "go build -o bin/mcp-gateway ./cmd/mcp-gateway"
