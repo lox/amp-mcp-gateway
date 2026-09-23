@@ -155,18 +155,49 @@ func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, ope
 	if len(o.Result) == 0 {
 		return nil, out
 	}
-	var upstreamResult mcp.CallToolResult
-	if err := json.Unmarshal(o.Result, &upstreamResult); err != nil || len(upstreamResult.Content) == 0 {
+	var stored map[string]json.RawMessage
+	if err := json.Unmarshal(o.Result, &stored); err != nil {
 		return nil, out
 	}
-	var structured map[string]json.RawMessage
-	if err := json.Unmarshal(o.Result, &structured); err == nil {
-		delete(structured, "content")
-		if compact, err := json.Marshal(structured); err == nil {
-			out.Result = compact
+	var content []json.RawMessage
+	if err := json.Unmarshal(stored["content"], &content); err != nil {
+		return nil, out
+	}
+	retained := make([]json.RawMessage, 0, len(content))
+	hasImage := false
+	for _, block := range content {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(block, &kind) == nil && kind.Type == "image" {
+			hasImage = true
+			continue
+		}
+		retained = append(retained, block)
+	}
+	if !hasImage {
+		return nil, out
+	}
+	var upstreamResult mcp.CallToolResult
+	if err := json.Unmarshal(o.Result, &upstreamResult); err != nil {
+		return nil, out
+	}
+	promoted := make([]mcp.Content, 0, len(upstreamResult.Content))
+	for _, block := range upstreamResult.Content {
+		if _, ok := block.(*mcp.ImageContent); ok {
+			promoted = append(promoted, block)
 		}
 	}
-	return &mcp.CallToolResult{Content: upstreamResult.Content}, out
+	retainedContent, err := json.Marshal(retained)
+	if err != nil {
+		return nil, out
+	}
+	stored["content"] = retainedContent
+	out.Result, err = json.Marshal(stored)
+	if err != nil {
+		return nil, g.result(o)
+	}
+	return &mcp.CallToolResult{Content: promoted}, out
 }
 
 // MCP serves execution and policy proposal tools behind a revocable owner bearer token.

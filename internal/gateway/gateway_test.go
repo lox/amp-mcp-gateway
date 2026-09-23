@@ -276,7 +276,7 @@ func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
 func TestGetOperationPromotesImageContent(t *testing.T) {
 	g, s, _ := fixture(t)
 	upstreamResult := &mcp.CallToolResult{
-		Content:           []mcp.Content{&mcp.TextContent{Text: `{"url":"https://example.com"}`}, &mcp.ImageContent{Data: []byte("image-bytes"), MIMEType: "image/jpeg"}},
+		Content:           []mcp.Content{&mcp.TextContent{Text: "visible screenshot metadata"}, &mcp.ImageContent{Data: []byte("image-bytes"), MIMEType: "image/jpeg"}},
 		StructuredContent: map[string]any{"url": "https://example.com", "mime_type": "image/jpeg"},
 	}
 	raw, err := json.Marshal(upstreamResult)
@@ -296,17 +296,29 @@ func TestGetOperationPromotesImageContent(t *testing.T) {
 	}
 	defer session.Close()
 	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_operation", Arguments: getInput{ID: o.ID}})
-	if err != nil || result.IsError || len(result.Content) != 2 {
+	if err != nil || result.IsError || len(result.Content) != 1 {
 		t.Fatalf("get_operation = %#v, %v", result, err)
 	}
-	image, ok := result.Content[1].(*mcp.ImageContent)
+	image, ok := result.Content[0].(*mcp.ImageContent)
 	if !ok || image.MIMEType != "image/jpeg" || string(image.Data) != "image-bytes" {
 		t.Fatalf("image content not promoted: %#v", result.Content)
 	}
 	structured, err := json.Marshal(result.StructuredContent)
 	encodedImage := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
-	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") {
+	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") || !strings.Contains(string(structured), "visible screenshot metadata") {
 		t.Fatalf("invalid structured operation metadata: %s, %v", structured, err)
+	}
+}
+
+func TestGetOperationPreservesOrdinaryResult(t *testing.T) {
+	g, _, _ := fixture(t)
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"ordinary result"}],"structuredContent":{"value":42}}`)
+	promoted, result := g.resultWithContent(store.Operation{ID: "ordinary-result", Status: "succeeded", Result: raw})
+	if promoted != nil {
+		t.Fatalf("ordinary content was promoted: %#v", promoted)
+	}
+	if string(result.Result) != string(raw) {
+		t.Fatalf("ordinary result changed to %s", result.Result)
 	}
 }
 
