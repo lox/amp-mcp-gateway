@@ -88,8 +88,9 @@ normal Chrome profile without exposing a listener on your machine.
    connection. Create a pairing code.
 3. Open the tab you want to share, open the extension, and paste the displayed
    gateway URL and pairing code.
-4. Find `browser` tools through MCP. `browser.snapshot` returns accessibility-tree
-   `backend_node_id` values for `browser.click` and `browser.type`.
+4. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
+   accessibility-tree `backend_node_id` values. Pass both to `browser.click` and
+   `browser.type`; navigation invalidates the document ID and requires a new snapshot.
 
 The available tools are `browser.snapshot`, `browser.screenshot`, `browser.scroll`,
 `browser.click`, `browser.type`, and `browser.navigate`. The example policies allow
@@ -100,8 +101,10 @@ uploads, and the desktop remain inaccessible.
 
 The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
 connect to `/mcp`. Pairing credentials live only in gateway memory and Chrome
-session storage, so restarting either side requires pairing again. Re-pairing,
-revocation, or selecting a new share generation invalidates queued approvals.
+session storage, so restarting either side requires pairing again. The displayed
+one-time code is consumed on first use and exchanged for a reconnect credential
+bound to that extension install, share generation, and tab. Re-pairing, revocation,
+or selecting a new share generation invalidates queued approvals.
 Once a browser mutation is dispatched, a disconnect or extension-reported error
 marks its outcome unknown and is never replayed automatically.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the

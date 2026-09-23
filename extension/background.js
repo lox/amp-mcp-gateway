@@ -160,6 +160,10 @@ function connect() {
 async function receive(message, config) {
   if (message.type === "paired") {
     if (currentConfig?.shareID !== config.shareID) return;
+    if (message.reconnect_code) {
+      currentConfig.pairingCode = message.reconnect_code;
+      await chrome.storage.session.set({bridgeConfig: currentConfig});
+    }
     const tab = await chrome.tabs.get(config.tabId);
     await setStatus("connected", `Sharing ${tab.title || tab.url}`);
     return;
@@ -189,9 +193,9 @@ async function execute(target, tool, args) {
     case "screenshot":
       return screenshot(target);
     case "click":
-      return click(target, args.backend_node_id);
+      return click(target, args.document_id, args.backend_node_id);
     case "type":
-      return typeText(target, args.backend_node_id, args.text, args.submit === true);
+      return typeText(target, args.document_id, args.backend_node_id, args.text, args.submit === true);
     case "scroll":
       return scroll(target, args.delta_y);
     case "navigate":
@@ -203,7 +207,9 @@ async function execute(target, tool, args) {
 
 async function snapshot(target) {
   const tab = await chrome.tabs.get(target.tabId);
+  const documentID = await currentDocument(target);
   const tree = await command(target, "Accessibility.getFullAXTree", {depth: 20});
+  if (await currentDocument(target) !== documentID) throw new Error("The document changed while it was being inspected.");
   const nodes = tree.nodes.map((node) => {
     const properties = {};
     for (const property of node.properties || []) {
@@ -222,7 +228,7 @@ async function snapshot(target) {
       ...properties,
     };
   }).filter((node) => node.backend_node_id && (node.role || node.name || node.value)).slice(0, 500);
-  return {title: tab.title || "", url: tab.url || "", nodes, truncated: tree.nodes.length > 500};
+  return {title: tab.title || "", url: tab.url || "", document_id: documentID, nodes, truncated: tree.nodes.length > 500};
 }
 
 async function screenshot(target) {
@@ -237,33 +243,45 @@ async function screenshot(target) {
   throw new Error("Screenshot exceeds the 6 MiB bridge payload limit.");
 }
 
-async function click(target, backendNodeId) {
-  await command(target, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  const {model} = await command(target, "DOM.getBoxModel", {backendNodeId});
+async function click(target, documentID, backendNodeId) {
+  await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  const {model} = await documentCommand(target, documentID, "DOM.getBoxModel", {backendNodeId});
   const quad = model.content || model.border;
   const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
   const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
-  await command(target, "Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
-  await command(target, "Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1});
-  await command(target, "Input.dispatchMouseEvent", {type: "mouseReleased", x, y, button: "left", clickCount: 1});
+  await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
+  await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1});
+  await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mouseReleased", x, y, button: "left", clickCount: 1});
   return {clicked: backendNodeId};
 }
 
-async function typeText(target, backendNodeId, text, submit) {
-  await command(target, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  await command(target, "DOM.focus", {backendNodeId});
+async function typeText(target, documentID, backendNodeId, text, submit) {
+  await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  await documentCommand(target, documentID, "DOM.focus", {backendNodeId});
   const {os} = await chrome.runtime.getPlatformInfo();
   const modifiers = selectAllModifier(os);
-  await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
-  await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
-  await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
-  await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
-  await command(target, "Input.insertText", {text});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
+  await documentCommand(target, documentID, "Input.insertText", {text});
   if (submit) {
-    await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter"});
-    await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
+    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter"});
+    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
   }
   return {typed: backendNodeId, submitted: submit};
+}
+
+async function currentDocument(target) {
+  const {frameTree} = await command(target, "Page.getFrameTree");
+  return frameTree.frame.loaderId;
+}
+
+async function documentCommand(target, expectedDocument, method, params = {}) {
+  if (!expectedDocument || await currentDocument(target) !== expectedDocument) {
+    throw new Error("The document changed after the accessibility snapshot. Take a new snapshot before interacting.");
+  }
+  return command(target, method, params);
 }
 
 function selectAllModifier(platform) {
