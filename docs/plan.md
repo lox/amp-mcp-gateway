@@ -19,7 +19,7 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   and `propose_policy_changes` for human-only application of policy batches.
 - Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
 - Single owner, one process, one SQLite disk. Persist intent before dispatch.
-- Google Workspace OIDC for the browser; Amp workload OIDC for orb MCP calls.
+- Google Workspace OIDC for the browser; Amp Workload Identity for remote MCP calls.
   Match one Google subject and one Amp user. Keep the signed thread link; neither
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
@@ -62,7 +62,8 @@ connection removal, and automatic drift detection remain follow-ups.
 
 Acceptance:
 
-- Connect from an Amp orb through the token-minting `amp-mcp` stdio bridge.
+- Connect from an Amp thread through an Amp-hosted remote MCP definition using
+  Amp Workload Identity.
 - Link the provider, discover the read and write, and execute both through the gateway.
 - Verify the provider-side effect, not just the gateway's success status.
 - Exercise deny, expired approval, refresh, revoked grant and process restart.
@@ -74,20 +75,21 @@ disposable private repository is a suggested starting point, subject to its curr
 MCP authentication support. Do not authorize or change a real account as part of
 documentation/setup work.
 
-### 3. Amp workload identity and Google browser login — deployed
+### 3. Amp workload identity and Google browser login — implemented
 
-Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience and
-one allowed user ID. A signed thread ID is required, stored and linked from the
-approval page. All that user's threads share authority; there is no delegation tree.
-The local bridge mints a token for each HTTP request, without storing long-lived
-gateway credentials. Google browser login requires both the exact subject and
-configured hosted-domain claim. Both identities map explicitly to one configured owner.
+Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience,
+`token_use=mcp` and one allowed user ID. A signed thread ID is required, stored and
+linked from the approval page. All that user's threads share authority; there is
+no delegation tree. Amp-hosted remote MCP definitions send the short-lived token
+directly, without a local bridge or stored gateway credential. Google browser login
+requires both the exact subject and configured hosted-domain claim. Both identities
+map explicitly to one configured owner.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
-tests, bridge forwarding/renewal tests, Google domain fixture tests, and a live Amp
-issuer check using this orb. A real Google browser login has also been validated.
-General client-facing MCP OAuth discovery, scopes, per-thread grants and revocation are
-deferred; the current bridge is specific to Amp orbs.
+tests, Google domain fixture tests, and a live Amp issuer check using this orb. A
+real Google browser login has also been validated. General client-facing MCP OAuth
+discovery, scopes, per-thread grants and revocation are deferred. A direct remote
+MCP definition using Amp Workload Identity still needs an end-to-end production test.
 
 ### 4. Authority, account identity and meaningful approvals
 

@@ -119,8 +119,8 @@ approvals, and encrypted storage for OAuth tokens, arguments and results.
 A few limits worth knowing:
 
 - One owner and one call per request. Search is keyword-based.
-- Amp orbs can authenticate with short-lived identity tokens; requests link back
-  to their thread. Browser approvals use a separate OIDC login.
+- Amp remote MCP definitions can authenticate with Amp Workload Identity; requests
+  link back to their thread. Browser approvals use a separate OIDC login.
 - Google Workspace login can require both your domain and your exact account.
   Validate the configured identity provider before relying on a deployment. The
   local demo uses a shared fixture token.

@@ -3,12 +3,17 @@ package gateway
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/net/idna"
 )
 
 const ampIssuer = "https://ampcode.com/api/workload-identity"
@@ -32,12 +37,54 @@ func (g *Gateway) AmpMCP(ctx context.Context) (http.Handler, error) {
 	if g.cfg.AmpUserID == "" {
 		return nil, errors.New("AmpUserID is required for workload authentication")
 	}
+	audience, err := ampAudience(g.cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
 	provider, err := oidc.NewProvider(ctx, ampIssuer)
 	if err != nil {
 		return nil, err
 	}
-	return g.ampMCP(provider.Verifier(&oidc.Config{ClientID: g.cfg.BaseURL, SupportedSigningAlgs: []string{"RS256"}})), nil
+	return g.ampMCP(provider.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{"RS256"}})), nil
+}
+
+func ampAudience(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("Amp workload identity requires an HTTPS origin BaseURL")
+	}
+	host := u.Hostname()
+	addr, addrErr := netip.ParseAddr(host)
+	if addrErr == nil {
+		if addr.Zone() != "" {
+			return "", errors.New("Amp workload identity BaseURL cannot contain an IPv6 zone")
+		}
+		host = addr.String()
+	} else {
+		if strings.IndexFunc(host, func(r rune) bool { return r != '.' && (r < '0' || r > '9') }) == -1 {
+			return "", errors.New("Amp workload identity BaseURL contains a noncanonical IP address")
+		}
+		host, err = idna.Lookup.ToASCII(host)
+		if err != nil || host == "" {
+			return "", errors.New("Amp workload identity BaseURL contains an invalid hostname")
+		}
+		host = strings.ToLower(host)
+	}
+	port := u.Port()
+	if port != "" {
+		n, err := strconv.ParseUint(port, 10, 16)
+		if err != nil {
+			return "", errors.New("Amp workload identity BaseURL contains an invalid port")
+		}
+		port = strconv.FormatUint(n, 10)
+	}
+	if port != "" && port != "443" {
+		host = net.JoinHostPort(host, port)
+	} else if addrErr == nil && addr.Is6() {
+		host = "[" + host + "]"
+	}
+	return "https://" + host, nil
 }
 
 func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
@@ -51,7 +98,7 @@ func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
 			var identity ampIdentity
 			if err == nil && token.Subject != "" && token.Claims(&identity) == nil &&
 				identity.UserID != "" && identity.UserID == g.cfg.AmpUserID &&
-				identity.TokenUse == "exchanged" && ampThreadID.MatchString(identity.ThreadID) {
+				identity.TokenUse == "mcp" && ampThreadID.MatchString(identity.ThreadID) {
 				next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))
 				return
 			}
