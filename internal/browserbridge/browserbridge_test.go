@@ -177,6 +177,39 @@ func TestPairingIdentityChangesWithShareGeneration(t *testing.T) {
 	second.Close()
 }
 
+func TestUsedPairingCodeCannotReplaceTarget(t *testing.T) {
+	m, _ := browserManager(t)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	_, _, reconnect, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42})
+	if !ok || reconnect == "" || reconnect == "pairing-secret" {
+		t.Fatal("initial pairing rejected")
+	}
+	if _, _, _, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42}); ok {
+		t.Fatal("initial pairing code was not consumed")
+	}
+	if _, _, _, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install-two", ShareID: "share-two", TabID: 84}); ok {
+		t.Fatal("used pairing code replaced the paired target")
+	}
+	if _, _, next, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install-one", ShareID: "share-one", TabID: 42}); !ok || next != reconnect {
+		t.Fatal("target-bound reconnect credential was rejected")
+	}
+}
+
+func TestReceivedResultWinsOverImmediateClose(t *testing.T) {
+	c := &client{closed: make(chan struct{})}
+	result := make(chan response, 1)
+	result <- response{result: json.RawMessage(`{"ok":true}`)}
+	close(c.closed)
+	for range 100 {
+		got, err := c.wait(t.Context(), "command", "click", result)
+		if err != nil || string(got.result) != `{"ok":true}` {
+			t.Fatalf("received result lost to close: %s, %v", got.result, err)
+		}
+		result <- got
+	}
+}
+
 func TestCallRejectsPairingChangedAfterValidation(t *testing.T) {
 	m, _ := browserManager(t)
 	first := connectExtension(t, m, "first-secret", "install-one", "share-one", 42)

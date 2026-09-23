@@ -71,6 +71,7 @@ type client struct {
 type wireMessage struct {
 	Type        string          `json:"type"`
 	PairingCode string          `json:"pairing_code,omitempty"`
+	Reconnect   string          `json:"reconnect_code,omitempty"`
 	InstallID   string          `json:"install_id,omitempty"`
 	ShareID     string          `json:"share_id,omitempty"`
 	TabID       int             `json:"tab_id,omitempty"`
@@ -84,8 +85,9 @@ type wireMessage struct {
 }
 
 type response struct {
-	result json.RawMessage
-	err    string
+	result       json.RawMessage
+	err          string
+	disconnected bool
 }
 
 type beforeDispatchError struct{ message string }
@@ -228,7 +230,7 @@ func (m *Manager) Socket() http.Handler {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Time{})
-		connection, binding, ok := m.accept(hello)
+		connection, binding, reconnect, ok := m.accept(hello)
 		if !ok {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing rejected"), time.Now().Add(time.Second))
 			ws.Close()
@@ -236,7 +238,7 @@ func (m *Manager) Socket() http.Handler {
 		}
 		c := &client{manager: m, connection: connection, binding: binding, ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
 		m.install(c)
-		if err := c.write(wireMessage{Type: "paired"}); err != nil {
+		if err := c.write(wireMessage{Type: "paired", Reconnect: reconnect}); err != nil {
 			c.close()
 			return
 		}
@@ -244,8 +246,9 @@ func (m *Manager) Socket() http.Handler {
 	})
 }
 
-func (m *Manager) accept(hello wireMessage) (string, string, bool) {
+func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 	hash := sha256.Sum256([]byte(hello.PairingCode))
+	target := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", hello.InstallID, hello.ShareID, hello.TabID))))
 	now := m.now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -257,14 +260,26 @@ func (m *Manager) accept(hello wireMessage) (string, string, bool) {
 		if subtle.ConstantTimeCompare(p.hash[:], hash[:]) != 1 {
 			continue
 		}
+		if p.paired && p.target != target {
+			return "", "", "", false
+		}
+		reconnect := hello.PairingCode
+		if !p.paired {
+			var err error
+			reconnect, err = randomString(32)
+			if err != nil {
+				return "", "", "", false
+			}
+			p.hash = sha256.Sum256([]byte(reconnect))
+		}
 		p.paired = true
-		p.target = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", hello.InstallID, hello.ShareID, hello.TabID))))
+		p.target = target
 		p.tabTitle = truncate(hello.TabTitle, 200)
 		p.tabURL = truncate(hello.TabURL, 2000)
 		m.pairings[id] = p
-		return id, m.binding(id), true
+		return id, m.binding(id), reconnect, true
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 func (m *Manager) install(c *client) {
@@ -309,17 +324,23 @@ func (c *client) start(tool string, args map[string]any) (string, <-chan respons
 func (c *client) wait(ctx context.Context, id, tool string, result <-chan response) (response, error) {
 	select {
 	case <-ctx.Done():
-		c.remove(id)
-		return response{}, ctx.Err()
-	case <-c.closed:
-		c.remove(id)
-		return response{}, errors.New("browser disconnected before returning an outcome")
-	case r := <-result:
-		if r.err != "" && !readOnlyTool(tool) {
-			return response{}, fmt.Errorf("browser %s outcome unknown after extension error: %s", tool, r.err)
+		if c.remove(id) {
+			return response{}, ctx.Err()
 		}
-		return r, nil
+		return finishResponse(tool, <-result)
+	case r := <-result:
+		return finishResponse(tool, r)
 	}
+}
+
+func finishResponse(tool string, r response) (response, error) {
+	if r.disconnected {
+		return response{}, errors.New("browser disconnected before returning an outcome")
+	}
+	if r.err != "" && !readOnlyTool(tool) {
+		return response{}, fmt.Errorf("browser %s outcome unknown after extension error: %s", tool, r.err)
+	}
+	return r, nil
 }
 
 func (c *client) write(message wireMessage) error {
@@ -349,24 +370,32 @@ func (c *client) readLoop() {
 		}
 		c.mu.Lock()
 		result := c.pending[message.ID]
-		delete(c.pending, message.ID)
-		c.mu.Unlock()
 		if result != nil {
 			result <- response{result: message.Result, err: truncate(message.Error, 1000)}
 		}
+		delete(c.pending, message.ID)
+		c.mu.Unlock()
 	}
 }
 
-func (c *client) remove(id string) {
+func (c *client) remove(id string) bool {
 	c.mu.Lock()
+	_, found := c.pending[id]
 	delete(c.pending, id)
 	c.mu.Unlock()
+	return found
 }
 
 func (c *client) close() {
 	c.once.Do(func() {
 		c.ws.Close()
+		c.mu.Lock()
+		for id, result := range c.pending {
+			result <- response{disconnected: true}
+			delete(c.pending, id)
+		}
 		close(c.closed)
+		c.mu.Unlock()
 		c.manager.mu.Lock()
 		if c.manager.clients[c.connection] == c {
 			delete(c.manager.clients, c.connection)
