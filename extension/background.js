@@ -8,11 +8,17 @@ const completedCommands = new Set();
 chrome.runtime.onInstalled.addListener(() => serialized(reconnectStored));
 chrome.runtime.onStartup.addListener(() => serialized(reconnectStored));
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (currentConfig?.tabId === tabId) serialized(() => disconnect("The shared tab was closed."));
+  disconnectIfCurrent(tabId, "The shared tab was closed.");
 });
 chrome.debugger.onDetach.addListener((source) => {
-  if (currentConfig?.tabId === source.tabId) serialized(() => disconnect("Chrome detached the debugger.", false));
+  disconnectIfCurrent(source.tabId, "Chrome detached the debugger.", false);
 });
+
+function disconnectIfCurrent(tabId, message, detachDebugger = true) {
+  if (currentConfig?.tabId === tabId) serialized(() => {
+    if (currentConfig?.tabId === tabId) return disconnect(message, detachDebugger);
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "status") {
