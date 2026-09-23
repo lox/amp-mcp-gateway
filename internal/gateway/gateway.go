@@ -43,7 +43,8 @@ type Config struct {
 
 // Backend is the upstream transport boundary.
 type Backend interface {
-	Call(context.Context, string, string, map[string]any) (*mcp.CallToolResult, error)
+	Call(context.Context, string, string, string, map[string]any) (*mcp.CallToolResult, error)
+	Binding(string) string
 }
 
 // Gateway owns validated tools and execution policy.
@@ -113,6 +114,17 @@ func digest(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
+func (g *Gateway) binding(tool Tool) string {
+	return g.bindingWith(tool, g.backend.Binding(tool.Connection))
+}
+
+func (g *Gateway) bindingWith(tool Tool, binding string) string {
+	if binding == "" {
+		return g.bindings[tool.ID]
+	}
+	return g.bindings[tool.ID] + ":" + binding
+}
+
 type findInput struct {
 	Query string `json:"query"`
 }
@@ -136,6 +148,56 @@ type operationResult struct {
 
 func (g *Gateway) result(o store.Operation) operationResult {
 	return operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
+}
+
+func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, operationResult) {
+	out := g.result(o)
+	if len(o.Result) == 0 {
+		return nil, out
+	}
+	var stored map[string]json.RawMessage
+	if err := json.Unmarshal(o.Result, &stored); err != nil {
+		return nil, out
+	}
+	var content []json.RawMessage
+	if err := json.Unmarshal(stored["content"], &content); err != nil {
+		return nil, out
+	}
+	retained := make([]json.RawMessage, 0, len(content))
+	hasImage := false
+	for _, block := range content {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(block, &kind) == nil && kind.Type == "image" {
+			hasImage = true
+			continue
+		}
+		retained = append(retained, block)
+	}
+	if !hasImage {
+		return nil, out
+	}
+	var upstreamResult mcp.CallToolResult
+	if err := json.Unmarshal(o.Result, &upstreamResult); err != nil {
+		return nil, out
+	}
+	promoted := make([]mcp.Content, 0, len(upstreamResult.Content))
+	for _, block := range upstreamResult.Content {
+		if _, ok := block.(*mcp.ImageContent); ok {
+			promoted = append(promoted, block)
+		}
+	}
+	retainedContent, err := json.Marshal(retained)
+	if err != nil {
+		return nil, out
+	}
+	stored["content"] = retainedContent
+	out.Result, err = json.Marshal(stored)
+	if err != nil {
+		return nil, g.result(o)
+	}
+	return &mcp.CallToolResult{Content: promoted}, out
 }
 
 // MCP serves execution and policy proposal tools behind a revocable owner bearer token.
@@ -196,7 +258,8 @@ func (g *Gateway) mcpHandler() http.Handler {
 		if err != nil {
 			return nil, nil, errors.New("operation unavailable")
 		}
-		return nil, g.result(o), nil
+		result, out := g.resultWithContent(o)
+		return result, out, nil
 	})
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 }
@@ -237,7 +300,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = conn.Account
 		}
 	}
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpUserID, o.AmpThreadID = identity.UserID, identity.ThreadID
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
@@ -261,7 +324,12 @@ func (g *Gateway) Run(ctx context.Context) error {
 			}
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
-			valid := ok && t.Policy != "deny" && g.bindings[o.Tool] == o.Binding
+			expectedBinding := ""
+			valid := false
+			if ok && t.Policy != "deny" {
+				expectedBinding = g.backend.Binding(t.Connection)
+				valid = g.bindingWith(t, expectedBinding) == o.Binding
+			}
 			g.mu.RUnlock()
 			if !valid {
 				if err := g.store.Finish(ctx, o, "denied", nil); err != nil {
@@ -270,7 +338,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 				continue
 			}
 			callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			result, callErr := g.backend.Call(callCtx, t.Connection, t.Name, o.Arguments)
+			result, callErr := g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
 			cancel()
 			status := "succeeded"
 			var raw json.RawMessage
@@ -340,11 +408,13 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	g.mu.RLock()
 	connections := make([]map[string]any, 0, len(g.cfg.Connections))
 	for _, c := range g.cfg.Connections {
-		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
+		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil, "Browser": c.Browser})
 	}
 	g.mu.RUnlock()
 	for _, c := range connections {
-		c["Health"] = m.Health(r.Context(), c["ID"].(string))
+		if !c["Browser"].(bool) {
+			c["Health"] = m.Health(r.Context(), c["ID"].(string))
+		}
 	}
 	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }

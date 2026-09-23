@@ -114,7 +114,8 @@ provider limitations.
 ## What's there today
 
 Bearer-token and OAuth connections, token refresh, per-tool rules, browser
-approvals, and encrypted storage for OAuth tokens, arguments and results.
+approvals, a reverse-connected Chrome extension for one selected tab, and
+encrypted storage for OAuth tokens, arguments and results.
 
 A few limits worth knowing:
 
@@ -136,3 +137,8 @@ A few limits worth knowing:
 The [dev guide](docs/dev.md) has setup instructions and runnable examples.
 The [plan](docs/plan.md) covers what comes next; the [feature matrix and TODOs](docs/todo.md)
 track what's implemented and what's still an idea.
+
+To share a normal Chrome tab with an orb, load the unpacked extension from
+`extension/`, pair it from the gateway dashboard, and use the configured
+`browser.*` tools through `find_tools` and `call_tools`. See the
+[Chrome extension guide](docs/dev.md#share-a-chrome-tab).
