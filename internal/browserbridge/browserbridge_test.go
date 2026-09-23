@@ -169,7 +169,7 @@ func TestCallRejectsPairingChangedAfterValidation(t *testing.T) {
 	second := connectExtension(t, m, "second-secret", "install-two", "share-two", 84)
 
 	result, err := m.Call(t.Context(), "browser", "click", expected, map[string]any{"backend_node_id": 7})
-	if err == nil || result != nil || !strings.Contains(err.Error(), "pairing changed") {
+	if err != nil || result == nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "before dispatch") {
 		t.Fatalf("stale pairing returned %#v, %v", result, err)
 	}
 	if err := second.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
@@ -181,6 +181,19 @@ func TestCallRejectsPairingChangedAfterValidation(t *testing.T) {
 	}
 	first.Close()
 	second.Close()
+}
+
+func TestDisconnectedBrowserIsDefinitePreDispatchFailure(t *testing.T) {
+	m, _ := browserManager(t)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	m.mu.Lock()
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now(), paired: true, target: "selected-tab"}
+	m.mu.Unlock()
+
+	result, err := m.Call(t.Context(), "browser", "snapshot", m.Binding("browser"), nil)
+	if err != nil || result == nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "before dispatch") {
+		t.Fatalf("offline browser returned %#v, %v", result, err)
+	}
 }
 
 func TestScreenshotBecomesMCPImageContent(t *testing.T) {
