@@ -253,7 +253,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve for") || !strings.Contains(page.Body.String(), ">Once</strong>") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve for") || !strings.Contains(page.Body.String(), "<span>Once</span>") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -343,13 +343,16 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Once</strong>", ">This thread</strong>"} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread."} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, ">This project</strong>") != tc.wantProject {
+		if strings.Contains(body, "<span>This project</span>") != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
+		}
+		if strings.Contains(body, "Allow future calls to notes.write across threads in this project.") != tc.wantProject {
+			t.Errorf("%s: project scope help visibility mismatch", tc.id)
 		}
 	}
 }
