@@ -88,6 +88,10 @@ type response struct {
 	err    string
 }
 
+type beforeDispatchError struct{ message string }
+
+func (e *beforeDispatchError) Error() string { return e.message }
+
 // New creates a browser-aware backend. Non-browser connections are delegated
 // to fallback.
 func New(baseURL string, connections []upstream.Connection, fallback backend) (*Manager, error) {
@@ -138,20 +142,33 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	c := m.clients[connection]
 	if browser && (m.binding(connection) != expectedBinding || c == nil || c.binding != expectedBinding) {
 		m.mu.Unlock()
-		return nil, errors.New("browser pairing changed before dispatch")
+		return toolError("Browser pairing changed or disconnected before dispatch."), nil
 	}
-	m.mu.Unlock()
 	if !browser {
+		m.mu.Unlock()
 		return m.fallback.Call(ctx, connection, tool, "", args)
 	}
-	result, err := c.call(ctx, tool, args)
+	id, pending, err := c.start(tool, args)
+	m.mu.Unlock()
+	if err != nil {
+		var beforeDispatch *beforeDispatchError
+		if errors.As(err, &beforeDispatch) {
+			return toolError(beforeDispatch.Error()), nil
+		}
+		return nil, err
+	}
+	result, err := c.wait(ctx, id, tool, pending)
 	if err != nil {
 		return nil, err
 	}
 	if result.err != "" {
-		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: result.err}}}, nil
+		return toolError(result.err), nil
 	}
 	return resultToMCP(result.result)
+}
+
+func toolError(message string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message}}}
 }
 
 func resultToMCP(raw json.RawMessage) (*mcp.CallToolResult, error) {
@@ -252,25 +269,29 @@ func (m *Manager) install(c *client) {
 	}
 }
 
-func (c *client) call(ctx context.Context, tool string, args map[string]any) (response, error) {
+func (c *client) start(tool string, args map[string]any) (string, <-chan response, error) {
 	id, err := randomString(18)
 	if err != nil {
-		return response{}, err
+		return "", nil, &beforeDispatchError{"Browser command could not be prepared before dispatch."}
 	}
 	result := make(chan response, 1)
 	c.mu.Lock()
 	select {
 	case <-c.closed:
 		c.mu.Unlock()
-		return response{}, errors.New("browser disconnected")
+		return "", nil, &beforeDispatchError{"Browser disconnected before dispatch."}
 	default:
 	}
 	c.pending[id] = result
 	c.mu.Unlock()
 	if err := c.write(wireMessage{Type: "command", ID: id, Tool: tool, Arguments: args}); err != nil {
 		c.remove(id)
-		return response{}, err
+		return "", nil, err
 	}
+	return id, result, nil
+}
+
+func (c *client) wait(ctx context.Context, id, tool string, result <-chan response) (response, error) {
 	select {
 	case <-ctx.Done():
 		c.remove(id)
