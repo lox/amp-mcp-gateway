@@ -3,7 +3,9 @@ package gateway
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -32,12 +34,30 @@ func (g *Gateway) AmpMCP(ctx context.Context) (http.Handler, error) {
 	if g.cfg.AmpUserID == "" {
 		return nil, errors.New("AmpUserID is required for workload authentication")
 	}
+	audience, err := ampAudience(g.cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
 	provider, err := oidc.NewProvider(ctx, ampIssuer)
 	if err != nil {
 		return nil, err
 	}
-	return g.ampMCP(provider.Verifier(&oidc.Config{ClientID: g.cfg.BaseURL, SupportedSigningAlgs: []string{"RS256"}})), nil
+	return g.ampMCP(provider.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{"RS256"}})), nil
+}
+
+func ampAudience(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("Amp workload identity requires an HTTPS origin BaseURL")
+	}
+	host := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" && port != "443" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return "https://" + host, nil
 }
 
 func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {

@@ -119,6 +119,28 @@ func TestAmpIdentity(t *testing.T) {
 	}
 }
 
+func TestAmpAudience(t *testing.T) {
+	for _, tc := range []struct {
+		base, want string
+	}{
+		{"https://GATEWAY.example.com:443/", "https://gateway.example.com"},
+		{"https://gateway.example.com:8443", "https://gateway.example.com:8443"},
+		{"https://[2001:db8::1]:443", "https://[2001:db8::1]"},
+	} {
+		t.Run(tc.base, func(t *testing.T) {
+			got, err := ampAudience(tc.base)
+			if err != nil || got != tc.want {
+				t.Fatalf("ampAudience(%q) = %q, %v; want %q", tc.base, got, err, tc.want)
+			}
+		})
+	}
+	for _, base := range []string{"http://gateway.example.com", "https://gateway.example.com/mcp", "https://user@gateway.example.com"} {
+		if got, err := ampAudience(base); err == nil {
+			t.Errorf("ampAudience(%q) = %q, want error", base, got)
+		}
+	}
+}
+
 func TestIdentityConfigurationInvalidatesApproval(t *testing.T) {
 	for name, change := range map[string]func(*Config){
 		"Amp user":      func(c *Config) { c.AmpUserID = "different-user" },
