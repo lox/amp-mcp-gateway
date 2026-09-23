@@ -240,6 +240,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
+	o.LegacyDigest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpSubject, o.AmpUserID, o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
 }

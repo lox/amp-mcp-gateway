@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -154,6 +155,39 @@ func TestAmpStandingApprovalAppliesThroughGateway(t *testing.T) {
 	third, err := g.submit(withAmpIdentity(t.Context(), identity), input("standing-third", "third"))
 	if err != nil || third.Status != "pending" {
 		t.Fatalf("thread grant escaped to another gateway thread: %s, %v", third.Status, err)
+	}
+}
+
+func TestAmpRetryAcceptsOperationFromBeforeExpandedIdentity(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
+	args := map[string]any{"text": "created before upgrade"}
+	legacy := store.Operation{
+		ID:          "legacy-retry",
+		Tool:        "notes.write",
+		Connection:  "notes",
+		Account:     "test account",
+		Subject:     "owner",
+		AmpUserID:   "user-owner",
+		AmpThreadID: thread,
+		Arguments:   args,
+		Binding:     g.bindings["notes.write"],
+		Status:      "pending",
+		Created:     time.Now().Unix(),
+		Expires:     time.Now().Add(time.Minute).Unix(),
+	}
+	legacy.Digest = digest([]any{legacy.Tool, legacy.Arguments, legacy.Binding, legacy.Model, legacy.AmpUserID, legacy.AmpThreadID})
+	if _, err := s.Submit(t.Context(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	identity := ampIdentity{Subject: "workspace:workspace-one:project:project-one:user:user-owner:thread:" + thread, UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: thread}
+	got, err := g.submit(withAmpIdentity(t.Context(), identity), input(legacy.ID, "created before upgrade"))
+	if err != nil || got.Digest != legacy.Digest {
+		t.Fatalf("legacy retry rejected: %+v, %v", got, err)
+	}
+	if _, err := g.submit(withAmpIdentity(t.Context(), identity), input(legacy.ID, "changed after upgrade")); err == nil {
+		t.Fatal("changed legacy retry accepted")
 	}
 }
 

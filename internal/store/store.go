@@ -41,6 +41,7 @@ type Operation struct {
 	Model          string          `json:"model_reported,omitempty"`
 	Arguments      map[string]any  `json:"arguments"`
 	Digest         string          `json:"digest"`
+	LegacyDigest   string          `json:"-"`
 	Binding        string          `json:"binding"`
 	ApprovalScope  string          `json:"approval_scope,omitempty"`
 	ApprovalGrant  string          `json:"approval_grant,omitempty"`
@@ -275,7 +276,8 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	defer tx.Rollback()
 	existing, err := s.decode(tx.QueryRowContext(ctx, "SELECT id,status,payload FROM operations WHERE id=?", o.ID))
 	if err == nil {
-		if existing.Digest != o.Digest {
+		legacyMatch := existing.AmpSubject == "" && existing.AmpWorkspaceID == "" && existing.AmpProjectID == "" && o.LegacyDigest != "" && existing.Digest == o.LegacyDigest
+		if existing.Digest != o.Digest && !legacyMatch {
 			return o, errors.New("request ID already used for different arguments or authority")
 		}
 		return existing, nil
