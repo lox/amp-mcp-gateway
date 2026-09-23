@@ -2,15 +2,16 @@ let socket = null;
 let heartbeat = null;
 let reconnectTimer = null;
 let currentConfig = null;
+let operationQueue = Promise.resolve();
 const completedCommands = new Set();
 
-chrome.runtime.onInstalled.addListener(() => reconnectStored());
-chrome.runtime.onStartup.addListener(() => reconnectStored());
+chrome.runtime.onInstalled.addListener(() => serialized(reconnectStored));
+chrome.runtime.onStartup.addListener(() => serialized(reconnectStored));
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (currentConfig?.tabId === tabId) disconnect("The shared tab was closed.");
+  if (currentConfig?.tabId === tabId) serialized(() => disconnect("The shared tab was closed."));
 });
 chrome.debugger.onDetach.addListener((source) => {
-  if (currentConfig?.tabId === source.tabId) disconnect("Chrome detached the debugger.", false);
+  if (currentConfig?.tabId === source.tabId) serialized(() => disconnect("Chrome detached the debugger.", false));
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -19,14 +20,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === "pair") {
-    pair(message).then(() => sendResponse({ok: true})).catch((error) => sendResponse({ok: false, error: error.message}));
+    serialized(() => pair(message)).then(() => sendResponse({ok: true})).catch((error) => sendResponse({ok: false, error: error.message}));
     return true;
   }
   if (message.type === "disconnect") {
-    disconnect("Disconnected.").then(() => sendResponse({ok: true}));
+    serialized(() => disconnect("Disconnected.")).then(() => sendResponse({ok: true}));
     return true;
   }
 });
+
+function serialized(action) {
+  const next = operationQueue.then(action, action);
+  operationQueue = next.catch(() => {});
+  return next;
+}
 
 async function reconnectStored() {
   const stored = await chrome.storage.session.get("bridgeConfig");
@@ -98,43 +105,56 @@ async function detach(tabId) {
 
 function connect() {
   clearTimeout(reconnectTimer);
+  const config = currentConfig;
+  if (!config) return;
   if (socket) {
     socket.onclose = null;
     socket.close();
   }
-  const url = new URL(currentConfig.gatewayURL);
+  const url = new URL(config.gatewayURL);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/browser/connect";
-  socket = new WebSocket(url.toString());
-  socket.onopen = async () => {
-    const tab = await chrome.tabs.get(currentConfig.tabId);
+  const connectedSocket = new WebSocket(url.toString());
+  socket = connectedSocket;
+  connectedSocket.onopen = async () => {
+    if (socket !== connectedSocket || currentConfig?.shareID !== config.shareID) return;
+    const tab = await chrome.tabs.get(config.tabId);
     send({
       type: "hello",
-      pairing_code: currentConfig.pairingCode,
-      install_id: currentConfig.installID,
-      share_id: currentConfig.shareID,
-      tab_id: currentConfig.tabId,
+      pairing_code: config.pairingCode,
+      install_id: config.installID,
+      share_id: config.shareID,
+      tab_id: config.tabId,
       tab_title: tab.title || "",
       tab_url: tab.url || "",
-    });
+    }, connectedSocket);
     clearInterval(heartbeat);
-    heartbeat = setInterval(() => send({type: "ping"}), 20000);
+    heartbeat = setInterval(() => send({type: "ping"}, connectedSocket), 20000);
   };
-  socket.onmessage = (event) => receive(JSON.parse(event.data));
-  socket.onerror = () => {};
-  socket.onclose = async (event) => {
+  connectedSocket.onmessage = (event) => {
+    if (socket === connectedSocket) receive(JSON.parse(event.data), config);
+  };
+  connectedSocket.onerror = () => {};
+  connectedSocket.onclose = async (event) => {
+    if (socket !== connectedSocket) return;
+    socket = null;
     clearInterval(heartbeat);
     heartbeat = null;
     if (!currentConfig) return;
     const rejected = event.code === 1008;
-    await setStatus(rejected ? "disconnected" : "offline", rejected ? "Pairing was rejected or revoked." : "Gateway connection lost; reconnecting.");
-    if (!rejected) reconnectTimer = setTimeout(connect, 3000);
+    if (rejected) {
+      await serialized(() => disconnect("Pairing was rejected or revoked."));
+      return;
+    }
+    await setStatus("offline", "Gateway connection lost; reconnecting.");
+    reconnectTimer = setTimeout(() => serialized(connect), 3000);
   };
 }
 
-async function receive(message) {
+async function receive(message, config) {
   if (message.type === "paired") {
-    const tab = await chrome.tabs.get(currentConfig.tabId);
+    if (currentConfig?.shareID !== config.shareID) return;
+    const tab = await chrome.tabs.get(config.tabId);
     await setStatus("connected", `Sharing ${tab.title || tab.url}`);
     return;
   }
@@ -145,36 +165,39 @@ async function receive(message) {
   }
   completedCommands.add(message.id);
   if (completedCommands.size > 1000) completedCommands.delete(completedCommands.values().next().value);
-  try {
-    const result = await execute(message.tool, message.arguments || {});
-    send({type: "result", id: message.id, result});
-  } catch (error) {
-    send({type: "result", id: message.id, error: String(error.message || error).slice(0, 1000)});
-  }
+  const target = {tabId: config.tabId, shareID: config.shareID};
+  await serialized(async () => {
+    try {
+      const result = await execute(target, message.tool, message.arguments || {});
+      send({type: "result", id: message.id, result});
+    } catch (error) {
+      send({type: "result", id: message.id, error: String(error.message || error).slice(0, 1000)});
+    }
+  });
 }
 
-async function execute(tool, args) {
+async function execute(target, tool, args) {
   switch (tool) {
     case "snapshot":
-      return snapshot();
+      return snapshot(target);
     case "screenshot":
-      return screenshot();
+      return screenshot(target);
     case "click":
-      return click(args.backend_node_id);
+      return click(target, args.backend_node_id);
     case "type":
-      return typeText(args.backend_node_id, args.text, args.submit === true);
+      return typeText(target, args.backend_node_id, args.text, args.submit === true);
     case "scroll":
-      return scroll(args.delta_y);
+      return scroll(target, args.delta_y);
     case "navigate":
-      return navigate(args.url);
+      return navigate(target, args.url);
     default:
       throw new Error(`Unknown browser command: ${tool}`);
   }
 }
 
-async function snapshot() {
-  const tab = await chrome.tabs.get(currentConfig.tabId);
-  const tree = await command("Accessibility.getFullAXTree", {depth: 20});
+async function snapshot(target) {
+  const tab = await chrome.tabs.get(target.tabId);
+  const tree = await command(target, "Accessibility.getFullAXTree", {depth: 20});
   const nodes = tree.nodes.map((node) => {
     const properties = {};
     for (const property of node.properties || []) {
@@ -196,37 +219,37 @@ async function snapshot() {
   return {title: tab.title || "", url: tab.url || "", nodes, truncated: tree.nodes.length > 500};
 }
 
-async function screenshot() {
-  const tab = await chrome.tabs.get(currentConfig.tabId);
-  const result = await command("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
+async function screenshot(target) {
+  const tab = await chrome.tabs.get(target.tabId);
+  const result = await command(target, "Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
   return {title: tab.title || "", url: tab.url || "", mime_type: "image/png", screenshot_data: result.data};
 }
 
-async function click(backendNodeId) {
-  await command("DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  const {model} = await command("DOM.getBoxModel", {backendNodeId});
+async function click(target, backendNodeId) {
+  await command(target, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  const {model} = await command(target, "DOM.getBoxModel", {backendNodeId});
   const quad = model.content || model.border;
   const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
   const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
-  await command("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
-  await command("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1});
-  await command("Input.dispatchMouseEvent", {type: "mouseReleased", x, y, button: "left", clickCount: 1});
+  await command(target, "Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
+  await command(target, "Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1});
+  await command(target, "Input.dispatchMouseEvent", {type: "mouseReleased", x, y, button: "left", clickCount: 1});
   return {clicked: backendNodeId};
 }
 
-async function typeText(backendNodeId, text, submit) {
-  await command("DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  await command("DOM.focus", {backendNodeId});
+async function typeText(target, backendNodeId, text, submit) {
+  await command(target, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  await command(target, "DOM.focus", {backendNodeId});
   const {os} = await chrome.runtime.getPlatformInfo();
   const modifiers = selectAllModifier(os);
-  await command("Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
-  await command("Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
-  await command("Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
-  await command("Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
-  await command("Input.insertText", {text});
+  await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
+  await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
+  await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
+  await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
+  await command(target, "Input.insertText", {text});
   if (submit) {
-    await command("Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter"});
-    await command("Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
+    await command(target, "Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter"});
+    await command(target, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
   }
   return {typed: backendNodeId, submitted: submit};
 }
@@ -235,26 +258,28 @@ function selectAllModifier(platform) {
   return platform === "mac" ? 4 : 2;
 }
 
-async function scroll(deltaY) {
-  await command("Input.dispatchMouseEvent", {type: "mouseWheel", x: 0, y: 0, deltaX: 0, deltaY});
+async function scroll(target, deltaY) {
+  await command(target, "Input.dispatchMouseEvent", {type: "mouseWheel", x: 0, y: 0, deltaX: 0, deltaY});
   return {scrolled: deltaY};
 }
 
-async function navigate(raw) {
+async function navigate(target, raw) {
   const url = new URL(raw);
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Navigation requires an HTTP(S) URL.");
-  const result = await command("Page.navigate", {url: url.toString()});
+  const result = await command(target, "Page.navigate", {url: url.toString()});
   if (result.errorText) throw new Error(result.errorText);
   return {url: url.toString(), frame_id: result.frameId};
 }
 
-function command(method, params = {}) {
-  if (!currentConfig) return Promise.reject(new Error("No tab is shared."));
-  return chrome.debugger.sendCommand({tabId: currentConfig.tabId}, method, params);
+function command(target, method, params = {}) {
+  if (!target || currentConfig?.shareID !== target.shareID || currentConfig?.tabId !== target.tabId) {
+    return Promise.reject(new Error("The shared tab changed before the command completed."));
+  }
+  return chrome.debugger.sendCommand({tabId: target.tabId}, method, params);
 }
 
-function send(message) {
-  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+function send(message, destination = socket) {
+  if (destination?.readyState === WebSocket.OPEN) destination.send(JSON.stringify(message));
 }
 
 async function disconnect(message, detachDebugger = true) {
@@ -267,7 +292,7 @@ async function disconnect(message, detachDebugger = true) {
   }
   const tabId = currentConfig?.tabId;
   currentConfig = null;
-	await chrome.storage.session.remove("bridgeConfig");
+  await chrome.storage.session.remove("bridgeConfig");
   if (detachDebugger && tabId) await detach(tabId);
   await setStatus("disconnected", message);
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -222,5 +223,24 @@ func TestSocketRejectsWebPageOrigins(t *testing.T) {
 	}
 	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
 		t.Fatalf("web page origin accepted: response %#v, error %v", response, err)
+	}
+}
+
+func TestRevokeSendsPolicyClose(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	form := url.Values{"connection": {"browser"}}
+	r := httptest.NewRequest(http.MethodPost, "/browser/revoke", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	m.revoke(httptest.NewRecorder(), r)
+
+	if err := ws.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var message wireMessage
+	err := ws.ReadJSON(&message)
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("revocation close = %v, want policy violation", err)
 	}
 }

@@ -265,8 +265,15 @@ func (m *Manager) install(c *client) {
 	m.clients[c.connection] = c
 	m.mu.Unlock()
 	if old != nil {
-		old.close()
+		old.revoke()
 	}
+}
+
+func (c *client) revoke() {
+	c.writeMu.Lock()
+	_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing revoked"), time.Now().Add(time.Second))
+	c.writeMu.Unlock()
+	c.close()
 }
 
 func (c *client) start(tool string, args map[string]any) (string, <-chan response, error) {
@@ -415,7 +422,7 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 	m.pairings[connection] = pairing{hash: hash, created: m.now()}
 	m.mu.Unlock()
 	if old != nil {
-		old.close()
+		old.revoke()
 	}
 	m.render(w, browserPageData{Connections: m.statuses(), PairingCode: code, GatewayURL: m.baseURL, PairingConnection: connection})
 }
@@ -433,7 +440,7 @@ func (m *Manager) revoke(w http.ResponseWriter, r *http.Request) {
 	delete(m.pairings, connection)
 	m.mu.Unlock()
 	if old != nil {
-		old.close()
+		old.revoke()
 	}
 	http.Redirect(w, r, "/browser", http.StatusSeeOther)
 }
