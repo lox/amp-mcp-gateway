@@ -150,6 +150,25 @@ func (g *Gateway) result(o store.Operation) operationResult {
 	return operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
 }
 
+func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, operationResult) {
+	out := g.result(o)
+	if len(o.Result) == 0 {
+		return nil, out
+	}
+	var upstreamResult mcp.CallToolResult
+	if err := json.Unmarshal(o.Result, &upstreamResult); err != nil || len(upstreamResult.Content) == 0 {
+		return nil, out
+	}
+	var structured map[string]json.RawMessage
+	if err := json.Unmarshal(o.Result, &structured); err == nil {
+		delete(structured, "content")
+		if compact, err := json.Marshal(structured); err == nil {
+			out.Result = compact
+		}
+	}
+	return &mcp.CallToolResult{Content: upstreamResult.Content}, out
+}
+
 // MCP serves execution and policy proposal tools behind a revocable owner bearer token.
 func (g *Gateway) MCP(token string) http.Handler {
 	h := g.mcpHandler()
@@ -208,7 +227,8 @@ func (g *Gateway) mcpHandler() http.Handler {
 		if err != nil {
 			return nil, nil, errors.New("operation unavailable")
 		}
-		return nil, g.result(o), nil
+		result, out := g.resultWithContent(o)
+		return result, out, nil
 	})
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 }

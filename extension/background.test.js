@@ -11,14 +11,18 @@ const storage = {
   set: async () => {},
   remove: async () => {},
 };
-const sentTargets = [];
+const sentCommands = [];
+const commandResponses = [];
 const context = {
   chrome: {
     action: {setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}},
-    debugger: {onDetach: event, sendCommand: async (target) => sentTargets.push(target)},
+    debugger: {onDetach: event, sendCommand: async (target, method, params) => {
+      sentCommands.push({tabId: target.tabId, method, params});
+      return commandResponses.shift() || {};
+    }},
     runtime: {onInstalled: event, onMessage: event, onStartup: event},
     storage: {local: storage, session: storage},
-    tabs: {onRemoved: event},
+    tabs: {get: async () => ({title: "Example", url: "https://example.com"}), onRemoved: event},
   },
   clearInterval,
   clearTimeout,
@@ -30,7 +34,7 @@ const context = {
   WebSocket: class {},
 };
 const source = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
-vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command;`, context);
+vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.screenshotForTest = screenshot;`, context);
 
 test("select-all uses Command on macOS and Control elsewhere", () => {
   assert.equal(context.selectAllModifierForTest("mac"), 4);
@@ -41,12 +45,21 @@ test("select-all uses Command on macOS and Control elsewhere", () => {
 test("commands stay bound to their captured share and tab", async () => {
   vm.runInNewContext("currentConfig = {shareID: 'share-one', tabId: 42}", context);
   await context.commandForTest({shareID: "share-one", tabId: 42}, "Page.enable");
-  assert.equal(sentTargets.pop().tabId, 42);
+  assert.equal(sentCommands.pop().tabId, 42);
 
   vm.runInNewContext("currentConfig = {shareID: 'share-two', tabId: 84}", context);
   await assert.rejects(
     context.commandForTest({shareID: "share-one", tabId: 42}, "Page.enable"),
     /shared tab changed/,
   );
-  assert.equal(sentTargets.length, 0);
+  assert.equal(sentCommands.length, 0);
+});
+
+test("screenshots retry at lower quality to stay below the bridge limit", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'share-three', tabId: 126}", context);
+  commandResponses.push({data: "x".repeat(6 * 1024 * 1024 + 1)}, {data: "bounded"});
+  const result = await context.screenshotForTest({shareID: "share-three", tabId: 126});
+  assert.equal(result.mime_type, "image/jpeg");
+  assert.equal(result.screenshot_data, "bounded");
+  assert.deepEqual(sentCommands.splice(0).map((call) => call.params.quality), [70, 50]);
 });
