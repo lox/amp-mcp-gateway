@@ -253,7 +253,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve for") || !strings.Contains(page.Body.String(), "<span>Once</span>") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -293,11 +293,14 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
 				t.Fatal("incorrect refresh control")
 			}
-			if strings.Contains(body, "Approve once") != (status == "pending") {
+			if strings.Contains(body, "Approve for") != (status == "pending") {
 				t.Fatal("incorrect approval control")
 			}
-			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once") {
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve for") {
 				t.Fatal("arguments must precede approval")
+			}
+			if strings.Contains(body, "This thread") || strings.Contains(body, "This project") {
+				t.Fatal("standing scope offered without verified Amp identity")
 			}
 			if len(o.Result) > 0 {
 				if strings.Count(body, "<pre>{\n  &#34;count&#34;: 2\n}</pre>") != 1 {
@@ -319,6 +322,38 @@ func TestOperationPresentation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestApprovalScopePresentation(t *testing.T) {
+	g, s, _ := fixture(t)
+	for _, tc := range []struct {
+		id, project string
+		wantProject bool
+	}{
+		{"with-project", "project-one", true},
+		{"without-project", "", false},
+	} {
+		o := store.Operation{ID: tc.id, Tool: "notes.write", Connection: "notes", Account: "test account", Status: "pending", Arguments: map[string]any{"text": "review"}, AmpUserID: "user-owner", AmpWorkspaceID: "workspace-one", AmpProjectID: tc.project, AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+		if _, err := s.Submit(t.Context(), o); err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest("GET", "/operations/"+o.ID, nil)
+		r.SetPathValue("id", o.ID)
+		w := httptest.NewRecorder()
+		g.operation(w, r)
+		body := w.Body.String()
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread."} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: missing %q", tc.id, want)
+			}
+		}
+		if strings.Contains(body, "<span>This project</span>") != tc.wantProject {
+			t.Errorf("%s: project scope visibility mismatch", tc.id)
+		}
+		if strings.Contains(body, "Allow future calls to notes.write across threads in this project.") != tc.wantProject {
+			t.Errorf("%s: project scope help visibility mismatch", tc.id)
+		}
 	}
 }
 

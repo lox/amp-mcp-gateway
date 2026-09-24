@@ -103,7 +103,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: os.Getenv("GATEWAY_OIDC_SECRET"), OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	if !*demoMode {
+		authCfg.ClientSecret = os.Getenv("GATEWAY_OIDC_SECRET")
+	}
 	authCfg.TrustedClientIPHeader = *clientIPHeader
 	if authCfg.TrustedClientIPHeader == "" && os.Getenv("FLY_APP_NAME") != "" {
 		authCfg.TrustedClientIPHeader = "Fly-Client-IP"

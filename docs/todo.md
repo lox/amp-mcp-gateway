@@ -23,14 +23,14 @@ separate copies of this matrix in each document.
 | Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Gateway validation matches Amp's MCP workload token contract; direct remote-definition test remains. Demo/legacy bearer retained. |
 | Multiple users / workloads | Planned | No per-agent credentials, workload grants or user isolation. |
-| On-behalf-of attribution | Partial | Verified Amp user and thread link stored separately from Google approval actor; no delegation chain or model attestation. |
+| On-behalf-of attribution | Partial | Verified Amp subject, user, workspace, project and thread context stored separately from Google approval actor; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. New tools inherit defaults after save; unknown tools cannot execute. |
-| Human approval | Implemented | Exact arguments, account label, digest, approve/deny, ten-minute expiry and status polling. |
+| Human approval | Implemented | Exact arguments, account label, digest, once/thread/project approve scopes, deny, ten-minute pending expiry, revocation and status polling. |
 | Effect previews | Planned | Exact payload only; no before/after effect or resource-state-aware approval. |
-| Bounded mandates | Planned | No resource-scoped grants, call budgets, standing grants or subagent delegation. |
+| Bounded mandates | Partial | Durable thread/project standing grants bind verified Amp identity, tool and configuration. No resource scope, call budgets, expiry or subagent delegation. |
 | Duplicate / restart safety | Implemented | Idempotency keys, atomic claims and persisted approvals; ambiguous outcomes are not retried. |
-| Revocation | Partial | Token/key rotation, configuration changes and reconnect invalidation; no per-run/grant stop control. |
+| Revocation | Partial | Token/key rotation, configuration/reconnect invalidation and explicit standing-grant revocation; no per-run stop control or Amp token introspection. |
 | Tool-definition review | Partial | Refresh shows additions, changes and removals. Unchanged exceptions persist; changed allowed tools require approval and blocks persist. No automatic refresh or drift detection. |
 | Audit history | Partial | Durable operation transitions and encrypted payloads; no login, discovery, malformed-call or refresh audit. |
 | Execution diagnostics | Partial | Stored stage and protocol codes; fixed hints for recognized HTTP authentication errors and validated Dropbox request IDs. No arbitrary response-body capture or distributed tracing. |

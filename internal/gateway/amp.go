@@ -21,9 +21,12 @@ const ampIssuer = "https://ampcode.com/api/workload-identity"
 var ampThreadID = regexp.MustCompile(`^T-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type ampIdentity struct {
-	UserID   string `json:"user_id"`
-	ThreadID string `json:"thread_id"`
-	TokenUse string `json:"token_use"`
+	Subject     string `json:"sub"`
+	UserID      string `json:"user_id"`
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	ThreadID    string `json:"thread_id"`
+	TokenUse    string `json:"token_use"`
 }
 type ampIdentityKey struct{}
 
@@ -97,6 +100,7 @@ func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
 			token, err := verifier.Verify(ctx, raw)
 			var identity ampIdentity
 			if err == nil && token.Subject != "" && token.Claims(&identity) == nil &&
+				identity.Subject == token.Subject &&
 				identity.UserID != "" && identity.UserID == g.cfg.AmpUserID &&
 				identity.TokenUse == "mcp" && ampThreadID.MatchString(identity.ThreadID) {
 				next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))

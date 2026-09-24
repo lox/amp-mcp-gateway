@@ -238,8 +238,10 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
-	o.AmpUserID, o.AmpThreadID = identity.UserID, identity.ThreadID
-	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
+	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
+	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
+	o.LegacyDigest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
+	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpSubject, o.AmpUserID, o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID})
 	return g.store.Submit(ctx, o)
 }
 
@@ -317,11 +319,34 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if err := g.store.Decide(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context()), decision == "approve"); err != nil {
+		actor := browserauth.Subject(r.Context())
+		var err error
+		if decision == "approve" {
+			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			if parseErr := r.ParseForm(); parseErr != nil {
+				http.Error(w, "Invalid approval.", 400)
+				return
+			}
+			scope := r.Form.Get("scope")
+			if scope == "" {
+				scope = "once"
+			}
+			err = g.store.Approve(r.Context(), r.PathValue("id"), actor, scope)
+		} else {
+			err = g.store.Decide(r.Context(), r.PathValue("id"), actor, false)
+		}
+		if err != nil {
 			http.Error(w, "Operation expired or already decided.", 409)
 			return
 		}
 		http.Redirect(w, r, "/operations/"+r.PathValue("id"), 303)
+	})
+	mux.HandleFunc("POST /approval-grants/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if err := g.store.RevokeApprovalGrant(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context())); err != nil {
+			http.Error(w, "Approval unavailable or already revoked.", 409)
+			return
+		}
+		http.Redirect(w, r, "/", 303)
 	})
 	return auth.Require(http.NewCrossOriginProtection().Handler(mux))
 }
@@ -337,6 +362,11 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "audit unavailable", 503)
 		return
 	}
+	grants, err := g.store.ApprovalGrants(r.Context())
+	if err != nil {
+		http.Error(w, "approvals unavailable", 503)
+		return
+	}
 	g.mu.RLock()
 	connections := make([]map[string]any, 0, len(g.cfg.Connections))
 	for _, c := range g.cfg.Connections {
@@ -346,7 +376,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	for _, c := range connections {
 		c["Health"] = m.Health(r.Context(), c["ID"].(string))
 	}
-	g.render(w, map[string]any{"Operations": ops, "Events": events, "Connections": connections, "Owner": g.cfg.OwnerSubject})
+	g.render(w, map[string]any{"Operations": ops, "Events": events, "ApprovalGrants": grants, "Connections": connections, "Owner": g.cfg.OwnerSubject})
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	o, err := g.store.Get(r.Context(), r.PathValue("id"))

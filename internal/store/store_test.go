@@ -129,6 +129,38 @@ func TestRestartRecoveryIdempotencyAndEncryption(t *testing.T) {
 	}
 }
 
+func TestLegacyDigestOnlyMatchesOperationsWithoutNewIdentity(t *testing.T) {
+	s, _, _ := testStore(t)
+	ctx := t.Context()
+	legacy := operation("legacy-id", "pending")
+	legacy.Digest = "legacy-digest"
+	legacy.AmpUserID = "user-one"
+	legacy.AmpThreadID = "thread-one"
+	if _, err := s.Submit(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	retry := legacy
+	retry.Digest = "current-digest"
+	retry.LegacyDigest = "legacy-digest"
+	retry.AmpSubject = "workspace:one:user:user-one:thread:thread-one"
+	retry.AmpWorkspaceID = "workspace-one"
+	if got, err := s.Submit(ctx, retry); err != nil || got.Digest != "legacy-digest" {
+		t.Fatalf("legacy retry: %v, %v", got, err)
+	}
+
+	current := operation("current-id", "pending")
+	current.Digest = "legacy-digest"
+	current.AmpWorkspaceID = "workspace-one"
+	if _, err := s.Submit(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Digest = "current-digest"
+	current.LegacyDigest = "legacy-digest"
+	if _, err := s.Submit(ctx, current); err == nil {
+		t.Fatal("legacy digest accepted for operation with current identity fields")
+	}
+}
+
 func TestExpiredDeniedAndTamperedCiphertext(t *testing.T) {
 	s, _, _ := testStore(t)
 	ctx := context.Background()

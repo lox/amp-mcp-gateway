@@ -69,8 +69,11 @@ For example, after finding `notes.create`, the agent calls `call_tools` with:
 ```
 
 That demo tool requires approval. You review the account and exact arguments in
-the browser, then approve or deny. The request and its outcome are saved, so the
-agent can check back later without keeping the connection open.
+the browser, then approve or deny. Amp-authenticated requests can be approved once,
+for the current thread, or across the current project. Standing thread and project
+approvals are listed on the activity page and can be revoked. The request and its
+outcome are saved, so the agent can check back later without keeping the connection
+open.
 
 Finished calls show the result first, with JSON formatted for reading. Expand
 **Raw MCP response** for the full response, or **Request details** and
@@ -120,7 +123,8 @@ A few limits worth knowing:
 
 - One owner and one call per request. Search is keyword-based.
 - Amp remote MCP definitions can authenticate with Amp Workload Identity; requests
-  link back to their thread. Browser approvals use a separate OIDC login.
+  retain their verified workspace, project and thread context. Browser approvals
+  use a separate OIDC login.
 - Google Workspace login can require both your domain and your exact account.
   Validate the configured identity provider before relying on a deployment. The
   local demo uses a shared fixture token.

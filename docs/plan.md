@@ -23,8 +23,9 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   Match one Google subject and one Amp user. Keep the signed thread link; neither
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
-- Approve the immutable stored request once, recheck its configuration binding,
-  and never automatically retry an ambiguous dispatch.
+- Approve the immutable stored request once or create a revocable standing approval
+  for the same tool/configuration binding in its verified Amp thread or project.
+  Never automatically retry an ambiguous dispatch.
 - Keep discovery local. Evaluate Jev only if it measurably improves tool selection
   and its data-handling requirements are acceptable.
 
@@ -78,18 +79,20 @@ documentation/setup work.
 ### 3. Amp workload identity and Google browser login — implemented
 
 Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience,
-`token_use=mcp` and one allowed user ID. A signed thread ID is required, stored and
-linked from the approval page. All that user's threads share authority; there is
-no delegation tree. Amp-hosted remote MCP definitions send the short-lived token
-directly, without a local bridge or stored gateway credential. Google browser login
-requires both the exact subject and configured hosted-domain claim. Both identities
-map explicitly to one configured owner.
+`token_use=mcp` and one allowed user ID. The signed subject and thread ID plus
+optional workspace/project IDs are stored and shown during review. Pending requests
+can be approved once, for the thread, or across the project. Standing approvals are
+encrypted, durable, bound to the exact identity/tool/configuration context, listed
+for the owner, and revocable. Amp-hosted remote MCP definitions send the short-lived
+token directly, without a local bridge or stored gateway credential. Google browser
+login requires both the exact subject and configured hosted-domain claim. Both
+identities map explicitly to one configured owner; there is no delegation tree.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
-tests, Google domain fixture tests, and a live Amp issuer check using this orb. A
-real Google browser login has also been validated. General client-facing MCP OAuth
-discovery, scopes, per-thread grants and revocation are deferred. A direct remote
-MCP definition using Amp Workload Identity still needs an end-to-end production test.
+tests, thread/project grant boundary and revocation tests, Google domain fixture
+tests, and a successful production call through an Amp-hosted remote MCP definition.
+A real Google browser login has also been validated. General client-facing MCP OAuth
+discovery and scopes are deferred.
 
 ### 4. Authority, account identity and meaningful approvals
 
@@ -97,9 +100,10 @@ Separate authorizing subject, executing workload, client, agent run and approver
 Add verified upstream identity where supported. Keep model provenance graded as
 unknown, client-reported or runtime-observed rather than claiming model attestation.
 
-Add one tool-specific effect preview and one bounded mandate with enforceable
-resource/action/expiry/count limits. Stale resource state requires fresh review;
-subagents may only narrow authority. Do not build a general policy language first.
+Thread/project standing approvals are the first identity-bounded mandate. Add one
+tool-specific effect preview and a resource-scoped mandate with enforceable
+action/expiry/count limits. Stale resource state requires fresh review; subagents
+may only narrow authority. Do not build a general policy language first.
 
 Acceptance: negative tests demonstrate that changed arguments, resource state,
 account or delegation cannot reuse an approval or exceed a mandate.
