@@ -29,7 +29,7 @@ func TestPolicyProposalBatch(t *testing.T) {
 	h, cookie := adminUI(t, g, m)
 	before := digest(g.catalogue())
 	input := policyInput{Changes: []policyChange{
-		{Connection: "mail", Default: "require_approval", Tools: map[string]string{"mail.read": "allow"}},
+		{Connection: "mail", Default: "require_approval", Tools: map[string]string{"mail.read": "private"}},
 		{Connection: "notes", Default: "deny"},
 	}}
 	result, err := g.proposePolicies(t.Context(), input)
@@ -46,7 +46,7 @@ func TestPolicyProposalBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := formRequest(h, cookie, "GET", u.Path, nil)
-	for _, want := range []string{"Allow → Require approval", "Allow → Allow", "Block → Block", "mail.exception", "No verified Amp user", "Apply proposed changes"} {
+	for _, want := range []string{"Allow → Require approval", "Allow → Private to you", "Block → Block", "mail.exception", "No verified Amp user", "Apply proposed changes"} {
 		if w.Code != 200 || !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("missing %q: %d %s", want, w.Code, w.Body.String())
 		}
@@ -56,7 +56,7 @@ func TestPolicyProposalBatch(t *testing.T) {
 	if w.Code != 303 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	for id, want := range map[string]string{"mail.read": "allow", "mail.send": "require_approval", "mail.blocked": "deny", "mail.exception": "require_approval", "notes.write": "require_approval"} {
+	for id, want := range map[string]string{"mail.read": "private", "mail.send": "require_approval", "mail.blocked": "deny", "mail.exception": "require_approval", "notes.write": "require_approval"} {
 		if g.tools[id].Policy != want {
 			t.Fatalf("%s = %s, want %s", id, g.tools[id].Policy, want)
 		}

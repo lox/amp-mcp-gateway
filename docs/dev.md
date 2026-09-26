@@ -210,8 +210,9 @@ The suggested connection default is **Require approval**. The page starts with
 **Exceptions**. **Add exception** opens the full tool list; choose a permission
 for any tool you want to override. Searching from any view searches all tools in
 the connection. Clearing the query restores that view. Inherited permissions show
-**Default: Require approval**, **Default: Allow** or **Default: Block**, reflecting
-the current draft default. Explicit exceptions keep their own permission.
+**Default: Require approval**, **Default: Private to you**, **Default: Allow** or
+**Default: Block**, reflecting the current draft default. Explicit exceptions keep
+their own permission.
 Select visible tools and click a bulk permission button. Edits are staged until
 **Save changes**. Filtering clears hidden selections. The remove button or the
 **Default: …** option removes an exception; **Use default** does the same in bulk.
@@ -225,16 +226,21 @@ To adopt the default for them, select them in bulk and choose **Use default**
 once. Changing a connection default never overrides explicit choices.
 You can edit saved permissions without fetching the server, including when it is
 offline. **Allow** as the default also allows new tools without approval after
-you save a refresh; the form warns about this explicitly.
+you save a refresh; the form warns about this explicitly. **Private to you** tools
+are hidden and blocked unless Amp's token verifies a private, non-multiplayer thread
+where no non-owner can influence the call. A fresh token enforces this on each
+discovery, submission and result lookup. A call already admitted before multiplayer
+is enabled may still finish; running calls are never automatically cancelled.
 
 Fetching alone changes no live policies. Refresh keeps the default and exceptions
 you are editing, including if the fetch fails; changed definitions still trigger
 the approval/block rules below. You must save to publish these choices.
 The preview marks new and changed tools
 and lists removals. New tools inherit the default. Unchanged schemas/descriptions
-keep their exceptions; changed tools require approval unless previously blocked,
-in which case they remain blocked. This also applies to tools previously allowed
-through the default. Removed tools disappear on save; historical operations remain.
+keep their exceptions; changed tools require approval unless previously private or
+blocked, in which case they retain that restriction. This also applies to tools
+previously allowed through the default. Removed tools disappear on save; historical
+operations remain.
 Save publishes the reviewed snapshot, replacing that connection's tool list.
 Edits expire after ten minutes and reject stale saves. Reopening saved permissions
 replaces any earlier saved-permissions edit for that connection, including in

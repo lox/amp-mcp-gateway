@@ -127,6 +127,8 @@ func policyLabel(policy string) string {
 		return "Block"
 	case "require_approval":
 		return "Require approval"
+	case "private":
+		return "Private to you"
 	default:
 		return "Use default"
 	}

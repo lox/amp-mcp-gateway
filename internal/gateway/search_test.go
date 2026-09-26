@@ -93,3 +93,47 @@ func TestToolSearchBoundsAndSemantics(t *testing.T) {
 		t.Fatalf("escaped oversized query waited for catalogue lock: %v", err)
 	}
 }
+
+func TestPrivateToolsAreOnlyDiscoveredInPrivateSoloThreads(t *testing.T) {
+	g, _, _ := fixture(t)
+	tool := g.tools["notes.write"]
+	tool.Policy = "private"
+	g.tools[tool.ID] = tool
+	no, yes := false, true
+	for _, tc := range []struct {
+		name       string
+		identity   ampIdentity
+		wantResult bool
+	}{
+		{"private solo", ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ThreadVisibility: "private", ThreadMultiplayer: &no, ThreadNonOwnerCanInfluence: &no}, true},
+		{"multiplayer", ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ThreadVisibility: "private", ThreadMultiplayer: &yes, ThreadNonOwnerCanInfluence: &no}, false},
+		{"shared", ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ThreadVisibility: "thread_workspace_shared", ThreadMultiplayer: &no, ThreadNonOwnerCanInfluence: &no}, false},
+		{"missing claims", ampIdentity{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := g.mcpHandler()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				h.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), tc.identity)))
+			}))
+			defer server.Close()
+			client := mcp.NewClient(&mcp.Implementation{Name: "private-search-test", Version: "1"}, nil)
+			session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			found, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "find_tools", Arguments: map[string]any{"query": ""}})
+			if err != nil || found.IsError {
+				t.Fatalf("find tools: %v, %+v", err, found)
+			}
+			raw, _ := json.Marshal(found.StructuredContent)
+			var out struct{ Tools []Tool }
+			if err := json.Unmarshal(raw, &out); err != nil {
+				t.Fatal(err)
+			}
+			if (len(out.Tools) == 1) != tc.wantResult {
+				t.Fatalf("got tools %+v", out.Tools)
+			}
+		})
+	}
+}

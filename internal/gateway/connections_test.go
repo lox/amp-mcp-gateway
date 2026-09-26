@@ -206,9 +206,9 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	g, s, _ := fixture(t)
 	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
 	schema := map[string]any{"type": "object"}
-	for _, name := range []string{"blocked", "changed", "new", "unchanged"} {
+	for _, name := range []string{"blocked", "changed", "new", "private", "unchanged"} {
 		description := "original"
-		if name == "changed" || name == "blocked" {
+		if name == "changed" || name == "blocked" || name == "private" {
 			description = "different behavior"
 		}
 		remote.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -222,7 +222,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
 	cfg.ToolDefaults = map[string]string{"notes": "allow"}
 	cfg.Tools = nil
-	for name, policy := range map[string]string{"blocked": "deny", "changed": "", "unchanged": "allow", "gone": "require_approval"} {
+	for name, policy := range map[string]string{"blocked": "deny", "changed": "", "private": "private", "unchanged": "allow", "gone": "require_approval"} {
 		cfg.Tools = append(cfg.Tools, Tool{ID: "notes." + name, Connection: "notes", Name: name, Description: "original", InputSchema: schema, Policy: policy})
 	}
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
@@ -248,7 +248,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 		t.Fatal("wrong change summary", draft.Changes, draft.Removed)
 	}
 	for _, tool := range draft.Tools {
-		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "unchanged": "allow"}[tool.Name]
+		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "private": "private", "unchanged": "allow"}[tool.Name]
 		if tool.Policy != want {
 			t.Fatalf("%s: %q, want %q", tool.Name, tool.Policy, want)
 		}
@@ -270,7 +270,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	if _, ok := g.tools["notes.gone"]; ok {
 		t.Fatal("removed tool stayed available")
 	}
-	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" {
+	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" || g.tools["notes.private"].Policy != "private" {
 		t.Fatal("incorrect effective refresh policies")
 	}
 	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
@@ -441,6 +441,19 @@ func TestConnectionDefaultExecution(t *testing.T) {
 	if next.tools["notes.write"].Policy != "deny" {
 		t.Fatal("default overrode exception")
 	}
+	// Private defaults execute without approval only when Amp attests a private,
+	// owner-only thread.
+	cfg.Tools[0].Policy = ""
+	cfg.ToolDefaults["notes"] = "private"
+	next, err = New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := false
+	identity := ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ThreadVisibility: "private", ThreadMultiplayer: &no, ThreadNonOwnerCanInfluence: &no}
+	if got, err := next.submit(withAmpIdentity(t.Context(), identity), input("default-private", "hello")); err != nil || got.Status != "ready" || !got.Private {
+		t.Fatalf("private default: %+v, %v", got, err)
+	}
 }
 
 func TestOAuthStatusPage(t *testing.T) {
@@ -586,7 +599,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 }
 
 func TestDefaultPermissionRadios(t *testing.T) {
-	for _, policy := range []string{"deny", "require_approval", "allow"} {
+	for _, policy := range []string{"deny", "require_approval", "private", "allow"} {
 		t.Run(policy, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy}, "Connection": map[string]any{"ID": "notes"}})
@@ -596,6 +609,10 @@ func TestDefaultPermissionRadios(t *testing.T) {
 			checked := regexp.MustCompile(`name="default_policy" value="([^"]+)" checked`).FindAllStringSubmatch(w.Body.String(), -1)
 			if len(checked) != 1 || checked[0][1] != policy {
 				t.Fatalf("saved default %q not selected: %v", policy, checked)
+			}
+			privateHelp := regexp.MustCompile(`<p id="private-help" class="help"([^>]*)>`).FindStringSubmatch(w.Body.String())
+			if len(privateHelp) != 2 || strings.Contains(privateHelp[1], "hidden") != (policy != "private") {
+				t.Fatalf("private help visibility for %q: %v", policy, privateHelp)
 			}
 			if !strings.Contains(w.Body.String(), `<button type="submit" formaction="/connections/notes/discover">Refresh tools</button>`) {
 				t.Fatal("refresh must submit discovery rather than saving policy edits")

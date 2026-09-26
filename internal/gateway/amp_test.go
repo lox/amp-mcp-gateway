@@ -31,7 +31,7 @@ func TestAmpIdentity(t *testing.T) {
 	h := g.ampMCP(verifier)
 	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
 	mint := func(change func(map[string]any)) string {
-		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "workspace:workspace-123:project:project-456:user:user-owner:thread:" + thread, "user_id": "user-owner", "workspace_id": "workspace-123", "project_id": "project-456", "thread_id": thread, "token_use": "mcp", "jti": "token-123", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
+		claims := map[string]any{"iss": ampIssuer, "aud": g.cfg.BaseURL, "sub": "workspace:workspace-123:project:project-456:user:user-owner:thread:" + thread, "user_id": "user-owner", "workspace_id": "workspace-123", "project_id": "project-456", "thread_id": thread, "thread_visibility": "private", "thread_multiplayer": false, "thread_non_owner_can_influence": false, "token_use": "mcp", "jti": "token-123", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix()}
 		change(claims)
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
 		if err != nil {
@@ -58,6 +58,9 @@ func TestAmpIdentity(t *testing.T) {
 		"missing thread":  func(c map[string]any) { delete(c, "thread_id") },
 		"unsafe thread":   func(c map[string]any) { c["thread_id"] = "../../evil" },
 		"missing subject": func(c map[string]any) { delete(c, "sub") },
+		"invalid multiplayer": func(c map[string]any) {
+			c["thread_multiplayer"] = "false"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest("POST", "/mcp", nil)
@@ -104,7 +107,7 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submit %v %v", result, err)
 	}
 	o, err := s.Get(t.Context(), "amp-request-001")
-	if err != nil || o.AmpSubject == "" || o.AmpUserID != "user-owner" || o.AmpWorkspaceID != "workspace-123" || o.AmpProjectID != "project-456" || o.AmpThreadID != thread || o.Subject != "owner" {
+	if err != nil || o.AmpSubject == "" || o.AmpUserID != "user-owner" || o.AmpWorkspaceID != "workspace-123" || o.AmpProjectID != "project-456" || o.AmpThreadID != thread || !o.AmpThreadContext || o.AmpThreadVisibility != "private" || o.AmpThreadMultiplayer || o.AmpThreadNonOwnerCanInfluence || o.Subject != "owner" {
 		t.Fatalf("identity not persisted: %+v %v", o, err)
 	}
 	events, err := s.Events(t.Context())
@@ -113,7 +116,7 @@ func TestAmpIdentity(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	g.render(w, map[string]any{"Operation": o, "Owner": "owner"})
-	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") || !strings.Contains(w.Body.String(), "workspace-123") || !strings.Contains(w.Body.String(), "project-456") {
+	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") || !strings.Contains(w.Body.String(), "workspace-123") || !strings.Contains(w.Body.String(), "project-456") || !strings.Contains(w.Body.String(), "Thread visibility") || !strings.Contains(w.Body.String(), "Multiplayer") || !strings.Contains(w.Body.String(), "Non-owner influence") {
 		t.Fatal("missing identity link")
 	}
 	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tools", Arguments: input("amp-request-001", "verified caller")})
@@ -155,6 +158,57 @@ func TestAmpStandingApprovalAppliesThroughGateway(t *testing.T) {
 	third, err := g.submit(withAmpIdentity(t.Context(), identity), input("standing-third", "third"))
 	if err != nil || third.Status != "pending" {
 		t.Fatalf("thread grant escaped to another gateway thread: %s, %v", third.Status, err)
+	}
+}
+
+func TestPrivateToolRequiresPrivateSoloAmpThread(t *testing.T) {
+	g, s, b := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	tool := g.tools["notes.write"]
+	tool.Policy = "private"
+	g.tools[tool.ID] = tool
+	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
+	base := ampIdentity{Subject: "workspace:workspace-one:project:project-one:user:user-owner:thread:" + thread, UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: thread, ThreadVisibility: "private"}
+	no, yes := false, true
+	base.ThreadMultiplayer, base.ThreadNonOwnerCanInfluence = &no, &no
+
+	o, err := g.submit(withAmpIdentity(t.Context(), base), input("private-call", "private value"))
+	if err != nil || o.Status != "ready" || !o.Private || !o.AmpThreadContext || o.AmpThreadVisibility != "private" {
+		t.Fatalf("private call: %+v, %v", o, err)
+	}
+	runWorker(t, g)
+	completed := await(t, s, o.ID, "succeeded")
+	if b.calls.Load() != 1 || !strings.Contains(string(completed.Result), "private value") {
+		t.Fatalf("private call did not execute exactly once: %d, %s", b.calls.Load(), completed.Result)
+	}
+	if got, err := g.getOperation(withAmpIdentity(t.Context(), base), o.ID); err != nil || got.ID != o.ID || len(got.Result) == 0 {
+		t.Fatalf("private result unavailable to owner: %+v, %v", got, err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		change func(*ampIdentity)
+	}{
+		{"shared", func(i *ampIdentity) { i.ThreadVisibility = "thread_workspace_shared" }},
+		{"public", func(i *ampIdentity) { i.ThreadVisibility = "public_unlisted" }},
+		{"multiplayer", func(i *ampIdentity) { i.ThreadMultiplayer = &yes }},
+		{"non-owner influence", func(i *ampIdentity) { i.ThreadNonOwnerCanInfluence = &yes }},
+		{"missing claims", func(i *ampIdentity) { i.ThreadMultiplayer = nil }},
+		{"unknown visibility", func(i *ampIdentity) { i.ThreadVisibility = "future_mode" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			identity := base
+			tc.change(&identity)
+			if _, err := g.submit(withAmpIdentity(t.Context(), identity), input("private-"+strings.ReplaceAll(tc.name, " ", "-"), "private value")); err == nil || err.Error() != "unknown tool" {
+				t.Fatalf("private call did not fail as an unknown tool: %v", err)
+			}
+			if _, err := g.getOperation(withAmpIdentity(t.Context(), identity), o.ID); err == nil {
+				t.Fatal("private result exposed")
+			}
+		})
+	}
+	if stored, err := s.Get(t.Context(), o.ID); err != nil || !stored.Private {
+		t.Fatalf("private operation not durably marked: %+v, %v", stored, err)
 	}
 }
 

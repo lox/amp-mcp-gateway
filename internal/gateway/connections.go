@@ -46,7 +46,7 @@ func (g *Gateway) catalogue() catalogue {
 }
 
 func validPolicy(policy string) bool {
-	return policy == "deny" || policy == "require_approval" || policy == "allow"
+	return policy == "deny" || policy == "require_approval" || policy == "private" || policy == "allow"
 }
 
 func (cfg Config) defaultPolicy(id string) string {
@@ -394,8 +394,8 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				} else {
 					draft.Changes[old.ID] = "Changed"
 					tools[i].Policy = "require_approval"
-					if g.tools[old.ID].Policy == "deny" {
-						tools[i].Policy = "deny"
+					if policy := g.tools[old.ID].Policy; policy == "deny" || policy == "private" {
+						tools[i].Policy = policy
 					}
 				}
 			}
@@ -416,8 +416,10 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				tools[i].Policy = old.Policy
 			} else {
 				tools[i].Policy = "require_approval"
-				if old.Policy == "deny" || (old.Policy == "" && previous.Default == "deny") {
-					tools[i].Policy = "deny"
+				if old.Policy == "deny" || old.Policy == "private" {
+					tools[i].Policy = old.Policy
+				} else if old.Policy == "" && (previous.Default == "deny" || previous.Default == "private") {
+					tools[i].Policy = previous.Default
 				}
 			}
 		}

@@ -26,6 +26,8 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - Approve the immutable stored request once or create a revocable standing approval
   for the same tool/configuration binding in its verified Amp thread or project.
   Never automatically retry an ambiguous dispatch.
+- Permit private tools only when each fresh Amp token attests a private,
+  non-multiplayer thread where no non-owner can influence the call.
 - Keep discovery local. Evaluate Jev only if it measurably improves tool selection
   and its data-handling requirements are acceptable.
 

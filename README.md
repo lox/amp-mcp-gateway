@@ -35,8 +35,11 @@ For example, propose a connection default and explicit tool exceptions:
 ```
 
 Use exact saved tool IDs. Omitted defaults and exceptions stay unchanged; policies
-are `allow`, `require_approval`, or `deny`. Tool exceptions also accept `inherit`
-to remove an exception. No tool-name-based safety classification is performed.
+are `allow`, `private`, `require_approval`, or `deny`. Tool exceptions also accept
+`inherit` to remove an exception. Private tools are discoverable and callable only
+when Amp's fresh per-call token verifies the owner's thread is private, multiplayer
+is inactive, and no non-owner can influence it. Their results are unavailable from
+shared or multiplayer contexts. No tool-name-based safety classification is performed.
 The tool returns one `review_url` and `expires_at` for up to 32 connections.
 Only the signed-in owner can apply or discard the entire batch. The review shows
 defaults, exceptions, and effective permissions before and after, including
@@ -104,9 +107,10 @@ Click **Refresh tools**, set a connection default—usually **Require approval**
 **Save changes**. Search finds tools across the connection, including those using
 the default. Each result shows its permission; **Default: Require approval**, for
 example, means it inherits the connection setting. Select multiple results to
-allow or block them together, or reset them to the connection default.
+allow, make private, or block them together, or reset them to the connection default.
 Nothing changes until you save. Refreshes keep unchanged permissions; changed
-allowed tools go back to approval and blocked tools stay blocked.
+private and blocked tools retain their restrictions, while other changed tools go
+back to approval.
 
 ![Reviewing DeepWiki tool permissions in the demo](docs/images/tool-review.png)
 

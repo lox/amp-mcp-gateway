@@ -28,27 +28,32 @@ type Store struct {
 
 // Operation is an immutable request with mutable execution state.
 type Operation struct {
-	ID             string          `json:"id"`
-	Tool           string          `json:"tool"`
-	Connection     string          `json:"connection"`
-	Account        string          `json:"account"`
-	Subject        string          `json:"subject"`
-	AmpSubject     string          `json:"amp_subject,omitempty"`
-	AmpUserID      string          `json:"amp_user_id,omitempty"`
-	AmpWorkspaceID string          `json:"amp_workspace_id,omitempty"`
-	AmpProjectID   string          `json:"amp_project_id,omitempty"`
-	AmpThreadID    string          `json:"amp_thread_id,omitempty"`
-	Model          string          `json:"model_reported,omitempty"`
-	Arguments      map[string]any  `json:"arguments"`
-	Digest         string          `json:"digest"`
-	LegacyDigest   string          `json:"-"`
-	Binding        string          `json:"binding"`
-	ApprovalScope  string          `json:"approval_scope,omitempty"`
-	ApprovalGrant  string          `json:"approval_grant,omitempty"`
-	Status         string          `json:"status"`
-	Created        int64           `json:"created"`
-	Expires        int64           `json:"expires"`
-	Result         json.RawMessage `json:"result,omitempty"`
+	ID                            string          `json:"id"`
+	Tool                          string          `json:"tool"`
+	Connection                    string          `json:"connection"`
+	Account                       string          `json:"account"`
+	Subject                       string          `json:"subject"`
+	AmpSubject                    string          `json:"amp_subject,omitempty"`
+	AmpUserID                     string          `json:"amp_user_id,omitempty"`
+	AmpWorkspaceID                string          `json:"amp_workspace_id,omitempty"`
+	AmpProjectID                  string          `json:"amp_project_id,omitempty"`
+	AmpThreadID                   string          `json:"amp_thread_id,omitempty"`
+	AmpThreadVisibility           string          `json:"amp_thread_visibility,omitempty"`
+	AmpThreadMultiplayer          bool            `json:"amp_thread_multiplayer,omitempty"`
+	AmpThreadNonOwnerCanInfluence bool            `json:"amp_thread_non_owner_can_influence,omitempty"`
+	AmpThreadContext              bool            `json:"amp_thread_context,omitempty"`
+	Model                         string          `json:"model_reported,omitempty"`
+	Arguments                     map[string]any  `json:"arguments"`
+	Digest                        string          `json:"digest"`
+	LegacyDigest                  string          `json:"-"`
+	Binding                       string          `json:"binding"`
+	ApprovalScope                 string          `json:"approval_scope,omitempty"`
+	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
+	Private                       bool            `json:"private,omitempty"`
+	Status                        string          `json:"status"`
+	Created                       int64           `json:"created"`
+	Expires                       int64           `json:"expires"`
+	Result                        json.RawMessage `json:"result,omitempty"`
 }
 
 // Event records a durable state transition without tool payloads or credentials.
