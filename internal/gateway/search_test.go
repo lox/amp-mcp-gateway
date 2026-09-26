@@ -94,11 +94,9 @@ func TestToolSearchBoundsAndSemantics(t *testing.T) {
 	}
 }
 
-func TestPrivateToolsAreOnlyDiscoveredInPrivateSoloThreads(t *testing.T) {
+func TestPrivateConnectionToolsAreOnlyDiscoveredInPrivateSoloThreads(t *testing.T) {
 	g, _, _ := fixture(t)
-	tool := g.tools["notes.write"]
-	tool.Policy = "private"
-	g.tools[tool.ID] = tool
+	g.cfg.PrivateConnections = map[string]bool{"notes": true}
 	no, yes := false, true
 	for _, tc := range []struct {
 		name       string

@@ -21,39 +21,51 @@ import (
 // catalogue becomes the source of truth after the first browser save. Identity
 // and deployment settings remain in the startup configuration.
 type catalogue struct {
-	Connections  []upstream.Connection
-	Tools        []Tool
-	ToolDefaults map[string]string `json:",omitempty"`
+	Connections        []upstream.Connection
+	Tools              []Tool
+	ToolDefaults       map[string]string `json:",omitempty"`
+	PrivateConnections map[string]bool   `json:",omitempty"`
 }
 
-// persistedCatalogue encodes private policies as deny plus markers so a rollback
-// to a binary without private-policy support fails closed instead of refusing to start.
+// persistedCatalogue encodes private connections as denials plus markers so a rollback
+// to a binary without private-connection support fails closed instead of refusing to start.
 type persistedCatalogue struct {
 	Connections         []upstream.Connection
 	Tools               []persistedTool
-	ToolDefaults        map[string]string `json:",omitempty"`
-	PrivateToolDefaults []string          `json:",omitempty"`
+	ToolDefaults        map[string]string            `json:",omitempty"`
+	PrivateConnections  []persistedPrivateConnection `json:"PrivateConnectionPolicies,omitempty"`
+	PrivateToolDefaults []string                     `json:",omitempty"` // Pre-release migration.
 }
 
 type persistedTool struct {
 	ID, Connection, Name, Description, Policy string
 	InputSchema                               map[string]any
-	Private                                   bool `json:",omitempty"`
+	PrivatePolicy                             *string `json:",omitempty"`
+	Private                                   bool    `json:",omitempty"` // Pre-release migration.
+}
+
+type persistedPrivateConnection struct {
+	ID, Default string
 }
 
 func (c catalogue) MarshalJSON() ([]byte, error) {
 	persisted := persistedCatalogue{Connections: c.Connections, ToolDefaults: maps.Clone(c.ToolDefaults)}
-	for id, policy := range persisted.ToolDefaults {
-		if policy == "private" {
+	if persisted.ToolDefaults == nil && len(c.PrivateConnections) > 0 {
+		persisted.ToolDefaults = map[string]string{}
+	}
+	for id, private := range c.PrivateConnections {
+		if private {
+			original := persisted.ToolDefaults[id]
 			persisted.ToolDefaults[id] = "deny"
-			persisted.PrivateToolDefaults = append(persisted.PrivateToolDefaults, id)
+			persisted.PrivateConnections = append(persisted.PrivateConnections, persistedPrivateConnection{ID: id, Default: original})
 		}
 	}
-	sort.Strings(persisted.PrivateToolDefaults)
+	sort.Slice(persisted.PrivateConnections, func(i, j int) bool { return persisted.PrivateConnections[i].ID < persisted.PrivateConnections[j].ID })
 	for _, tool := range c.Tools {
 		stored := persistedTool{ID: tool.ID, Connection: tool.Connection, Name: tool.Name, Description: tool.Description, Policy: tool.Policy, InputSchema: tool.InputSchema}
-		if stored.Policy == "private" {
-			stored.Policy, stored.Private = "deny", true
+		if c.PrivateConnections[tool.Connection] {
+			original := stored.Policy
+			stored.Policy, stored.PrivatePolicy = "deny", &original
 		}
 		persisted.Tools = append(persisted.Tools, stored)
 	}
@@ -66,17 +78,39 @@ func (c *catalogue) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	c.Connections, c.ToolDefaults = persisted.Connections, persisted.ToolDefaults
-	if len(persisted.PrivateToolDefaults) > 0 && c.ToolDefaults == nil {
+	if (len(persisted.PrivateConnections) > 0 || len(persisted.PrivateToolDefaults) > 0) && c.ToolDefaults == nil {
 		c.ToolDefaults = map[string]string{}
 	}
+	c.PrivateConnections = map[string]bool{}
+	for id, policy := range c.ToolDefaults {
+		if policy == "private" {
+			c.PrivateConnections[id] = true
+			c.ToolDefaults[id] = "allow"
+		}
+	}
+	for _, private := range persisted.PrivateConnections {
+		c.PrivateConnections[private.ID] = true
+		if private.Default == "" {
+			delete(c.ToolDefaults, private.ID)
+		} else {
+			c.ToolDefaults[private.ID] = private.Default
+		}
+	}
 	for _, id := range persisted.PrivateToolDefaults {
-		c.ToolDefaults[id] = "private"
+		c.PrivateConnections[id] = true
+		c.ToolDefaults[id] = "allow"
 	}
 	c.Tools = make([]Tool, 0, len(persisted.Tools))
 	for _, stored := range persisted.Tools {
 		policy := stored.Policy
-		if stored.Private {
-			policy = "private"
+		if stored.PrivatePolicy != nil {
+			policy = *stored.PrivatePolicy
+		} else if stored.Private {
+			policy = "allow"
+			c.PrivateConnections[stored.Connection] = true
+		} else if policy == "private" {
+			policy = "allow"
+			c.PrivateConnections[stored.Connection] = true
 		}
 		c.Tools = append(c.Tools, Tool{ID: stored.ID, Connection: stored.Connection, Name: stored.Name, Description: stored.Description, Policy: policy, InputSchema: stored.InputSchema})
 	}
@@ -94,17 +128,19 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		return err
 	}
 	cfg.Connections, cfg.Tools = c.Connections, c.Tools
-	cfg.ToolDefaults = c.ToolDefaults
+	cfg.ToolDefaults, cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	return nil
 }
 
 func (g *Gateway) catalogue() catalogue {
-	return catalogue{g.cfg.Connections, g.cfg.Tools, g.cfg.ToolDefaults}
+	return catalogue{g.cfg.Connections, g.cfg.Tools, g.cfg.ToolDefaults, g.cfg.PrivateConnections}
 }
 
 func validPolicy(policy string) bool {
-	return policy == "deny" || policy == "require_approval" || policy == "private" || policy == "allow"
+	return policy == "deny" || policy == "require_approval" || policy == "allow"
 }
+
+func (cfg Config) privateConnection(id string) bool { return cfg.PrivateConnections[id] }
 
 func (cfg Config) defaultPolicy(id string) string {
 	if policy := cfg.ToolDefaults[id]; policy != "" {
@@ -117,7 +153,7 @@ func (cfg Config) defaultPolicy(id string) string {
 func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, events ...store.Event) error {
 	next := g.cfg
 	next.Connections, next.Tools = c.Connections, c.Tools
-	next.ToolDefaults = c.ToolDefaults
+	next.ToolDefaults, next.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	manager, err := upstream.New(next.BaseURL, next.Connections, g.store)
 	if err != nil {
 		return errors.New("invalid connection configuration")
@@ -135,7 +171,7 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	}
 	m.Install(manager)
 	g.cfg.Connections, g.cfg.Tools = c.Connections, c.Tools
-	g.cfg.ToolDefaults = c.ToolDefaults
+	g.cfg.ToolDefaults, g.cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
 	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.
 	return nil
@@ -147,12 +183,14 @@ type toolDraft struct {
 	Tools      []Tool
 	Expires    time.Time
 	Default    string
+	Private    bool
 	Changes    map[string]string // Non-nil for discovery reviews, even without changes.
 	Removed    []string
 }
 
 func (draft toolDraft) edit(values url.Values) (toolDraft, error) {
 	draft.Default = values.Get("default_policy")
+	draft.Private = values.Has("private_connection")
 	if !validPolicy(draft.Default) {
 		return draft, errors.New("Choose a connection default.")
 	}
@@ -370,7 +408,7 @@ func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *ups
 			tools = append(tools, t)
 		}
 	}
-	ticket, err := g.newDraft(toolDraft{Connection: id, Tools: tools})
+	ticket, err := g.newDraft(toolDraft{Connection: id, Tools: tools, Private: g.cfg.privateConnection(id)})
 	g.mu.Unlock()
 	message := ""
 	if err != nil {
@@ -439,7 +477,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 		g.toolsPage(w, r, m, id, nil, "", "Configuration changed while fetching. Fetch again.", false)
 		return
 	}
-	draft := toolDraft{Connection: id, Tools: tools, Default: previous.Default, Changes: map[string]string{}}
+	draft := toolDraft{Connection: id, Tools: tools, Default: previous.Default, Private: previous.Private, Changes: map[string]string{}}
 	for i := range tools {
 		draft.Changes[tools[i].ID] = "New"
 		for _, old := range g.cfg.Tools {
@@ -451,8 +489,8 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				} else {
 					draft.Changes[old.ID] = "Changed"
 					tools[i].Policy = "require_approval"
-					if policy := g.tools[old.ID].Policy; policy == "deny" || policy == "private" {
-						tools[i].Policy = policy
+					if g.tools[old.ID].Policy == "deny" {
+						tools[i].Policy = "deny"
 					}
 				}
 			}
@@ -473,10 +511,8 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				tools[i].Policy = old.Policy
 			} else {
 				tools[i].Policy = "require_approval"
-				if old.Policy == "deny" || old.Policy == "private" {
-					tools[i].Policy = old.Policy
-				} else if old.Policy == "" && (previous.Default == "deny" || previous.Default == "private") {
-					tools[i].Policy = previous.Default
+				if old.Policy == "deny" || (old.Policy == "" && previous.Default == "deny") {
+					tools[i].Policy = "deny"
 				}
 			}
 		}
@@ -517,6 +553,15 @@ func (g *Gateway) saveTools(w http.ResponseWriter, r *http.Request, m *upstream.
 		next.ToolDefaults = map[string]string{}
 	}
 	next.ToolDefaults[id] = draft.Default
+	next.PrivateConnections = maps.Clone(next.PrivateConnections)
+	if next.PrivateConnections == nil {
+		next.PrivateConnections = map[string]bool{}
+	}
+	if draft.Private {
+		next.PrivateConnections[id] = true
+	} else {
+		delete(next.PrivateConnections, id)
+	}
 	next.Tools = nil
 	for _, t := range g.cfg.Tools {
 		if t.Connection != id {

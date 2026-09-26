@@ -15,6 +15,7 @@ import (
 
 type policyChange struct {
 	Connection string            `json:"connection"`
+	Private    *bool             `json:"private,omitempty"`
 	Default    string            `json:"default_policy,omitempty"`
 	Tools      map[string]string `json:"tools,omitempty"`
 }
@@ -62,7 +63,11 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		if !found || (change.Default != "" && !validPolicy(change.Default)) || len(change.Tools) > 1000 {
 			return policyResult{}, errors.New("unknown connection or invalid policies")
 		}
-		d := toolDraft{Connection: change.Connection, Default: g.cfg.defaultPolicy(change.Connection)}
+		d := toolDraft{Connection: change.Connection, Default: g.cfg.defaultPolicy(change.Connection), Private: g.cfg.privateConnection(change.Connection)}
+		if change.Private != nil {
+			changed = changed || d.Private != *change.Private
+			d.Private = *change.Private
+		}
 		if change.Default != "" {
 			changed = changed || d.Default != change.Default
 			d.Default = change.Default
@@ -127,8 +132,6 @@ func policyLabel(policy string) string {
 		return "Block"
 	case "require_approval":
 		return "Require approval"
-	case "private":
-		return "Private to you"
 	default:
 		return "Use default"
 	}
@@ -159,7 +162,7 @@ func (g *Gateway) reviewPolicies(w http.ResponseWriter, r *http.Request) {
 			}
 			rows = append(rows, map[string]string{"ID": t.ID, "Before": policyLabel(before.Policy), "After": policyLabel(t.Policy), "BeforeEffective": policyLabel(g.tools[t.ID].Policy), "AfterEffective": policyLabel(afterEffective)})
 		}
-		connections = append(connections, map[string]any{"ID": d.Connection, "Before": policyLabel(g.cfg.defaultPolicy(d.Connection)), "After": policyLabel(d.Default), "Rows": rows})
+		connections = append(connections, map[string]any{"ID": d.Connection, "Before": policyLabel(g.cfg.defaultPolicy(d.Connection)), "After": policyLabel(d.Default), "BeforePrivate": g.cfg.privateConnection(d.Connection), "AfterPrivate": d.Private, "Rows": rows})
 	}
 	g.render(w, map[string]any{"PolicyProposal": true, "Proposal": p, "Connections": connections, "Ticket": r.PathValue("ticket"), "Owner": g.cfg.OwnerSubject})
 }
@@ -188,8 +191,17 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 			next.ToolDefaults = map[string]string{}
 		}
 		next.Tools = append([]Tool(nil), next.Tools...)
+		next.PrivateConnections = maps.Clone(next.PrivateConnections)
+		if next.PrivateConnections == nil {
+			next.PrivateConnections = map[string]bool{}
+		}
 		for _, d := range p.Drafts {
 			next.ToolDefaults[d.Connection] = d.Default
+			if d.Private {
+				next.PrivateConnections[d.Connection] = true
+			} else {
+				delete(next.PrivateConnections, d.Connection)
+			}
 			for _, tool := range d.Tools {
 				for i := range next.Tools {
 					if next.Tools[i].ID == tool.ID {

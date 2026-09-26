@@ -161,11 +161,12 @@ func TestAmpStandingApprovalAppliesThroughGateway(t *testing.T) {
 	}
 }
 
-func TestPrivateToolRequiresPrivateSoloAmpThread(t *testing.T) {
+func TestPrivateConnectionRequiresPrivateSoloAmpThread(t *testing.T) {
 	g, s, b := fixture(t)
 	g.cfg.AmpUserID = "user-owner"
+	g.cfg.PrivateConnections = map[string]bool{"notes": true}
 	tool := g.tools["notes.write"]
-	tool.Policy = "private"
+	tool.Policy = "require_approval"
 	g.tools[tool.ID] = tool
 	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
 	base := ampIdentity{Subject: "workspace:workspace-one:project:project-one:user:user-owner:thread:" + thread, UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: thread, ThreadVisibility: "private"}
@@ -173,8 +174,11 @@ func TestPrivateToolRequiresPrivateSoloAmpThread(t *testing.T) {
 	base.ThreadMultiplayer, base.ThreadNonOwnerCanInfluence = &no, &no
 
 	o, err := g.submit(withAmpIdentity(t.Context(), base), input("private-call", "private value"))
-	if err != nil || o.Status != "ready" || !o.Private || !o.AmpThreadContext || o.AmpThreadVisibility != "private" {
+	if err != nil || o.Status != "pending" || !o.Private || !o.AmpThreadContext || o.AmpThreadVisibility != "private" {
 		t.Fatalf("private call: %+v, %v", o, err)
+	}
+	if err := s.Approve(t.Context(), o.ID, "owner", "thread"); err != nil {
+		t.Fatal(err)
 	}
 	runWorker(t, g)
 	completed := await(t, s, o.ID, "succeeded")

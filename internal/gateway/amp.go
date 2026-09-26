@@ -53,8 +53,8 @@ func (identity ampIdentity) hasThreadContext() bool {
 	}
 }
 
-func (identity ampIdentity) allows(policy string) bool {
-	return policy != "private" || identity.privateThread()
+func (identity ampIdentity) allows(private bool) bool {
+	return !private || identity.privateThread()
 }
 
 // AmpMCP authenticates each HTTP request using Amp's signed workload identity.

@@ -39,6 +39,7 @@ type Config struct {
 	Connections                                               []upstream.Connection
 	Tools                                                     []Tool
 	ToolDefaults                                              map[string]string `json:",omitempty"`
+	PrivateConnections                                        map[string]bool   `json:",omitempty"`
 }
 
 // Backend is the upstream transport boundary.
@@ -102,7 +103,7 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		}
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
-		g.bindings[t.ID] = digest([]any{t, connection, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
+		g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
 	}
 	return g, nil
 }
@@ -153,7 +154,7 @@ func (g *Gateway) MCP(token string) http.Handler {
 
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
-	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection default and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, private, require_approval, deny; tool exceptions also accept inherit. Private tools are available only in the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection privacy, default policy, and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict the whole connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
 	})
@@ -167,7 +168,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" || !identity.allows(t.Policy) {
+			if t.Policy == "deny" || !identity.allows(g.cfg.privateConnection(t.Connection)) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -219,7 +220,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	if !ok {
 		return store.Operation{}, errors.New("unknown tool")
 	}
-	if !identity.allows(t.Policy) {
+	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
 		return store.Operation{}, errors.New("unknown tool")
 	}
 	if c.Arguments == nil {
@@ -241,7 +242,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = conn.Account
 		}
 	}
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Private: t.Policy == "private", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
