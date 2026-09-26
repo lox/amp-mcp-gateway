@@ -79,7 +79,7 @@ func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	if len(restored.Connections) != 2 || restored.Connections[1].BearerToken != "private-bearer-canary" || !restored.Connections[1].PublicOnly {
 		t.Fatal("connection not restored")
 	}
-	for _, path := range []string{"/", "/connections/new-server/tools"} {
+	for _, path := range []string{"/connections", "/connections/new-server/tools", "/connections/new-server/settings"} {
 		w := formRequest(h, cookie, "GET", path, nil)
 		if w.Code != 200 || strings.Contains(w.Body.String(), "private-bearer-canary") {
 			t.Fatal("unsafe connection page")
@@ -555,7 +555,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Status unavailable"} {
 		t.Run(status, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"Connections": []map[string]any{
+			err := page.Execute(w, map[string]any{"Section": "connections", "Connections": []map[string]any{
 				{"ID": "oauth", "OAuth": true, "Health": upstream.Health{Status: status}},
 				{"ID": "public", "OAuth": false, "Health": upstream.Health{Status: "Not tested"}},
 			}})
@@ -579,7 +579,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, cookie := adminUI(t, g, m)
-	w := formRequest(h, cookie, "GET", "/", nil)
+	w := formRequest(h, cookie, "GET", "/connections", nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") {
 		t.Fatal("dashboard did not load credential status")
 	}

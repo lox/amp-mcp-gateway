@@ -140,6 +140,27 @@ func TestListOrderingAndLimit(t *testing.T) {
 	}
 }
 
+func TestListStatusFiltersBeforeLimitWithoutReadingPayload(t *testing.T) {
+	s, _, _ := testStore(t)
+	for i := range 102 {
+		o := operation(fmt.Sprintf("op-%03d", i), "denied")
+		o.Created = int64(i)
+		if i == 0 {
+			o.Status = "pending"
+		}
+		if _, err := s.Submit(t.Context(), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec("UPDATE operations SET payload=?", []byte("unreadable full payload")); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListStatus(t.Context(), "pending")
+	if err != nil || len(listed) != 1 || listed[0].ID != "op-000" || listed[0].Status != "pending" {
+		t.Fatalf("pending operation hidden by newer history: %v, %v", listed, err)
+	}
+}
+
 func TestLegacySummaryBackfill(t *testing.T) {
 	s, path, key := testStore(t)
 	o := operation("legacy", "running")

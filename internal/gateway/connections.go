@@ -271,8 +271,9 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 }
 
 // Return only presentation-safe connection fields; credentials never reach templates.
-func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.Manager, id string, tools []Tool, ticket, message string, saved bool) {
+func (g *Gateway) connectionView(id string) map[string]any {
 	g.mu.RLock()
+	defer g.mu.RUnlock()
 	var connection map[string]any
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
@@ -282,6 +283,23 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 			}
 		}
 	}
+	return connection
+}
+
+func (g *Gateway) connectionSettings(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
+	id := r.PathValue("id")
+	connection := g.connectionView(id)
+	if connection == nil {
+		http.NotFound(w, r)
+		return
+	}
+	connection["Health"] = m.Health(r.Context(), id)
+	g.render(w, map[string]any{"ConnectionSettings": true, "Connection": connection, "Owner": g.cfg.OwnerSubject})
+}
+
+func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.Manager, id string, tools []Tool, ticket, message string, saved bool) {
+	connection := g.connectionView(id)
+	g.mu.RLock()
 	draft := g.drafts[ticket]
 	g.mu.RUnlock()
 	if connection == nil {

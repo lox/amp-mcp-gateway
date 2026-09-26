@@ -207,5 +207,5 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 		return
 	}
 	delete(g.proposals, ticket)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/connections", http.StatusSeeOther)
 }
