@@ -230,7 +230,9 @@ you save a refresh; the form warns about this explicitly. **Private to you** too
 are hidden and blocked unless Amp's token verifies a private, non-multiplayer thread
 where no non-owner can influence the call. A fresh token enforces this on each
 discovery, submission and result lookup. A call already admitted before multiplayer
-is enabled may still finish; running calls are never automatically cancelled.
+is enabled may still finish; running calls are never automatically cancelled. The
+stored catalogue encodes private policies as safe denials for older binaries, so a
+rollback starts successfully with those tools blocked rather than weakening access.
 
 Fetching alone changes no live policies. Refresh keeps the default and exceptions
 you are editing, including if the fetch fails; changed definitions still trigger

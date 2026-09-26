@@ -45,6 +45,45 @@ func formRequest(h http.Handler, cookie *http.Cookie, method, path string, value
 	return w
 }
 
+func TestPrivatePoliciesPersistAsRollbackSafeDenies(t *testing.T) {
+	c := catalogue{
+		Connections:  []upstream.Connection{{ID: "notes", URL: "https://example.com/mcp", NoAuth: true}},
+		Tools:        []Tool{{ID: "notes.private", Connection: "notes", Name: "private", Policy: "private", InputSchema: map[string]any{"type": "object"}}, {ID: "notes.inherited", Connection: "notes", Name: "inherited", InputSchema: map[string]any{"type": "object"}}},
+		ToolDefaults: map[string]string{"notes": "private"},
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy struct {
+		Tools        []Tool
+		ToolDefaults map[string]string
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Tools[0].Policy != "deny" || legacy.ToolDefaults["notes"] != "deny" {
+		t.Fatalf("rollback would not fail closed: tools=%+v defaults=%+v", legacy.Tools, legacy.ToolDefaults)
+	}
+	for _, tool := range legacy.Tools {
+		if tool.Policy != "" && tool.Policy != "allow" && tool.Policy != "require_approval" && tool.Policy != "deny" {
+			t.Fatalf("rollback sees unsupported tool policy %q", tool.Policy)
+		}
+	}
+	for _, policy := range legacy.ToolDefaults {
+		if policy != "allow" && policy != "require_approval" && policy != "deny" {
+			t.Fatalf("rollback sees unsupported default policy %q", policy)
+		}
+	}
+	var restored catalogue
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Tools[0].Policy != "private" || restored.Tools[1].Policy != "" || restored.ToolDefaults["notes"] != "private" {
+		t.Fatalf("private policies not restored: tools=%+v defaults=%+v", restored.Tools, restored.ToolDefaults)
+	}
+}
+
 func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	g, s, _ := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)

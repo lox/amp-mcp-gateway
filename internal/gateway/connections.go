@@ -26,6 +26,63 @@ type catalogue struct {
 	ToolDefaults map[string]string `json:",omitempty"`
 }
 
+// persistedCatalogue encodes private policies as deny plus markers so a rollback
+// to a binary without private-policy support fails closed instead of refusing to start.
+type persistedCatalogue struct {
+	Connections         []upstream.Connection
+	Tools               []persistedTool
+	ToolDefaults        map[string]string `json:",omitempty"`
+	PrivateToolDefaults []string          `json:",omitempty"`
+}
+
+type persistedTool struct {
+	ID, Connection, Name, Description, Policy string
+	InputSchema                               map[string]any
+	Private                                   bool `json:",omitempty"`
+}
+
+func (c catalogue) MarshalJSON() ([]byte, error) {
+	persisted := persistedCatalogue{Connections: c.Connections, ToolDefaults: maps.Clone(c.ToolDefaults)}
+	for id, policy := range persisted.ToolDefaults {
+		if policy == "private" {
+			persisted.ToolDefaults[id] = "deny"
+			persisted.PrivateToolDefaults = append(persisted.PrivateToolDefaults, id)
+		}
+	}
+	sort.Strings(persisted.PrivateToolDefaults)
+	for _, tool := range c.Tools {
+		stored := persistedTool{ID: tool.ID, Connection: tool.Connection, Name: tool.Name, Description: tool.Description, Policy: tool.Policy, InputSchema: tool.InputSchema}
+		if stored.Policy == "private" {
+			stored.Policy, stored.Private = "deny", true
+		}
+		persisted.Tools = append(persisted.Tools, stored)
+	}
+	return json.Marshal(persisted)
+}
+
+func (c *catalogue) UnmarshalJSON(raw []byte) error {
+	var persisted persistedCatalogue
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		return err
+	}
+	c.Connections, c.ToolDefaults = persisted.Connections, persisted.ToolDefaults
+	if len(persisted.PrivateToolDefaults) > 0 && c.ToolDefaults == nil {
+		c.ToolDefaults = map[string]string{}
+	}
+	for _, id := range persisted.PrivateToolDefaults {
+		c.ToolDefaults[id] = "private"
+	}
+	c.Tools = make([]Tool, 0, len(persisted.Tools))
+	for _, stored := range persisted.Tools {
+		policy := stored.Policy
+		if stored.Private {
+			policy = "private"
+		}
+		c.Tools = append(c.Tools, Tool{ID: stored.ID, Connection: stored.Connection, Name: stored.Name, Description: stored.Description, Policy: policy, InputSchema: stored.InputSchema})
+	}
+	return nil
+}
+
 // LoadCatalogue restores browser-managed connections and policies before startup validation.
 func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	raw, err := s.LoadCatalogue(ctx)
