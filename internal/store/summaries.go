@@ -70,8 +70,14 @@ WHERE s.id IS NULL`
 
 // List returns the most recent metadata without reading arguments or results.
 func (s *Store) List(ctx context.Context) ([]OperationSummary, error) {
+	return s.ListStatus(ctx, "")
+}
+
+// ListStatus filters before limiting the list; an empty status includes all states.
+func (s *Store) ListStatus(ctx context.Context, status string) ([]OperationSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id,o.status,s.payload FROM operations o
-LEFT JOIN operation_summaries s ON s.id=o.id ORDER BY o.created DESC,o.id LIMIT 100`)
+LEFT JOIN operation_summaries s ON s.id=o.id WHERE (?='' OR o.status=?)
+ORDER BY o.created DESC,o.id LIMIT 100`, status, status)
 	if err != nil {
 		return nil, err
 	}
