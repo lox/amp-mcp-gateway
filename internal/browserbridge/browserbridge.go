@@ -37,8 +37,13 @@ type backend interface {
 	Call(context.Context, string, string, string, map[string]any) (*mcp.CallToolResult, error)
 }
 
-// Manager owns browser pairing state and active extension connections. Pairing
-// credentials deliberately live only for this process in the first slice.
+type pairingStore interface {
+	LoadBrowserPairings(context.Context) (map[string][]byte, error)
+	SaveBrowserPairing(context.Context, string, []byte) error
+	DeleteBrowserPairing(context.Context, string) error
+}
+
+// Manager owns persisted browser pairing state and active extension connections.
 type Manager struct {
 	// RoutingID is a non-secret account selector, set only before serving requests.
 	RoutingID string
@@ -46,6 +51,7 @@ type Manager struct {
 	AccountLink bool
 	fallback    backend
 	baseURL     string
+	store       pairingStore
 
 	mu              sync.Mutex
 	connections     map[string]upstream.Connection
@@ -62,6 +68,15 @@ type pairing struct {
 	tabTitle string
 	tabURL   string
 	paired   bool
+}
+
+type persistedPairing struct {
+	Hash     []byte `json:"hash"`
+	Created  int64  `json:"created"`
+	Target   string `json:"target,omitempty"`
+	TabTitle string `json:"tab_title,omitempty"`
+	TabURL   string `json:"tab_url,omitempty"`
+	Paired   bool   `json:"paired,omitempty"`
 }
 
 type client struct {
@@ -103,12 +118,16 @@ type beforeDispatchError struct{ message string }
 
 func (e *beforeDispatchError) Error() string { return e.message }
 
-// New creates a browser-aware backend. Non-browser connections are delegated
-// to fallback.
-func New(baseURL string, connections []upstream.Connection, fallback backend) (*Manager, error) {
+// New creates a browser-aware backend and restores persisted reconnect
+// authority. Non-browser connections are delegated to fallback.
+func New(ctx context.Context, baseURL string, connections []upstream.Connection, fallback backend, store pairingStore) (*Manager, error) {
+	if store == nil {
+		return nil, errors.New("browser pairing store is required")
+	}
 	m := &Manager{
 		fallback:        fallback,
 		baseURL:         strings.TrimRight(baseURL, "/"),
+		store:           store,
 		connections:     make(map[string]upstream.Connection),
 		pairings:        make(map[string]pairing),
 		clients:         make(map[string]*client),
@@ -124,7 +143,39 @@ func New(baseURL string, connections []upstream.Connection, fallback backend) (*
 		}
 		m.connections[c.ID] = c
 	}
+	stored, err := store.LoadBrowserPairings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load browser pairings: %w", err)
+	}
+	for id, raw := range stored {
+		if _, configured := m.connections[id]; !configured {
+			continue
+		}
+		p, err := decodePairing(raw)
+		if err != nil {
+			return nil, fmt.Errorf("load browser pairing %q: %w", id, err)
+		}
+		m.pairings[id] = p
+	}
 	return m, nil
+}
+
+func decodePairing(raw []byte) (pairing, error) {
+	var stored persistedPairing
+	if err := json.Unmarshal(raw, &stored); err != nil || len(stored.Hash) != sha256.Size || stored.Created <= 0 || (stored.Paired && stored.Target == "") {
+		return pairing{}, errors.New("invalid persisted pairing")
+	}
+	var hash [sha256.Size]byte
+	copy(hash[:], stored.Hash)
+	return pairing{hash: hash, created: time.Unix(stored.Created, 0), target: stored.Target, tabTitle: stored.TabTitle, tabURL: stored.TabURL, paired: stored.Paired}, nil
+}
+
+func (m *Manager) savePairing(ctx context.Context, id string, p pairing) error {
+	raw, err := json.Marshal(persistedPairing{Hash: p.hash[:], Created: p.created.Unix(), Target: p.target, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: p.paired})
+	if err != nil {
+		return err
+	}
+	return m.store.SaveBrowserPairing(ctx, id, raw)
 }
 
 // InstallBrowser publishes a browser connection after its catalogue has been persisted.
@@ -276,7 +327,12 @@ func socketRouter(selectManager func(string) *Manager, unauthenticated chan stru
 			ws.Close()
 			return
 		}
-		connection, binding, reconnect, ok := m.accept(hello)
+		connection, binding, reconnect, ok, err := m.accept(r.Context(), hello)
+		if err != nil {
+			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "pairing unavailable"), time.Now().Add(time.Second))
+			ws.Close()
+			return
+		}
 		if !ok {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing rejected"), time.Now().Add(time.Second))
 			ws.Close()
@@ -295,7 +351,7 @@ func socketRouter(selectManager func(string) *Manager, unauthenticated chan stru
 	})
 }
 
-func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
+func (m *Manager) accept(ctx context.Context, hello wireMessage) (string, string, string, bool, error) {
 	hash := sha256.Sum256([]byte(hello.PairingCode))
 	targetIdentity, _ := json.Marshal([]any{hello.InstallID, hello.ShareID, hello.TabID})
 	target := fmt.Sprintf("%x", sha256.Sum256(targetIdentity))
@@ -304,6 +360,9 @@ func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 	defer m.mu.Unlock()
 	for id, p := range m.pairings {
 		if now.Sub(p.created) > pairingTTL && !p.paired {
+			if err := m.store.DeleteBrowserPairing(ctx, id); err != nil {
+				return "", "", "", false, err
+			}
 			delete(m.pairings, id)
 			continue
 		}
@@ -311,14 +370,14 @@ func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 			continue
 		}
 		if p.paired && p.target != target {
-			return "", "", "", false
+			return "", "", "", false, nil
 		}
 		reconnect := hello.PairingCode
 		if !p.paired {
 			var err error
 			reconnect, err = randomString(32)
 			if err != nil {
-				return "", "", "", false
+				return "", "", "", false, err
 			}
 			if m.RoutingID != "" {
 				reconnect = m.RoutingID + "." + reconnect
@@ -329,10 +388,13 @@ func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 		p.target = target
 		p.tabTitle = truncate(hello.TabTitle, 200)
 		p.tabURL = truncate(hello.TabURL, 2000)
+		if err := m.savePairing(ctx, id, p); err != nil {
+			return "", "", "", false, err
+		}
 		m.pairings[id] = p
-		return id, m.binding(id), reconnect, true
+		return id, m.binding(id), reconnect, true, nil
 	}
-	return "", "", "", false
+	return "", "", "", false, nil
 }
 
 func (m *Manager) install(c *client) {
@@ -542,10 +604,16 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 		code = m.RoutingID + "." + code
 	}
 	hash := sha256.Sum256([]byte(code))
+	p := pairing{hash: hash, created: m.now()}
 	m.mu.Lock()
+	if err := m.savePairing(r.Context(), connection, p); err != nil {
+		m.mu.Unlock()
+		http.Error(w, "pairing unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	old := m.clients[connection]
 	delete(m.clients, connection)
-	m.pairings[connection] = pairing{hash: hash, created: m.now()}
+	m.pairings[connection] = p
 	m.mu.Unlock()
 	if old != nil {
 		old.revoke()
@@ -561,6 +629,11 @@ func (m *Manager) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	connection := r.PostForm.Get("connection")
 	m.mu.Lock()
+	if err := m.store.DeleteBrowserPairing(r.Context(), connection); err != nil {
+		m.mu.Unlock()
+		http.Error(w, "revocation unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	old := m.clients[connection]
 	delete(m.clients, connection)
 	delete(m.pairings, connection)

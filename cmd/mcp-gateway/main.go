@@ -236,7 +236,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err != nil {
 		return nil, err
 	}
-	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
+	browser, err := browserbridge.New(ctx, cfg.BaseURL, cfg.Connections, m, s)
 	if err != nil {
 		return nil, err
 	}

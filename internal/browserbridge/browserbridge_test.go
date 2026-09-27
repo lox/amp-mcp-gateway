@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,13 +27,54 @@ func (b *fallbackBackend) Call(_ context.Context, connection, tool, _ string, _ 
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool}}}, nil
 }
 
+type memoryPairingStore struct {
+	mu      sync.Mutex
+	data    map[string][]byte
+	saveErr error
+}
+
+func newMemoryPairingStore() *memoryPairingStore {
+	return &memoryPairingStore{data: make(map[string][]byte)}
+}
+
+func (s *memoryPairingStore) LoadBrowserPairings(context.Context) (map[string][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make(map[string][]byte, len(s.data))
+	for id, raw := range s.data {
+		result[id] = append([]byte(nil), raw...)
+	}
+	return result, nil
+}
+
+func (s *memoryPairingStore) SaveBrowserPairing(_ context.Context, id string, raw []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.data[id] = append([]byte(nil), raw...)
+	return nil
+}
+
+func (s *memoryPairingStore) DeleteBrowserPairing(_ context.Context, id string) error {
+	s.mu.Lock()
+	delete(s.data, id)
+	s.mu.Unlock()
+	return nil
+}
+
 func browserManager(t *testing.T) (*Manager, *fallbackBackend) {
+	return browserManagerWithStore(t, newMemoryPairingStore())
+}
+
+func browserManagerWithStore(t *testing.T, store pairingStore) (*Manager, *fallbackBackend) {
 	t.Helper()
 	fallback := &fallbackBackend{}
-	m, err := New("https://gateway.example", []upstream.Connection{
+	m, err := New(t.Context(), "https://gateway.example", []upstream.Connection{
 		{ID: "browser", Account: "Selected tab", Browser: true},
 		{ID: "remote", URL: "https://remote.example/mcp", Account: "Remote", TokenEnv: "TOKEN"},
-	}, fallback)
+	}, fallback, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,17 +229,17 @@ func TestUsedPairingCodeCannotReplaceTarget(t *testing.T) {
 	m, _ := browserManager(t)
 	hash := sha256.Sum256([]byte("pairing-secret"))
 	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
-	_, _, reconnect, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42})
-	if !ok || reconnect == "" || reconnect == "pairing-secret" {
+	_, _, reconnect, ok, err := m.accept(t.Context(), wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42})
+	if err != nil || !ok || reconnect == "" || reconnect == "pairing-secret" {
 		t.Fatal("initial pairing rejected")
 	}
-	if _, _, _, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42}); ok {
+	if _, _, _, ok, _ := m.accept(t.Context(), wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42}); ok {
 		t.Fatal("initial pairing code was not consumed")
 	}
-	if _, _, _, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install-two", ShareID: "share-two", TabID: 84}); ok {
+	if _, _, _, ok, _ := m.accept(t.Context(), wireMessage{PairingCode: reconnect, InstallID: "install-two", ShareID: "share-two", TabID: 84}); ok {
 		t.Fatal("used pairing code replaced the paired target")
 	}
-	if _, _, next, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install-one", ShareID: "share-one", TabID: 42}); !ok || next != reconnect {
+	if _, _, next, ok, err := m.accept(t.Context(), wireMessage{PairingCode: reconnect, InstallID: "install-one", ShareID: "share-one", TabID: 42}); err != nil || !ok || next != reconnect {
 		t.Fatal("target-bound reconnect credential was rejected")
 	}
 }
@@ -206,11 +248,11 @@ func TestReconnectTargetUsesUnambiguousIdentityEncoding(t *testing.T) {
 	m, _ := browserManager(t)
 	hash := sha256.Sum256([]byte("pairing-secret"))
 	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
-	_, _, reconnect, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install:one", ShareID: "share", TabID: 42})
-	if !ok {
+	_, _, reconnect, ok, err := m.accept(t.Context(), wireMessage{PairingCode: "pairing-secret", InstallID: "install:one", ShareID: "share", TabID: 42})
+	if err != nil || !ok {
 		t.Fatal("initial pairing rejected")
 	}
-	if _, _, _, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install", ShareID: "one:share", TabID: 42}); ok {
+	if _, _, _, ok, _ := m.accept(t.Context(), wireMessage{PairingCode: reconnect, InstallID: "install", ShareID: "one:share", TabID: 42}); ok {
 		t.Fatal("distinct install and share IDs produced the same reconnect target")
 	}
 }
@@ -270,6 +312,30 @@ func TestSocketRouterRejectsPrefixTamperingAndReconnectKeepsPrefix(t *testing.T)
 		t.Fatalf("routed reconnect = %#v, %v", next, err)
 	}
 	reconnected.Close()
+}
+
+func TestReconnectAuthoritySurvivesManagerRestart(t *testing.T) {
+	pairingStore := newMemoryPairingStore()
+	first, _ := browserManagerWithStore(t, pairingStore)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	first.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	_, binding, reconnect, ok, err := first.accept(t.Context(), wireMessage{PairingCode: "pairing-secret", InstallID: "install-one", ShareID: "share-one", TabID: 42, TabTitle: "Persisted tab", TabURL: "https://example.com"})
+	if err != nil || !ok {
+		t.Fatal("initial pairing rejected")
+	}
+
+	restarted, _ := browserManagerWithStore(t, pairingStore)
+	if got := restarted.Binding("browser"); got != binding {
+		t.Fatalf("binding changed across restart: got %q want %q", got, binding)
+	}
+	_, restartedBinding, next, ok, err := restarted.accept(t.Context(), wireMessage{PairingCode: reconnect, InstallID: "install-one", ShareID: "share-one", TabID: 42, TabTitle: "Persisted tab", TabURL: "https://example.com"})
+	if err != nil || !ok || restartedBinding != binding || next != reconnect {
+		t.Fatalf("reconnect after restart rejected: binding=%q reconnect=%q ok=%v", restartedBinding, next, ok)
+	}
+	statuses := restarted.statuses()
+	if len(statuses) != 1 || !statuses[0].Paired || statuses[0].Connected || statuses[0].TabTitle != "Persisted tab" {
+		t.Fatalf("restored status = %#v", statuses)
+	}
 }
 
 func TestReceivedResultWinsOverImmediateClose(t *testing.T) {
@@ -388,6 +454,33 @@ func TestSocketRejectsOversizedHello(t *testing.T) {
 	}
 }
 
+func TestPairingPersistenceFailureRemainsRetryable(t *testing.T) {
+	store := newMemoryPairingStore()
+	m, _ := browserManagerWithStore(t, store)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	store.saveErr = errors.New("database unavailable")
+	server := httptest.NewServer(m.Socket())
+	defer server.Close()
+	header := http.Header{"Origin": []string{"chrome-extension://extension-id"}}
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := ws.WriteJSON(wireMessage{Type: "hello", PairingCode: "pairing-secret", InstallID: "install", ShareID: "share", TabID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ws.ReadMessage()
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.CloseInternalServerErr {
+		t.Fatalf("persistence failure close = %v, want retryable internal error", err)
+	}
+	if p := m.pairings["browser"]; p.paired || p.hash != hash {
+		t.Fatal("persistence failure consumed pairing authority")
+	}
+}
+
 func TestRevokeSendsPolicyClose(t *testing.T) {
 	m, _ := browserManager(t)
 	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
@@ -462,7 +555,7 @@ func TestPairingCodeRenderedByUIConnectsExtension(t *testing.T) {
 
 func TestUIEnablesChromeBeforePairing(t *testing.T) {
 	fallback := &fallbackBackend{}
-	m, err := New("https://gateway.example", nil, fallback)
+	m, err := New(t.Context(), "https://gateway.example", nil, fallback, newMemoryPairingStore())
 	if err != nil {
 		t.Fatal(err)
 	}
