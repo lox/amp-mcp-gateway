@@ -60,19 +60,26 @@ func (identity ampIdentity) allows(private bool) bool {
 // AmpMCP authenticates each HTTP request using Amp's signed workload identity.
 // All threads created by the configured Amp user share this owner's authority.
 func (g *Gateway) AmpMCP(ctx context.Context) (http.Handler, error) {
+	mcpHandler, _, err := g.AmpHandlers(ctx)
+	return mcpHandler, err
+}
+
+// AmpHandlers authenticates MCP and credential-redemption requests with one verifier.
+func (g *Gateway) AmpHandlers(ctx context.Context) (http.Handler, http.Handler, error) {
 	if g.cfg.AmpUserID == "" {
-		return nil, errors.New("AmpUserID is required for workload authentication")
+		return nil, nil, errors.New("AmpUserID is required for workload authentication")
 	}
 	audience, err := ampAudience(g.cfg.BaseURL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
 	provider, err := oidc.NewProvider(ctx, ampIssuer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return g.ampMCP(provider.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{"RS256"}})), nil
+	verifier := provider.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{"RS256"}})
+	return g.ampAuthenticated(verifier, g.mcpHandler(), false), g.ampAuthenticated(verifier, http.HandlerFunc(g.redeemLease), true), nil
 }
 
 func ampAudience(raw string) (string, error) {
@@ -114,7 +121,10 @@ func ampAudience(raw string) (string, error) {
 }
 
 func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
-	next := g.mcpHandler()
+	return g.ampAuthenticated(verifier, g.mcpHandler(), false)
+}
+
+func (g *Gateway) ampAuthenticated(verifier *oidc.IDTokenVerifier, next http.Handler, allowExchanged bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if ok && len(raw) <= 16384 {
@@ -125,7 +135,8 @@ func (g *Gateway) ampMCP(verifier *oidc.IDTokenVerifier) http.Handler {
 			if err == nil && token.Subject != "" && token.Claims(&identity) == nil &&
 				identity.Subject == token.Subject &&
 				identity.UserID != "" && identity.UserID == g.cfg.AmpUserID &&
-				identity.TokenUse == "mcp" && ampThreadID.MatchString(identity.ThreadID) {
+				(identity.TokenUse == "mcp" || allowExchanged && identity.TokenUse == "exchanged") &&
+				ampThreadID.MatchString(identity.ThreadID) {
 				next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))
 				return
 			}

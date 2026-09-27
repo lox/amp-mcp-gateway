@@ -46,7 +46,7 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		return policyResult{}, errors.New("verified Amp identity required")
 	}
 	if len(in.Changes) == 0 || len(in.Changes) > 32 {
-		return policyResult{}, errors.New("supply 1–32 connection changes")
+		return policyResult{}, errors.New("supply 1–32 provider changes")
 	}
 	p := policyProposal{Revision: digest(g.catalogue()), Expires: time.Now().Add(10 * time.Minute), Identity: identity}
 	seen := map[string]bool{}
@@ -60,8 +60,11 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		for _, c := range g.cfg.Connections {
 			found = found || c.ID == change.Connection
 		}
+		for _, integration := range g.cfg.Integrations {
+			found = found || integration.ID == change.Connection
+		}
 		if !found || (change.Default != "" && !validPolicy(change.Default)) || len(change.Tools) > 1000 {
-			return policyResult{}, errors.New("unknown connection or invalid policies")
+			return policyResult{}, errors.New("unknown provider or invalid policies")
 		}
 		if change.Private != nil && *change.Private && g.cfg.AmpUserID == "" {
 			return policyResult{}, errors.New("private connections require Amp workload identity")

@@ -18,6 +18,8 @@ func TestFocusedPages(t *testing.T) {
 	for _, tc := range []struct{ path, want, absent string }{
 		{"/operations", "Nothing needs your approval", "Add MCP"},
 		{"/operations?view=all", "No operations yet", "Add MCP"},
+		{"/integrations", "Fly.io", "Nothing needs your approval"},
+		{"/integrations/fly", "Connect Fly.io", "Nothing needs your approval"},
 		{"/connections", "Add MCP", "Nothing needs your approval"},
 		{"/integrations", "Set up Chrome", "Add MCP"},
 		{"/connections/notes/settings", "Connection settings", "Default permission for tools"},

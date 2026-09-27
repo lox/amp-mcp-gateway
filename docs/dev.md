@@ -289,18 +289,76 @@ refresh or drift detection; upstream behavior can still change between calls.
 Editing endpoints, rotating pasted tokens, and removing connections in the UI
 are follow-up work.
 
+## Fly.io integration
+
+Open **Integrations → Fly.io**. Create the narrowest parent token that supports the
+work. Prefer one app over an organization and set an explicit expiry:
+
+```sh
+fly tokens create deploy -a APP --name amp-mcp-gateway --expiry 720h
+```
+
+Paste the complete `FlyV1 ...` value into the authenticated browser form. The
+gateway validates its macaroon structure but cannot verify Fly's signature,
+revocation state or account identity without using it. The parent token is stored
+inside the encrypted catalogue and is never returned to an MCP caller.
+
+Saving publishes `fly.request_token`. Its arguments are:
+
+```json
+{"duration_seconds":600,"purpose":"deploy the reviewed build"}
+```
+
+Duration must be 60–900 seconds. The configured policy can allow, require approval,
+or block requests. Thread and project standing approvals work like other governed
+tools; they authorize future schema-valid requests, so the hard 15-minute maximum
+still applies.
+
+On success, poll `get_operation` as usual. Its result contains a one-time HTTPS
+`redemption_url`, the gateway's `workload_identity_audience`, a five-minute redemption
+deadline and the requested token lifetime. Amp attaches the remote-MCP identity itself;
+it is not exposed to the shell. Mint a second short-lived token for the same thread and
+audience, then capture the Fly token without printing either credential:
+
+```sh
+WORKLOAD_IDENTITY_AUDIENCE='<workload_identity_audience from get_operation>'
+REDEMPTION_URL='<redemption_url from get_operation>'
+AMP_ID_TOKEN="$(
+  amp orb id-token --audience "$WORKLOAD_IDENTITY_AUDIENCE"
+)"
+FLY_ACCESS_TOKEN="$(
+  curl --silent --show-error --fail \
+    --request POST \
+    --header "Authorization: Bearer $AMP_ID_TOKEN" \
+    "$REDEMPTION_URL"
+)"
+unset AMP_ID_TOKEN
+FLY_ACCESS_TOKEN="$FLY_ACCESS_TOKEN" fly status
+unset FLY_ACCESS_TOKEN
+```
+
+The URL is bound to the requesting Amp user, workspace, project and thread, and can
+be consumed once. The Fly token's validity starts at redemption, retains all parent
+caveats, and cannot be individually listed or revoked. Revoking the parent invalidates
+its derived tokens. Replacing or removing the integration invalidates unredeemed URLs,
+denies queued calls and revokes standing approvals. The short-lived token can be
+reused until expiry, and the gateway does not audit the subsequent Fly operations.
+An agent with arbitrary shell access can deliberately print it; the shell pattern
+prevents accidental disclosure, not a malicious caller after approval.
+
 ### Saved configuration and rollout
 
-The first browser save copies the current connections and tools into encrypted
-SQLite storage. After that, the saved catalogue replaces `Connections`, `Tools`
-and `ToolDefaults` from the startup JSON, including after a deploy or restart.
+The first browser save copies the current connections, integrations and tools into
+encrypted SQLite storage. After that, the saved catalogue replaces `Connections`,
+`Integrations`, `Tools` and `ToolDefaults` from the startup JSON, including after a
+deploy or restart.
 Identity, listen and
 deployment settings still come from the file/environment. Editing those JSON
 fields will no longer change the running catalogue. Defaults are stored separately
 from upstream credentials, so changing them does not discard OAuth grants.
 An empty tool `Policy` means inherit; explicit policies remain exceptions.
-Protect and back up the database **and its encryption key**; this includes pasted bearer tokens and OAuth
-client secrets as well as grants.
+Protect and back up the database **and its encryption key**; this includes pasted
+bearer tokens, native integration credentials and OAuth client secrets as well as grants.
 
 Adding a connection or saving policies atomically denies **all** pending/ready
 operations, recording `catalogue-changed` transitions. Running operations block

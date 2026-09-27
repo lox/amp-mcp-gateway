@@ -22,6 +22,7 @@ import (
 // and deployment settings remain in the startup configuration.
 type catalogue struct {
 	Connections        []upstream.Connection
+	Integrations       []Integration `json:",omitempty"`
 	Tools              []Tool
 	ToolDefaults       map[string]string `json:",omitempty"`
 	PrivateConnections map[string]bool   `json:",omitempty"`
@@ -31,6 +32,7 @@ type catalogue struct {
 // to a binary without private-connection support fails closed instead of refusing to start.
 type persistedCatalogue struct {
 	Connections         []upstream.Connection
+	Integrations        []Integration `json:",omitempty"`
 	Tools               []persistedTool
 	ToolDefaults        map[string]string            `json:",omitempty"`
 	PrivateConnections  []persistedPrivateConnection `json:"PrivateConnectionPolicies,omitempty"`
@@ -49,7 +51,7 @@ type persistedPrivateConnection struct {
 }
 
 func (c catalogue) MarshalJSON() ([]byte, error) {
-	persisted := persistedCatalogue{Connections: c.Connections, ToolDefaults: maps.Clone(c.ToolDefaults)}
+	persisted := persistedCatalogue{Connections: c.Connections, Integrations: c.Integrations, ToolDefaults: maps.Clone(c.ToolDefaults)}
 	if persisted.ToolDefaults == nil && len(c.PrivateConnections) > 0 {
 		persisted.ToolDefaults = map[string]string{}
 	}
@@ -77,7 +79,7 @@ func (c *catalogue) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &persisted); err != nil {
 		return err
 	}
-	c.Connections, c.ToolDefaults = persisted.Connections, persisted.ToolDefaults
+	c.Connections, c.Integrations, c.ToolDefaults = persisted.Connections, persisted.Integrations, persisted.ToolDefaults
 	if (len(persisted.PrivateConnections) > 0 || len(persisted.PrivateToolDefaults) > 0) && c.ToolDefaults == nil {
 		c.ToolDefaults = map[string]string{}
 	}
@@ -150,13 +152,13 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 			}
 		}
 	}
-	cfg.Connections, cfg.Tools = c.Connections, c.Tools
+	cfg.Connections, cfg.Integrations, cfg.Tools = c.Connections, c.Integrations, c.Tools
 	cfg.ToolDefaults, cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	return nil
 }
 
 func (g *Gateway) catalogue() catalogue {
-	return catalogue{g.cfg.Connections, g.cfg.Tools, g.cfg.ToolDefaults, g.cfg.PrivateConnections}
+	return catalogue{g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools, g.cfg.ToolDefaults, g.cfg.PrivateConnections}
 }
 
 func validPolicy(policy string) bool {
@@ -175,7 +177,7 @@ func (cfg Config) defaultPolicy(id string) string {
 // Caller holds g.mu. Validate before persistence; publish only after commit.
 func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, events ...store.Event) error {
 	next := g.cfg
-	next.Connections, next.Tools = c.Connections, c.Tools
+	next.Connections, next.Integrations, next.Tools = c.Connections, c.Integrations, c.Tools
 	next.ToolDefaults, next.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	manager, err := upstream.New(next.BaseURL, next.Connections, g.store)
 	if err != nil {
@@ -193,7 +195,7 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
 	m.Install(manager)
-	g.cfg.Connections, g.cfg.Tools = c.Connections, c.Tools
+	g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools = c.Connections, c.Integrations, c.Tools
 	g.cfg.ToolDefaults, g.cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
 	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.

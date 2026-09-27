@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,6 +38,7 @@ type Config struct {
 	Listen, BaseURL, Database, OwnerSubject, Issuer, ClientID string
 	AmpUserID, HostedDomain                                   string
 	Connections                                               []upstream.Connection
+	Integrations                                              []Integration `json:",omitempty"`
 	Tools                                                     []Tool
 	ToolDefaults                                              map[string]string `json:",omitempty"`
 	PrivateConnections                                        map[string]bool   `json:",omitempty"`
@@ -64,6 +66,24 @@ type Gateway struct {
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	integrations := make(map[string]Integration, len(cfg.Integrations))
+	for _, integration := range cfg.Integrations {
+		if integration.ID != flyIntegrationID || integration.Provider != "fly" {
+			return nil, errors.New("unsupported integration configuration")
+		}
+		if _, exists := integrations[integration.ID]; exists {
+			return nil, errors.New("duplicate integration ID")
+		}
+		for _, connection := range cfg.Connections {
+			if connection.ID == integration.ID {
+				return nil, errors.New("connection and integration IDs must be unique")
+			}
+		}
+		if err := fly.ValidateToken(integration.Credential); err != nil {
+			return nil, errors.New("invalid Fly.io integration credential")
+		}
+		integrations[integration.ID] = integration
+	}
 	if cfg.AmpUserID == "" {
 		for _, private := range cfg.PrivateConnections {
 			if private {
@@ -96,8 +116,12 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				break
 			}
 		}
-		if connection == nil {
+		integration, native := integrations[t.Connection]
+		if connection == nil && !native {
 			return nil, fmt.Errorf("unknown connection for %s", t.ID)
+		}
+		if native && (t.ID != flyIntegrationID+"."+flyRequestToken || t.Name != flyRequestToken) {
+			return nil, errors.New("invalid Fly.io integration tool")
 		}
 		compiler := jsonschema.NewCompiler()
 		// Upstream schemas are untrusted: only references within this document are allowed.
@@ -111,7 +135,11 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		}
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
-		g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
+		if native {
+			g.bindings[t.ID] = digest([]any{t, integration, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain})
+		} else {
+			g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
+		}
 	}
 	return g, nil
 }
@@ -223,7 +251,7 @@ func (g *Gateway) MCP(token string) http.Handler {
 
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
-	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection privacy, default policy, and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict the whole connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of provider privacy, default policy, and tool exception changes for human browser review. Providers include remote MCP connections and native integrations. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict a remote connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
 	})
@@ -312,6 +340,11 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = conn.Account
 		}
 	}
+	for _, integration := range g.cfg.Integrations {
+		if integration.ID == t.Connection {
+			account = integration.Account
+		}
+	}
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
@@ -371,9 +404,12 @@ func (g *Gateway) Run(ctx context.Context) error {
 			t, ok := g.tools[o.Tool]
 			expectedBinding := ""
 			valid := false
-			if ok && t.Policy != "deny" {
+			integration, native := g.integration(t.Connection)
+			if ok && t.Policy != "deny" && !native {
 				expectedBinding = g.backend.Binding(t.Connection)
 				valid = g.bindingWith(t, expectedBinding) == o.Binding
+			} else if ok && t.Policy != "deny" {
+				valid = g.bindingWith(t, "") == o.Binding
 			}
 			g.mu.RUnlock()
 			if !valid {
@@ -383,7 +419,13 @@ func (g *Gateway) Run(ctx context.Context) error {
 				continue
 			}
 			callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-			result, callErr := g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
+			var result *mcp.CallToolResult
+			var callErr error
+			if native {
+				result, callErr = g.callIntegration(operationContext{Context: callCtx, Operation: o}, integration, t.Name, o.Arguments)
+			} else {
+				result, callErr = g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
+			}
 			cancel()
 			status := "succeeded"
 			var raw json.RawMessage
@@ -422,6 +464,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	m.Register(mux)
 	g.registerConnections(mux, m)
+	g.registerIntegrations(mux, m)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/operations", http.StatusSeeOther) })
 	for _, path := range []string{"/operations", "/connections", "/integrations", "/approval-grants", "/audit"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
@@ -497,6 +540,11 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 			c["Health"] = m.Health(r.Context(), c["ID"].(string))
 		}
 		data["Connections"] = connections
+	case "/integrations":
+		g.mu.RLock()
+		_, configured := g.integration(flyIntegrationID)
+		g.mu.RUnlock()
+		data["FlyConfigured"] = configured
 	}
 	if err != nil {
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
