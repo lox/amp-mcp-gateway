@@ -128,9 +128,14 @@ func (g *Gateway) saveFlyIntegration(w http.ResponseWriter, r *http.Request, m *
 
 func (g *Gateway) removeFlyIntegration(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
 	g.mu.Lock()
+	if _, configured := g.integration(flyIntegrationID); !configured {
+		g.mu.Unlock()
+		http.Error(w, "Fly.io integration is no longer configured", http.StatusConflict)
+		return
+	}
 	next := g.catalogue()
 	next.Integrations = slices.DeleteFunc(next.Integrations, func(i Integration) bool { return i.ID == flyIntegrationID })
-	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.Connection == flyIntegrationID })
+	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.ID == flyIntegrationID+"."+flyRequestToken })
 	err := g.saveCatalogue(r.Context(), next, m, store.Event{Kind: "integration-removed", Actor: browserActor(r)})
 	g.mu.Unlock()
 	if err != nil {
@@ -172,6 +177,9 @@ func (g *Gateway) callIntegration(ctx operationContext, integration Integration,
 		Expires: now.Add(leaseClaimTTL).Unix(),
 	}
 	if err := g.store.CreateCredentialLease(ctx, lease); err != nil {
+		if errors.Is(err, store.ErrCredentialLeaseCapacity) {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Too many unredeemed Fly.io token URLs. Redeem one or wait for it to expire, then submit a new request."}}}, nil
+		}
 		return nil, err
 	}
 	redemptionURL := strings.TrimRight(g.cfg.BaseURL, "/") + "/leases/" + lease.ID

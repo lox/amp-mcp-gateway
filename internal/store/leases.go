@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// ErrCredentialLeaseCapacity means no credential was issued and the caller may
+// retry with a new operation after an outstanding lease is redeemed or expires.
+var ErrCredentialLeaseCapacity = errors.New("too many unredeemed credential leases")
+
 // CredentialLease holds an approved right to derive a credential until one
 // authenticated redemption. The parent credential remains in the catalogue.
 type CredentialLease struct {
@@ -45,7 +49,7 @@ func (s *Store) CreateCredentialLease(ctx context.Context, lease CredentialLease
 		return err
 	}
 	if ready >= 32 {
-		return errors.New("too many unredeemed credential leases")
+		return ErrCredentialLeaseCapacity
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO credential_leases(id,expires,payload) VALUES(?,?,?)", lease.ID, lease.Expires, s.seal("credential-lease:"+lease.ID, raw)); err != nil {
 		return err

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	flytoken "ampcode.com/lox/amp-mcp-gateway/internal/fly"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/superfly/macaroon"
 	"github.com/superfly/macaroon/flyio"
@@ -205,5 +207,59 @@ func TestFlyPolicyCanUseAgentProposalFlow(t *testing.T) {
 	}
 	if g.tools["fly.request_token"].Policy != "deny" {
 		t.Fatal("Fly policy proposal was not applied")
+	}
+}
+
+func TestStaleFlyRemovalDoesNotDeleteRemoteConnectionTools(t *testing.T) {
+	g, s, b := fixture(t)
+	g.cfg.Connections = append(g.cfg.Connections, upstream.Connection{ID: flyIntegrationID, URL: "http://localhost/fly", Account: "Remote Fly MCP", NoAuth: true})
+	g.cfg.Tools = append(g.cfg.Tools, Tool{ID: "fly.remote", Connection: flyIntegrationID, Name: "remote", Policy: "allow", InputSchema: map[string]any{"type": "object"}})
+	var err error
+	g, err = New(g.cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	if w := formRequest(h, cookie, "POST", "/integrations/fly/remove", nil); w.Code != http.StatusConflict {
+		t.Fatalf("stale removal returned %d: %s", w.Code, w.Body.String())
+	}
+	if _, ok := g.tools["fly.remote"]; !ok {
+		t.Fatal("stale removal deleted remote connection tool")
+	}
+}
+
+func TestFlyLeaseCapacityIsDefiniteFailure(t *testing.T) {
+	g, s, b := fixture(t)
+	integration := Integration{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t)}
+	g.cfg.Integrations = []Integration{integration}
+	g.cfg.Tools = append(g.cfg.Tools, flyTool("allow"))
+	var err error
+	g, err = New(g.cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 32 {
+		lease := store.CredentialLease{ID: fmt.Sprintf("full-%d", i), OperationID: fmt.Sprintf("lease-%d", i), Integration: flyIntegrationID, CredentialDigest: digest(integration.Credential), Expires: time.Now().Add(time.Minute).Unix()}
+		if err := s.CreateCredentialLease(t.Context(), lease); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var request callInput
+	request.RequestID = "capacity-failure"
+	request.Calls = append(request.Calls, struct {
+		ToolID    string         `json:"tool_id"`
+		Arguments map[string]any `json:"arguments"`
+	}{ToolID: "fly.request_token", Arguments: map[string]any{"duration_seconds": 600, "purpose": "test capacity"}})
+	if _, err := g.submit(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	o := await(t, s, request.RequestID, "failed")
+	if !strings.Contains(string(o.Result), "Too many unredeemed") {
+		t.Fatalf("missing retryable capacity result: %s", o.Result)
 	}
 }
