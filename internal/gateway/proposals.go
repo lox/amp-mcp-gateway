@@ -175,7 +175,7 @@ func (g *Gateway) reviewPolicies(w http.ResponseWriter, r *http.Request) {
 		}
 		connections = append(connections, map[string]any{"ID": d.Connection, "Before": policyLabel(g.cfg.defaultPolicy(d.Connection)), "After": policyLabel(d.Default), "BeforePrivate": g.cfg.privateConnection(d.Connection), "AfterPrivate": d.Private, "Rows": rows})
 	}
-	g.render(w, map[string]any{"PolicyProposal": true, "Proposal": p, "Connections": connections, "Ticket": r.PathValue("ticket"), "Owner": g.cfg.OwnerSubject})
+	g.render(w, map[string]any{"PolicyProposal": true, "Proposal": p, "Connections": connections, "Ticket": r.PathValue("ticket"), "Owner": browserauth.DisplayName(r.Context())})
 }
 
 func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {

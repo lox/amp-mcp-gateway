@@ -144,7 +144,7 @@ func TestOIDCLoginCapacityAndExpiry(t *testing.T) {
 	attempt := 0
 	login := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/login", nil)
+		r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
 		r.RemoteAddr = fmt.Sprintf("192.0.%d.%d:1234", attempt/256, attempt%256)
 		attempt++
 		mux.ServeHTTP(w, r)
@@ -196,7 +196,7 @@ func TestOIDCLoginConcurrentCapacity(t *testing.T) {
 	for i := range 256 {
 		workers.Go(func() {
 			w := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodGet, "/login", nil)
+			r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
 			r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i)
 			mux.ServeHTTP(w, r)
 			results <- w.Code
@@ -216,5 +216,38 @@ func TestOIDCLoginConcurrentCapacity(t *testing.T) {
 	}
 	if accepted != 128 || len(a.states) != 128 {
 		t.Fatalf("accepted=%d states=%d, want 128 each", accepted, len(a.states))
+	}
+}
+
+func TestOIDCLogoutWaitsForExplicitSignIn(t *testing.T) {
+	a := demoAuth(t)
+	a.demo = false
+	a.oauth.Endpoint.AuthURL = "https://issuer.example/authorize"
+	mux := http.NewServeMux()
+	a.Register(mux)
+	// Merely visiting login must not allocate state or contact the provider.
+	page := httptest.NewRecorder()
+	mux.ServeHTTP(page, httptest.NewRequest("GET", "/login", nil))
+	if page.Code != 200 || page.Header().Get("Location") != "" || len(a.states) != 0 || !strings.Contains(page.Body.String(), `action="/auth/login"`) {
+		t.Fatal("login did not wait for an explicit sign-in action")
+	}
+	start := httptest.NewRecorder()
+	mux.ServeHTTP(start, httptest.NewRequest("GET", "/auth/login", nil))
+	if start.Code != 303 || len(a.states) != 1 {
+		t.Fatal("explicit sign-in did not start OIDC")
+	}
+	logout := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/logout", nil)
+	r.AddCookie(start.Result().Cookies()[0])
+	mux.ServeHTTP(logout, r)
+	if logout.Code != 303 || logout.Header().Get("Location") != "/login" || len(a.states) != 0 {
+		t.Fatal("logout did not cancel the pending login and return to login")
+	}
+	cleared := map[string]bool{}
+	for _, c := range logout.Result().Cookies() {
+		cleared[c.Name] = c.MaxAge < 0 && c.Value == ""
+	}
+	if !cleared[sessionCookie] || !cleared[stateCookie] {
+		t.Fatal("logout must clear session and pending login cookies")
 	}
 }

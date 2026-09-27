@@ -581,7 +581,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 }
 
 func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
-	data := map[string]any{"Owner": g.cfg.OwnerSubject, "Section": strings.TrimPrefix(r.URL.Path, "/")}
+	data := map[string]any{"Owner": browserauth.DisplayName(r.Context()), "Section": strings.TrimPrefix(r.URL.Path, "/")}
 	var err error
 	switch r.URL.Path {
 	case "/operations":
@@ -685,7 +685,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			next = pending[0].ID
 		}
 	}
-	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
+	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": browserauth.DisplayName(r.Context())}
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Header.Get("HX-Request") == "true" {
