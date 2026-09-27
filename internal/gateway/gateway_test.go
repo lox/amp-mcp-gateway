@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/integration"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -152,6 +153,83 @@ func TestApprovalExecutesStoredArgumentsExactlyOnce(t *testing.T) {
 	}
 	if err := s.Decide(t.Context(), o.ID, "human", true); err == nil {
 		t.Fatal("approval replay accepted")
+	}
+}
+
+func TestJavaScriptIntegrationUsesGovernedDispatch(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	plugins, err := integration.New(t.Context(), []integration.Config{{
+		Manifest: filepath.Join("..", "integration", "testdata", "fixture", "manifest.json"),
+		Account:  "fixture account",
+		Policy:   "require_approval",
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { plugins.Close(context.Background()) })
+	cfg := Config{
+		OwnerSubject: "owner", BaseURL: "http://localhost",
+		Plugins: []integration.Config{{Manifest: "configured"}},
+	}
+	g, err := New(cfg, s, plugins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, ok := g.tools["fixture.echo"]
+	if !ok || tool.Policy != "require_approval" {
+		t.Fatalf("plugin tool not synthesized: %#v", tool)
+	}
+	manager, err := upstream.New(cfg.BaseURL, nil, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.mu.Lock()
+	err = g.saveCatalogue(t.Context(), g.catalogue(), manager)
+	g.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := g.tools["fixture.echo"]; !ok {
+		t.Fatal("plugin tool was lost after a browser-managed catalogue save")
+	}
+	var in callInput
+	in.RequestID = "plugin-request"
+	in.Calls = append(in.Calls, struct {
+		ToolID    string         `json:"tool_id"`
+		Arguments map[string]any `json:"arguments"`
+	}{"fixture.echo", map[string]any{"text": "approved"}})
+	o, err := g.submit(t.Context(), in)
+	if err != nil || o.Status != "pending" || o.Account != "fixture account" {
+		t.Fatalf("submit %#v: %v", o, err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	o = await(t, s, o.ID, "succeeded")
+	if !strings.Contains(string(o.Result), "plugin:approved") {
+		t.Fatalf("unexpected result: %s", o.Result)
+	}
+	var failure callInput
+	failure.RequestID = "plugin-failure"
+	failure.Calls = append(failure.Calls, struct {
+		ToolID    string         `json:"tool_id"`
+		Arguments map[string]any `json:"arguments"`
+	}{"fixture.network", map[string]any{}})
+	o, err = g.submit(t.Context(), failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	o = await(t, s, o.ID, "failed")
+	if !strings.Contains(string(o.Result), "without external side effects") {
+		t.Fatalf("deterministic plugin failure was not retained: %s", o.Result)
 	}
 }
 

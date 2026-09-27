@@ -23,6 +23,7 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
+	"ampcode.com/lox/amp-mcp-gateway/internal/integration"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,7 +41,8 @@ type Config struct {
 	Listen, BaseURL, Database, OwnerSubject, Issuer, ClientID string
 	AmpUserID, HostedDomain                                   string
 	Connections                                               []upstream.Connection
-	Integrations                                              []Integration `json:",omitempty"`
+	Integrations                                              []Integration        `json:",omitempty"`
+	Plugins                                                   []integration.Config `json:",omitempty"`
 	Tools                                                     []Tool
 	ToolDefaults                                              map[string]string `json:",omitempty"`
 	PrivateConnections                                        map[string]bool   `json:",omitempty"`
@@ -61,6 +63,7 @@ type Gateway struct {
 	tools     map[string]Tool
 	schemas   map[string]*jsonschema.Schema
 	bindings  map[string]string
+	plugins   map[string]integration.Definition
 	drafts    map[string]toolDraft
 	proposals map[string]policyProposal
 }
@@ -68,8 +71,12 @@ type Gateway struct {
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	cfg.Integrations = slices.Clone(cfg.Integrations)
+	cfg.Plugins = slices.Clone(cfg.Plugins)
 	cfg.Tools = slices.Clone(cfg.Tools)
 	cfg.ToolDefaults = maps.Clone(cfg.ToolDefaults)
+	if cfg.ToolDefaults == nil {
+		cfg.ToolDefaults = map[string]string{}
+	}
 	legacyFlyPolicy := ""
 	legacyFlyTools := 0
 	for _, tool := range cfg.Tools {
@@ -116,9 +123,6 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 			}
 		}
 	}
-	if cfg.ToolDefaults == nil {
-		cfg.ToolDefaults = map[string]string{}
-	}
 	for _, integration := range cfg.Integrations {
 		cfg.Tools = slices.DeleteFunc(cfg.Tools, func(tool Tool) bool {
 			return tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Connection == flyIntegrationID && tool.Name == flyRequestToken
@@ -126,7 +130,46 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		cfg.ToolDefaults[integration.ID] = integration.Policy
 		cfg.Tools = append(cfg.Tools, flyTool(""))
 	}
-	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	var pluginDefinitions []integration.Definition
+	if provider, ok := b.(interface {
+		Definitions() []integration.Definition
+	}); ok {
+		pluginDefinitions = provider.Definitions()
+	}
+	plugins := make(map[string]integration.Definition, len(pluginDefinitions))
+	if len(cfg.Plugins) != len(pluginDefinitions) {
+		return nil, errors.New("integration plugin definitions do not match configuration")
+	}
+	for _, plugin := range pluginDefinitions {
+		if _, exists := plugins[plugin.ID]; exists {
+			return nil, errors.New("duplicate integration plugin ID")
+		}
+		for _, connection := range cfg.Connections {
+			if connection.ID == plugin.ID {
+				return nil, errors.New("connection and integration plugin IDs must be unique")
+			}
+		}
+		for _, native := range cfg.Integrations {
+			if native.ID == plugin.ID {
+				return nil, errors.New("native integration and integration plugin IDs must be unique")
+			}
+		}
+		if plugin.Policy == "" {
+			plugin.Policy = cfg.defaultPolicy(plugin.ID)
+		}
+		if !validPolicy(plugin.Policy) || plugin.Digest == "" {
+			return nil, errors.New("invalid integration plugin definition")
+		}
+		plugins[plugin.ID] = plugin
+		cfg.ToolDefaults[plugin.ID] = plugin.Policy
+		for _, tool := range plugin.Tools {
+			cfg.Tools = append(cfg.Tools, Tool{
+				ID: plugin.ID + "." + tool.Name, Connection: plugin.ID, Name: tool.Name,
+				Description: tool.Description, InputSchema: tool.InputSchema,
+			})
+		}
+	}
+	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}, plugins: plugins}
 	for _, policy := range cfg.ToolDefaults {
 		if !validPolicy(policy) {
 			return nil, errors.New("invalid connection default")
@@ -152,12 +195,16 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				break
 			}
 		}
-		integration, native := integrations[t.Connection]
-		if connection == nil && !native {
+		nativeIntegration, native := integrations[t.Connection]
+		plugin, pluginTool := plugins[t.Connection]
+		if connection == nil && !native && !pluginTool {
 			return nil, fmt.Errorf("unknown connection for %s", t.ID)
 		}
 		if native && (t.ID != flyIntegrationID+"."+flyRequestToken || t.Name != flyRequestToken) {
 			return nil, errors.New("invalid Fly.io integration tool")
+		}
+		if pluginTool && t.ID != plugin.ID+"."+t.Name {
+			return nil, errors.New("invalid integration plugin tool")
 		}
 		compiler := jsonschema.NewCompiler()
 		// Upstream schemas are untrusted: only references within this document are allowed.
@@ -172,7 +219,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
 		if native {
-			g.bindings[t.ID] = digest([]any{t, integration, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain})
+			g.bindings[t.ID] = digest([]any{t, nativeIntegration, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain})
+		} else if pluginTool {
+			g.bindings[t.ID] = digest([]any{t, plugin, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain})
 		} else {
 			g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
 		}
@@ -411,6 +460,9 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		if integration.ID == t.Connection {
 			account = integration.Account
 		}
+	}
+	if plugin, ok := g.plugins[t.Connection]; ok {
+		account = plugin.Account
 	}
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID

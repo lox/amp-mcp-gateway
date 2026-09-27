@@ -193,12 +193,63 @@ redemption, but cannot observe individual Fly calls after issuing the short-live
 token. See the [Fly integration guide](docs/dev.md#flyio-integration) for setup and
 the safe shell pattern.
 
+## Load a JavaScript integration plugin
+
+The first plugin-runtime slice can expose reviewed JavaScript-authored tools through
+the gateway even when a provider has no MCP server. Add a startup-only entry to the
+production configuration:
+
+```json
+"Plugins": [{
+  "Manifest": "/data/plugins/example/manifest.json",
+  "Account": "Example account",
+  "Policy": "require_approval"
+}]
+```
+
+The manifest pins the sibling Wasm artifact and its tool schemas:
+
+```json
+{
+  "ID": "example",
+  "Name": "Example integration",
+  "Version": "1.0.0",
+  "Wasm": "plugin.wasm",
+  "Tools": [{
+    "Name": "lookup",
+    "Description": "Look up an example record.",
+    "input_schema": {
+      "type": "object",
+      "properties": {"id": {"type": "string"}},
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  }]
+}
+```
+
+Each declared name is an Extism export that accepts the arguments object as JSON
+and returns a JSON-encoded MCP `CallToolResult`. The gateway synthesizes
+`example.lookup`, validates its schema, persists and approves calls normally, and
+binds queued authority to the exact manifest and Wasm digest. Each call gets a fresh
+instance with a 64 MiB memory ceiling and context cancellation.
+Startup rejects manifests whose declared tool functions are not exported. Runtime
+traps, timeouts and malformed results are recorded as definite failed operations,
+not ambiguous upstream writes, because this capability set cannot cause external
+effects.
+
+This slice deliberately grants no filesystem, environment, output stream or network
+access. It proves sandboxed dispatch but cannot call provider APIs yet. The next
+runtime capability is gateway-brokered bounded HTTP with destination and credential
+policy; Extism's generic HTTP helper remains denied. See the
+[plugin development notes](docs/dev.md#javascript-integration-plugins).
+
 ## What's there today
 
 Bearer-token and OAuth connections, token refresh, per-tool rules, browser
 approvals, a reverse-connected Chrome extension for one selected tab, encrypted
-storage for credentials, arguments and results, and a Fly.io short-lived
-credential integration prototype.
+storage for credentials, arguments and results, a Fly.io short-lived credential
+integration prototype, and a startup-loaded sandboxed JavaScript plugin foundation.
 
 A few limits worth knowing:
 

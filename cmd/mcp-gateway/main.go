@@ -21,6 +21,7 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
+	"ampcode.com/lox/amp-mcp-gateway/internal/integration"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"golang.org/x/sync/errgroup"
@@ -104,7 +105,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	g, err := gateway.New(cfg, s, browser)
+	plugins, err := integration.New(ctx, cfg.Plugins, browser)
+	if err != nil {
+		return err
+	}
+	defer plugins.Close(context.Background())
+	g, err := gateway.New(cfg, s, plugins)
 	if err != nil {
 		return err
 	}

@@ -164,6 +164,10 @@ func (g *Gateway) catalogue() catalogue {
 		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.ID == flyIntegrationID+"."+flyRequestToken })
 		delete(defaults, flyIntegrationID)
 	}
+	for id := range g.plugins {
+		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.Connection == id })
+		delete(defaults, id)
+	}
 	return catalogue{Connections: slices.Clone(g.cfg.Connections), Integrations: slices.Clone(g.cfg.Integrations), Tools: tools, ToolDefaults: defaults, PrivateConnections: maps.Clone(g.cfg.PrivateConnections)}
 }
 
@@ -189,7 +193,7 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	if err != nil {
 		return errors.New("invalid connection configuration")
 	}
-	compiled, err := New(next, g.store, m)
+	compiled, err := New(next, g.store, g.backend)
 	if err != nil {
 		return errors.New("tool definitions are invalid; schemas must be self-contained")
 	}
@@ -203,7 +207,7 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	m.Install(manager)
 	g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools = compiled.cfg.Connections, compiled.cfg.Integrations, compiled.cfg.Tools
 	g.cfg.ToolDefaults, g.cfg.PrivateConnections = compiled.cfg.ToolDefaults, compiled.cfg.PrivateConnections
-	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
+	g.tools, g.schemas, g.bindings, g.plugins = compiled.tools, compiled.schemas, compiled.bindings, compiled.plugins
 	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.
 	return nil
 }
