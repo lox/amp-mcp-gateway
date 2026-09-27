@@ -35,6 +35,7 @@ const context = {
   crypto: webcrypto,
   setInterval,
   setTimeout,
+  TextEncoder,
   URL,
   WebSocket: class {},
 };
@@ -112,6 +113,29 @@ test("snapshots bind backend node IDs to the current document", async () => {
   const result = await context.snapshotForTest({shareID: "snapshot-share", tabId: 168});
   assert.equal(result.document_id, "document-one");
   assert.equal(result.nodes[0].backend_node_id, 7);
+  assert.equal("depth" in sentCommands.find((call) => call.method === "Accessibility.getFullAXTree").params, false);
+  sentCommands.splice(0);
+});
+
+test("snapshots bound accessible text and total payload size", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'large-snapshot', tabId: 189}", context);
+  const largeName = "x".repeat(20 * 1024);
+  const nodes = Array.from({length: 500}, (_, index) => ({
+    nodeId: `node-${index}`,
+    backendDOMNodeId: index + 1,
+    role: {value: "textbox"},
+    name: {value: largeName},
+  }));
+  commandResponses.push(
+    {frameTree: {frame: {loaderId: "large-document"}}},
+    {nodes},
+    {frameTree: {frame: {loaderId: "large-document"}}},
+  );
+  const result = await context.snapshotForTest({shareID: "large-snapshot", tabId: 189});
+  assert.equal(result.truncated, true);
+  assert.equal(result.nodes[0].name.length, 16 * 1024);
+  assert.ok(result.nodes.length < nodes.length);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 6 * 1024 * 1024);
   sentCommands.splice(0);
 });
 

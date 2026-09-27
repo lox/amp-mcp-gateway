@@ -4,6 +4,10 @@ let reconnectTimer = null;
 let currentConfig = null;
 let operationQueue = Promise.resolve();
 const completedCommands = new Set();
+const maxSnapshotBytes = 6 * 1024 * 1024;
+const maxSnapshotNodes = 500;
+const maxSnapshotTextLength = 16 * 1024;
+const snapshotEncoder = new TextEncoder();
 
 chrome.runtime.onInstalled.addListener(() => serialized(reconnectStored));
 chrome.runtime.onStartup.addListener(() => serialized(reconnectStored));
@@ -208,27 +212,49 @@ async function execute(target, tool, args) {
 async function snapshot(target) {
   const tab = await chrome.tabs.get(target.tabId);
   const documentID = await currentDocument(target);
-  const tree = await command(target, "Accessibility.getFullAXTree", {depth: 20});
+  const tree = await command(target, "Accessibility.getFullAXTree");
   if (await currentDocument(target) !== documentID) throw new Error("The document changed while it was being inspected.");
-  const nodes = tree.nodes.map((node) => {
+  const title = boundedSnapshotText(tab.title || "");
+  const url = boundedSnapshotText(tab.url || "");
+  const result = {title: title.value, url: url.value, document_id: documentID, nodes: [], truncated: title.truncated || url.truncated};
+  let payloadBytes = snapshotEncoder.encode(JSON.stringify({...result, truncated: false})).byteLength;
+  for (const node of tree.nodes) {
+    if (!node.backendDOMNodeId || !(node.role?.value || node.name?.value || node.value?.value)) continue;
     const properties = {};
     for (const property of node.properties || []) {
       if (["checked", "disabled", "expanded", "focused", "required", "selected"].includes(property.name)) {
         properties[property.name] = property.value?.value;
       }
     }
-    return {
+    const role = boundedSnapshotText(node.role?.value);
+    const name = boundedSnapshotText(node.name?.value);
+    const value = boundedSnapshotText(node.value?.value);
+    const description = boundedSnapshotText(node.description?.value);
+    const snapshotNode = {
       node_id: node.nodeId,
       parent_node_id: node.parentId,
       backend_node_id: node.backendDOMNodeId,
-      role: node.role?.value,
-      name: node.name?.value,
-      value: node.value?.value,
-      description: node.description?.value,
+      role: role.value,
+      name: name.value,
+      value: value.value,
+      description: description.value,
       ...properties,
     };
-  }).filter((node) => node.backend_node_id && (node.role || node.name || node.value)).slice(0, 500);
-  return {title: tab.title || "", url: tab.url || "", document_id: documentID, nodes, truncated: tree.nodes.length > 500};
+    const nodeBytes = snapshotEncoder.encode(JSON.stringify(snapshotNode)).byteLength;
+    if (result.nodes.length >= maxSnapshotNodes || payloadBytes + nodeBytes + (result.nodes.length ? 1 : 0) > maxSnapshotBytes) {
+      result.truncated = true;
+      break;
+    }
+    result.nodes.push(snapshotNode);
+    payloadBytes += nodeBytes + (result.nodes.length > 1 ? 1 : 0);
+    if (role.truncated || name.truncated || value.truncated || description.truncated) result.truncated = true;
+  }
+  return result;
+}
+
+function boundedSnapshotText(value) {
+  if (typeof value !== "string" || value.length <= maxSnapshotTextLength) return {value, truncated: false};
+  return {value: value.slice(0, maxSnapshotTextLength), truncated: true};
 }
 
 async function screenshot(target) {
