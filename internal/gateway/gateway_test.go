@@ -573,14 +573,21 @@ func TestApprovalScopePresentation(t *testing.T) {
 		if !strings.Contains(context, "Thread ID: "+o.AmpThreadID) || strings.Contains(context, "review") {
 			t.Fatal("missing thread fallback or context inferred from arguments")
 		}
-		projectLabel := "Not provided by Amp"
+		projectLabel := "Not available"
 		if tc.project != "" {
 			projectLabel = "Project ID: " + tc.project
 		}
 		if !strings.Contains(context, projectLabel) || strings.Index(body, context) > strings.Index(body, "Call arguments</h2>") {
 			t.Fatal("project context must precede arguments")
 		}
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread for one hour, with any schema-valid arguments.", "Expiry or revocation stops queued calls"} {
+		if strings.Contains(context, "Amp identity") || strings.Contains(context, "Names are not provided") || strings.Contains(body, "Approve only if") {
+			t.Fatal("explanatory copy should not clutter the main review")
+		}
+		_, audit, ok := strings.Cut(body, `<details class="audit-details">`)
+		if !ok || !strings.Contains(audit, "Amp identity verified") || !strings.Contains(audit, "configured label, not a verified provider identity") {
+			t.Fatal("identity caveats must remain in audit details")
+		}
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Only this exact request.", "Any arguments to this tool in this thread, for one hour.", "<summary>Scope details</summary>", "Manage standing approvals", "Expiry or revocation stops queued calls"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
@@ -588,7 +595,7 @@ func TestApprovalScopePresentation(t *testing.T) {
 		if strings.Contains(body, "<span>This project</span>") != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
 		}
-		if strings.Contains(body, "Allow future calls to notes.write across threads in this project for one hour, with any schema-valid arguments.") != tc.wantProject {
+		if strings.Contains(body, "Any arguments to this tool across this project, for one hour.") != tc.wantProject {
 			t.Errorf("%s: project scope help visibility mismatch", tc.id)
 		}
 	}
