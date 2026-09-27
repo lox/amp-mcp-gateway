@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,11 @@ func connectExtension(t *testing.T, m *Manager, code, install, share string, tab
 	m.mu.Lock()
 	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
 	m.mu.Unlock()
+	return dialExtension(t, m, code, install, share, tab)
+}
+
+func dialExtension(t *testing.T, m *Manager, code, install, share string, tab int) *websocket.Conn {
+	t.Helper()
 	server := httptest.NewServer(m.Socket())
 	t.Cleanup(server.Close)
 	header := http.Header{"Origin": []string{"chrome-extension://extension-id"}}
@@ -349,14 +355,47 @@ func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	h := m.UI(nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/integrations/chrome/pair"`) || !strings.Contains(w.Body.String(), `href="/integrations"`) {
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, `action="/integrations/chrome/pair"`) || !strings.Contains(body, `href="/integrations"`) || !strings.Contains(body, `data-browser-state="not-paired"`) {
 		t.Fatalf("Chrome integration page is missing its integration routes: status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(body, `location.replace("/integrations/chrome")`) || strings.Contains(body, "location.reload()") || strings.Contains(body, "location.assign(") {
+		t.Fatalf("Chrome state polling may replay the pairing POST: %s", body)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome/status", nil))
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || strings.TrimSpace(w.Body.String()) != `[{"id":"browser","state":"not-paired"}]` {
+		t.Fatalf("unexpected Chrome integration status: status=%d cache=%q body=%s", w.Code, w.Header().Get("Cache-Control"), w.Body.String())
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/browser", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("legacy browser UI route returned %d, want 404", w.Code)
 	}
+}
+
+func TestUIReportsConnectedBrowser(t *testing.T) {
+	m, _ := browserManager(t)
+	connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	w := httptest.NewRecorder()
+	m.UI(nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome/status", nil))
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `[{"id":"browser","state":"connected"}]` {
+		t.Fatalf("unexpected connected Chrome status: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPairingCodeRenderedByUIConnectsExtension(t *testing.T) {
+	m, _ := browserManager(t)
+	form := url.Values{"connection": {"browser"}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/integrations/chrome/pair", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	m.UI(nil).ServeHTTP(w, r)
+	match := regexp.MustCompile(`Pairing code for browser</strong><code class="code">([^<]+)</code>`).FindStringSubmatch(w.Body.String())
+	if w.Code != http.StatusOK || len(match) != 2 {
+		t.Fatalf("pairing page did not render its code: status=%d body=%s", w.Code, w.Body.String())
+	}
+	dialExtension(t, m, match[1], "install-one", "share-one", 42)
 }
 
 func TestUIEnablesChromeBeforePairing(t *testing.T) {
