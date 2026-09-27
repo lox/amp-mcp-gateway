@@ -1,0 +1,1356 @@
+/* Edit this Tailwind source, then run mise run css.
+ * No Preflight: retain the existing browser defaults and document-specific cascade. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "../gateway/page.go";
+@source "../browserauth/browserauth.go";
+@source "../browserbridge/browserbridge.go";
+@theme {
+  /* Keep the original pixel spacing independent of the 14px dashboard font. */
+  --spacing: 4px;
+  --color-ink: #152443;
+  --color-canvas: #faf9f6;
+  --color-surface: #fffefa;
+  --color-muted: #55627a;
+  --color-link: #214da1;
+  --color-selected: #fff0bd;
+  --color-inset: #f1f0eb;
+  --color-divider: #dedfe3;
+  --color-control: #76829a;
+  --color-positive: #dff3e5;
+  --color-positive-ink: #175e37;
+  --color-negative: #fde9e5;
+  --color-negative-ink: #9c3724;
+}
+@layer components {
+  /* dashboard */
+  :where(html.dashboard) * {
+    @apply box-border;
+  }
+  :where(html.dashboard) body {
+    @apply m-0;
+  }
+  :where(html.dashboard) h2 {
+    @apply mt-8;
+  }
+  :where(html.dashboard) .sub {
+    @apply mt-0 leading-[1.6];
+  }
+  :where(html.dashboard) .card {
+    border: 1px solid;
+    @apply m-[16px_0];
+  }
+  :where(html.dashboard) button,
+  :where(html.dashboard) .button {
+    @apply inline-block;
+    border: 1px solid;
+    @apply p-[10px_16px];
+    font: inherit;
+    @apply cursor-pointer no-underline;
+  }
+  :where(html.dashboard) .actions {
+    @apply flex gap-3 mt-5;
+  }
+  :where(html.dashboard) form {
+    @apply m-0;
+  }
+  :where(html.dashboard) .badge {
+    font:
+      12px ui-monospace,
+      monospace;
+    @apply p-[5px_8px];
+    background: #eaf0e8;
+    @apply inline-block;
+  }
+  :where(html.dashboard) .unknown,
+  :where(html.dashboard) .denied,
+  :where(html.dashboard) .failed {
+    @apply bg-negative text-negative-ink;
+  }
+  :where(html.dashboard) .succeeded {
+    @apply bg-positive text-positive-ink;
+  }
+  :where(html.dashboard) table {
+    @apply border-collapse w-full text-left text-[14px];
+  }
+  :where(html.dashboard) td,
+  :where(html.dashboard) th {
+    @apply p-[14px_10px];
+    border-bottom: 1px solid #e7ebe5;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) th {
+    @apply font-medium text-muted text-[12px] uppercase;
+  }
+  :where(html.dashboard) code,
+  :where(html.dashboard) pre {
+    font-family: ui-monospace, monospace;
+    @apply text-[13px];
+  }
+  :where(html.dashboard) pre {
+    @apply whitespace-pre-wrap;
+    overflow-wrap: anywhere;
+    @apply p-5;
+  }
+  :where(html.dashboard) dl {
+    @apply grid grid-cols-[150px_1fr] gap-[14px];
+  }
+  :where(html.dashboard) dt {
+    @apply text-muted;
+  }
+  :where(html.dashboard) dd {
+    @apply m-0;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .scroll {
+    @apply overflow-x-auto;
+  }
+  :where(html.dashboard) .note {
+    border-left: 3px solid;
+    @apply p-[12px_16px] text-[14px] leading-[1.6];
+  }
+  :where(html.dashboard) footer {
+    @apply text-[12px] mt-8;
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) dl {
+      @apply grid-cols-[1fr] gap-[6px];
+    }
+    :where(html.dashboard) dd {
+      @apply mb-[10px];
+    }
+  }
+  :where(html.dashboard) .heading {
+    @apply flex justify-between items-center gap-4;
+  }
+  :where(html.dashboard) .setup {
+    @apply max-w-190 m-auto;
+  }
+  :where(html.dashboard)
+    :is(.setup, .permissions)
+    > a:first-child
+    + :is(h1, .heading) {
+    @apply mt-4;
+  }
+  :where(html.dashboard) .field {
+    @apply grid gap-2 mb-[22px];
+  }
+  :where(html.dashboard) .field label {
+    @apply font-semibold;
+  }
+  :where(html.dashboard) .field small,
+  :where(html.dashboard) .help {
+    color: #586b62;
+    @apply leading-[1.5];
+  }
+  :where(html.dashboard) input,
+  :where(html.dashboard) select {
+    @apply box-border w-full p-[11px_12px];
+    border: 1px solid #bccdc0;
+    @apply rounded-[6px];
+    background: white;
+    color: #172b26;
+    font: inherit;
+  }
+  :where(html.dashboard) input:focus,
+  :where(html.dashboard) select:focus {
+    outline: 2px solid #216442;
+    @apply outline-offset-[2px];
+  }
+  :where(html.dashboard) .setup details {
+    @apply m-[16px_0];
+  }
+  :where(html.dashboard) .setup summary,
+  :where(html.dashboard) summary {
+    @apply cursor-pointer;
+  }
+  :where(html.dashboard) .setup details .field {
+    @apply mt-[18px];
+  }
+  :where(html.dashboard) .error {
+    @apply bg-negative;
+    border-left: 3px solid #9f3535;
+    @apply p-4;
+  }
+  :where(html.dashboard) .success {
+    @apply bg-positive p-4;
+  }
+  :where(html.dashboard)
+    .setup
+    form:not(:has(option[value="bearer"]:checked))
+    .bearer-fields {
+    @apply hidden;
+  }
+  :where(html.dashboard)
+    .setup
+    form:not(:has(option[value="oauth"]:checked))
+    .oauth-fields {
+    @apply hidden;
+  }
+  :where(html.dashboard) .tool-row {
+    @apply grid grid-cols-[minmax(0,1fr)_210px] gap-6 p-[22px_0];
+    border-bottom: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .tool-row:last-child {
+    border: 0;
+  }
+  :where(html.dashboard) .tool-row h2 {
+    @apply m-[0_0_8px];
+    font:
+      600 16px ui-monospace,
+      monospace;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .tool-row p {
+    @apply leading-[1.5];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .tool-row details {
+    @apply mt-3;
+  }
+  :where(html.dashboard) .tool-row label {
+    @apply block text-[13px] mb-2;
+  }
+  :where(html.dashboard) .actions {
+    @apply flex-wrap;
+  }
+  :where(html.dashboard) .endpoint {
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .tool-row {
+      @apply grid-cols-[1fr] gap-2;
+    }
+    :where(html.dashboard) .heading {
+      @apply items-start flex-col;
+    }
+  }
+  @media (min-width: 601px) {
+    :where(html.dashboard) .tool-row {
+      @apply grid-cols-[minmax(0,1fr)_260px];
+    }
+  }
+  :where(html.dashboard) .permissions {
+    @apply max-w-205 m-auto;
+  }
+  :where(html.dashboard) .connection-heading {
+    @apply flex justify-between items-center gap-5 m-[18px_0_6px];
+  }
+  :where(html.dashboard) .connection-heading h1 {
+    @apply m-0 text-[28px];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .auth-status {
+    flex-shrink: 0;
+    @apply text-[13px];
+    list-style: none;
+    border: 1px solid #bccdc0;
+    @apply rounded-[6px] p-[8px_12px] cursor-pointer;
+    color: #226a4d;
+  }
+  :where(html.dashboard) .auth-status::-webkit-details-marker {
+    @apply hidden;
+  }
+  :where(html.dashboard) .auth-status:before {
+    content: "●";
+    @apply mr-2;
+  }
+  :where(html.dashboard) .auth-status.pending {
+    color: #77550b;
+  }
+  :where(html.dashboard) .auth-details {
+    @apply max-w-110;
+  }
+  :where(html.dashboard) .auth-details[open] {
+    align-self: flex-start;
+  }
+  :where(html.dashboard) .auth-details .help {
+    @apply text-[13px];
+  }
+  :where(html.dashboard) .auth-details summary:focus-visible,
+  :where(html.dashboard) button:focus-visible,
+  :where(html.dashboard) .button:focus-visible {
+    outline: 2px solid #216442;
+    @apply outline-offset-[3px];
+  }
+  :where(html.dashboard) .connection-access {
+    border: 0;
+    @apply p-0 m-[38px_0_28px];
+  }
+  :where(html.dashboard) .connection-access legend,
+  :where(html.dashboard) .permission-default legend {
+    @apply text-[16px] font-[650] p-0;
+  }
+  :where(html.dashboard) .connection-access label {
+    @apply flex items-start gap-3 mt-3 cursor-pointer;
+  }
+  :where(html.dashboard) .connection-access input {
+    margin-top: 3px !important;
+    flex: none;
+  }
+  :where(html.dashboard) .connection-access span {
+    @apply grid gap-1;
+  }
+  :where(html.dashboard) .connection-access small {
+    color: #586b62;
+    @apply leading-[1.5];
+  }
+  :where(html.dashboard) .permission-default {
+    border: 0;
+    @apply p-0 m-[28px_0] min-w-0;
+  }
+  :where(html.dashboard) .permission-default .help {
+    @apply text-[14px] m-[8px_0_16px];
+  }
+  :where(html.dashboard) .default-options {
+    @apply flex;
+    border: 1px solid #bccdc0;
+    @apply rounded-[6px] overflow-hidden;
+    background: white;
+  }
+  :where(html.dashboard) .default-options label {
+    @apply relative;
+    flex: 1;
+    @apply text-center cursor-pointer;
+  }
+  :where(html.dashboard) .default-options label + label {
+    border-left: 1px solid #bccdc0;
+  }
+  :where(html.dashboard) .default-options input {
+    @apply absolute opacity-[0] w-[1px] h-[1px];
+  }
+  :where(html.dashboard) .default-options span {
+    @apply flex items-center justify-center min-h-11 p-2 text-[14px] h-full;
+  }
+  :where(html.dashboard) .default-options input:checked + span {
+    background: #216442;
+    color: white;
+  }
+  :where(html.dashboard) .default-options input:focus-visible + span {
+    outline: 2px solid #172b26;
+    @apply outline-offset-[-4px];
+  }
+  :where(html.dashboard) .default-warning {
+    @apply text-negative-ink;
+  }
+  :where(html.dashboard) .permissions .note {
+    @apply m-[24px_0];
+  }
+  :where(html.dashboard) .exceptions-card {
+    @apply rounded-[7px] p-[22px] m-[24px_0];
+  }
+  :where(html.dashboard) .exceptions-heading {
+    @apply flex;
+    align-items: start;
+    @apply justify-between gap-4 mb-[22px];
+  }
+  :where(html.dashboard) .exceptions-heading h2 {
+    @apply m-[6px_0_0] text-[18px];
+  }
+  :where(html.dashboard) .refresh-tools {
+    @apply text-right;
+  }
+  :where(html.dashboard) .refresh-tools button {
+    @apply p-[7px_12px] text-[13px];
+  }
+  :where(html.dashboard) .refresh-tools .help {
+    @apply m-[6px_0_0] text-[12px];
+  }
+  :where(html.dashboard) .exception-search {
+    @apply flex gap-3 mb-4;
+  }
+  :where(html.dashboard) .exception-search input {
+    flex: 1;
+    @apply min-w-0 text-[14px];
+  }
+  :where(html.dashboard) .exception-search button {
+    @apply whitespace-nowrap text-[14px];
+  }
+  :where(html.dashboard) .policy-columns,
+  :where(html.dashboard) .policy-row {
+    @apply grid grid-cols-[minmax(0,1fr)_210px_32px] gap-[14px] items-center;
+  }
+  :where(html.dashboard) .policy-columns {
+    background: #f5f7f3;
+    @apply p-[10px_8px];
+    border-block: 1px solid #e7ebe5;
+    @apply text-[12px];
+  }
+  :where(html.dashboard) .policy-row {
+    @apply p-[12px_8px];
+    border-bottom: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .policy-row summary {
+    overflow-wrap: anywhere;
+    @apply text-[14px] cursor-pointer;
+  }
+  :where(html.dashboard) .policy-row details p {
+    @apply text-[13px] leading-[1.5];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .policy-row select {
+    @apply text-[13px] p-[9px_10px];
+  }
+  :where(html.dashboard) .policy-row pre {
+    @apply p-3;
+  }
+  :where(html.dashboard) .remove-exception {
+    @apply p-[6px];
+    border: 0;
+    background: transparent;
+    @apply leading-[1] flex justify-center;
+  }
+  :where(html.dashboard) .remove-exception svg {
+    @apply w-[17px] h-[17px];
+  }
+  :where(html.dashboard) .tool-select {
+    @apply hidden;
+  }
+  :where(html.dashboard) .permissions input[type="checkbox"] {
+    @apply w-4 h-4 m-0;
+    accent-color: #216442;
+  }
+  :where(html.dashboard) .bulk-mode .policy-columns,
+  :where(html.dashboard) .bulk-mode .policy-row {
+    @apply grid-cols-[20px_minmax(0,1fr)_210px_32px];
+  }
+  :where(html.dashboard) .bulk-mode .tool-select {
+    @apply block;
+  }
+  :where(html.dashboard) .bulk-actions {
+    @apply flex items-center flex-wrap gap-2 m-[16px_0] text-[13px];
+  }
+  :where(html.dashboard) .bulk-actions button {
+    @apply text-[12px] p-[7px_10px];
+  }
+  :where(html.dashboard) .bulk-actions span {
+    @apply mr-auto;
+  }
+  :where(html.dashboard) .tool-navigation {
+    @apply flex flex-wrap items-center gap-4 mt-[18px] text-[13px];
+  }
+  :where(html.dashboard) .text-button {
+    border: 0;
+    @apply p-0;
+    background: transparent;
+    color: #226a4d;
+    @apply underline text-[13px];
+  }
+  :where(html.dashboard) .tool-navigation .help {
+    @apply m-0 mr-auto text-[12px];
+  }
+  :where(html.dashboard) .policy-footer .help {
+    @apply text-[12px];
+  }
+  :where(html.dashboard) .policy-footer .actions {
+    @apply mt-7;
+  }
+  :where(html.dashboard) .visually-hidden {
+    @apply absolute w-[1px] h-[1px] p-0 m-[-1px] overflow-hidden;
+    clip-path: inset(50%);
+    @apply whitespace-nowrap;
+    border: 0;
+  }
+  :where(html.dashboard) [hidden] {
+    display: none !important;
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .connection-heading {
+      @apply items-start flex-col gap-3;
+    }
+    :where(html.dashboard) .auth-details {
+      @apply max-w-full;
+    }
+    :where(html.dashboard) .exceptions-card {
+      @apply p-4;
+    }
+    :where(html.dashboard) .policy-columns,
+    :where(html.dashboard) .policy-row {
+      @apply grid-cols-[minmax(0,1fr)_32px] gap-[10px];
+    }
+    :where(html.dashboard) .policy-columns .permission-column {
+      @apply hidden;
+    }
+    :where(html.dashboard) .policy-row details {
+      grid-column: 1;
+    }
+    :where(html.dashboard) .policy-row .policy-choice {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    :where(html.dashboard) .policy-row .remove-exception {
+      grid-column: 2;
+      grid-row: 2;
+    }
+    :where(html.dashboard) .bulk-mode .policy-columns,
+    :where(html.dashboard) .bulk-mode .policy-row {
+      @apply grid-cols-[20px_minmax(0,1fr)_32px];
+    }
+    :where(html.dashboard) .bulk-mode .policy-row details,
+    :where(html.dashboard) .bulk-mode .policy-row .policy-choice {
+      grid-column: 2;
+    }
+    :where(html.dashboard) .bulk-mode .policy-row .remove-exception {
+      grid-column: 3;
+    }
+    :where(html.dashboard) .exception-search {
+      @apply flex-wrap;
+    }
+    :where(html.dashboard) .exception-search input {
+      flex-basis: 100%;
+    }
+    :where(html.dashboard) .default-options span {
+      @apply text-[12px];
+    }
+    :where(html.dashboard) .exceptions-heading {
+      @apply gap-2;
+    }
+    :where(html.dashboard) .refresh-tools {
+      @apply max-w-[55%];
+    }
+  }
+  :where(html.dashboard) .connection-status {
+    @apply m-[16px_0] flex;
+    align-items: start;
+    @apply justify-between gap-4 flex-wrap;
+  }
+  :where(html.dashboard) .connection-health {
+    @apply min-w-0;
+    flex: 1;
+  }
+  :where(html.dashboard) .connection-health .help {
+    @apply text-[13px] m-[10px_0];
+  }
+  :where(html.dashboard) .health-times {
+    @apply text-[12px];
+  }
+  :where(html.dashboard) .health-times p {
+    @apply m-[5px_0];
+  }
+  :where(html.dashboard) .connection-test.actions {
+    @apply m-0 gap-2;
+  }
+  :where(html.dashboard) .connection-test button {
+    @apply text-[13px] px-[10px] py-2;
+  }
+  :where(html.dashboard) .connection-test button:disabled {
+    @apply cursor-wait opacity-[.65];
+  }
+  :where(html.dashboard) .health-details summary {
+    @apply whitespace-nowrap;
+  }
+  :where(html.dashboard) .health-warning {
+    @apply max-w-[46ch];
+  }
+  :where(html.dashboard) .connection-list {
+    border: 1px solid;
+    @apply m-[16px_0] overflow-hidden;
+  }
+  :where(html.dashboard) .connection-row {
+    @apply grid grid-cols-[180px_minmax(0,1fr)_auto_auto] gap-4;
+    align-items: start;
+    @apply p-5;
+    border-bottom: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .connection-row:last-child {
+    border: 0;
+  }
+  :where(html.dashboard) .connection-identity {
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .connection-identity .sub {
+    @apply text-[13px] m-[6px_0_0];
+  }
+  :where(html.dashboard) .connection-row .connection-status {
+    @apply m-0 contents;
+  }
+  :where(html.dashboard) .connection-row .connection-health {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :where(html.dashboard) .connection-row .connection-test {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  :where(html.dashboard) .connection-row > .button {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  :where(html.dashboard) .connection-row button,
+  :where(html.dashboard) .connection-row .button {
+    @apply text-[13px] p-[8px_10px];
+  }
+  :where(html.dashboard) .connection-row .test-error {
+    grid-column: 2 / -1;
+    @apply m-0;
+  }
+  :where(html.dashboard) .connection-columns {
+    @apply grid grid-cols-[180px_1fr_410px] gap-4 p-[12px_20px] text-[12px];
+  }
+  :where(html.dashboard) .integration-grid {
+    @apply grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 m-[24px_0];
+  }
+  :where(html.dashboard) .integration-card {
+    @apply flex flex-col min-h-[190px] m-0;
+  }
+  :where(html.dashboard) .integration-card h2 {
+    @apply m-[0_0_8px];
+  }
+  :where(html.dashboard) .integration-card .sub {
+    flex: 1;
+  }
+  :where(html.dashboard) .integration-card .button {
+    align-self: flex-start;
+  }
+  :where(html.dashboard) .integration-card .actions {
+    @apply mt-auto;
+  }
+  :where(html.dashboard) .provider-mark {
+    @apply inline-flex items-center justify-center w-9 h-9 mb-5 rounded-[4px];
+    background: #7b3ff2;
+    color: white;
+    @apply font-extrabold text-[18px];
+  }
+  :where(html.dashboard) .integration-status {
+    @apply ml-2;
+  }
+  :where(html.dashboard) .danger-zone {
+    @apply mt-8;
+  }
+  @media (max-width: 1150px) {
+    :where(html.dashboard) .connection-row {
+      @apply grid-cols-[minmax(0,1fr)_auto];
+    }
+    :where(html.dashboard) .connection-columns {
+      @apply hidden;
+    }
+    :where(html.dashboard) .connection-row .connection-test {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    :where(html.dashboard) .connection-row > .button {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: end;
+    }
+    :where(html.dashboard) .connection-row .test-error {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .connection-row {
+      @apply grid-cols-[minmax(0,1fr)] gap-[14px];
+    }
+    :where(html.dashboard) .connection-row .connection-health {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    :where(html.dashboard) .connection-row .connection-test {
+      grid-row: 3;
+    }
+    :where(html.dashboard) .connection-row > .button {
+      grid-column: 1;
+      grid-row: 4;
+      justify-self: start;
+    }
+    :where(html.dashboard) .connection-status {
+      @apply flex-col;
+    }
+  }
+  html.dashboard {
+    font-family:
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    @apply text-ink bg-canvas text-[14px] leading-[1.5];
+  }
+  :where(html.dashboard) a {
+    @apply text-link;
+    text-underline-offset: 3px;
+  }
+  :where(html.dashboard) button,
+  :where(html.dashboard) .button {
+    @apply min-h-10 rounded-[3px] text-ink border-control font-semibold;
+    background: transparent;
+  }
+  :where(html.dashboard) button:hover,
+  :where(html.dashboard) .button:hover {
+    background: #edf1f8;
+  }
+  :where(html.dashboard) .primary {
+    @apply bg-ink border-ink;
+    color: white;
+  }
+  :where(html.dashboard) .primary:hover {
+    background: #293e64;
+  }
+  :where(html.dashboard) .danger {
+    color: #9c3030;
+    border-color: #be7777;
+  }
+  :where(html.dashboard) a:focus-visible,
+  :where(html.dashboard) button:focus-visible,
+  :where(html.dashboard) summary:focus-visible,
+  :where(html.dashboard) input:focus-visible,
+  :where(html.dashboard) select:focus-visible {
+    outline: 3px solid #2866cb;
+    @apply outline-offset-[3px];
+  }
+  :where(html.dashboard) .skip {
+    @apply absolute left-[16px] top-[-80px] p-3;
+    background: white;
+    @apply z-[2];
+  }
+  :where(html.dashboard) .skip:focus {
+    @apply top-[12px];
+  }
+  :where(html.dashboard) .topbar {
+    @apply min-h-19;
+    border-bottom: 1px solid #dedfe3;
+    @apply flex items-center justify-start gap-6 p-[16px_28px];
+    background: transparent;
+    @apply text-ink;
+  }
+  :where(html.dashboard) .topbar .brand {
+    @apply flex items-center gap-3 no-underline text-ink text-[26px] font-extrabold tracking-[-1px];
+  }
+  :where(html.dashboard) .brand-mark {
+    @apply relative w-6 h-6 bg-ink mr-[5px];
+    flex: none;
+  }
+  :where(html.dashboard) .brand-mark:after {
+    content: "";
+    @apply absolute w-[17px] h-[17px];
+    background: #ffcf4c;
+    @apply rounded-full right-[-7px] bottom-[-5px];
+  }
+  :where(html.dashboard) .brand-slash {
+    color: #68748a;
+    @apply font-normal;
+  }
+  :where(html.dashboard) .product-name {
+    @apply text-muted text-[13px];
+  }
+  :where(html.dashboard) .topbar .owner {
+    @apply ml-auto text-muted text-[12px];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .topbar button {
+    font:
+      12px ui-monospace,
+      monospace;
+  }
+  :where(html.dashboard) .shell {
+    @apply grid grid-cols-[190px_minmax(0,1fr)] min-h-[calc(100vh_-_76px)];
+  }
+  :where(html.dashboard) .sidebar {
+    border-right: 1px solid #dedfe3;
+    @apply p-[30px_14px];
+  }
+  :where(html.dashboard) .sidebar nav {
+    @apply grid gap-2;
+  }
+  :where(html.dashboard) .sidebar a {
+    @apply flex items-center gap-3 min-h-11 p-[10px_12px] text-ink no-underline;
+    font:
+      13px ui-monospace,
+      monospace;
+    @apply rounded-[3px];
+  }
+  :where(html.dashboard) .sidebar a:hover {
+    background: #f0eee7;
+  }
+  :where(html.dashboard) .sidebar a[aria-current] {
+    @apply bg-selected;
+  }
+  :where(html.dashboard) .nav-symbol {
+    @apply w-[18px] text-center text-muted;
+  }
+  :where(html.dashboard) main {
+    @apply min-w-0 w-full max-w-330 m-[0_auto] p-[38px_40px_28px];
+  }
+  :where(html.dashboard) h1 {
+    @apply text-[32px] leading-[1.2] tracking-[-1.1px] m-[0_0_10px];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) h2 {
+    @apply text-[19px] tracking-[-.4px];
+  }
+  :where(html.dashboard) .sub,
+  :where(html.dashboard) .help,
+  :where(html.dashboard) .field small,
+  :where(html.dashboard) .health-times {
+    @apply text-muted;
+  }
+  :where(html.dashboard) .sub {
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .card,
+  :where(html.dashboard) .connection-list {
+    @apply bg-surface;
+    border-color: #dcdde1;
+    @apply rounded-[4px];
+  }
+  :where(html.dashboard) .card {
+    @apply p-6;
+  }
+  :where(html.dashboard, html.chrome) .card > :first-child {
+    @apply mt-0;
+  }
+  :where(html.dashboard, html.chrome) .card > :last-child {
+    @apply mb-0;
+  }
+  :where(html.dashboard) .tabs {
+    @apply flex flex-wrap gap-2 m-[26px_0_24px];
+    border-bottom: 1px solid #dedfe3;
+  }
+  :where(html.dashboard) .tabs a {
+    @apply p-[12px_16px] text-muted;
+    font:
+      13px ui-monospace,
+      monospace;
+    @apply no-underline;
+    border-bottom: 3px solid transparent;
+  }
+  :where(html.dashboard) .tabs a[aria-current] {
+    @apply text-ink;
+    border-bottom-color: #152443;
+    @apply bg-selected;
+  }
+  :where(html.dashboard) .tabs a:hover {
+    @apply text-ink;
+    background: #f0eee7;
+  }
+  :where(html.dashboard) input,
+  :where(html.dashboard) select {
+    @apply rounded-[3px] border-control text-ink bg-surface;
+  }
+  :where(html.dashboard) .default-options {
+    @apply rounded-[3px] border-control;
+  }
+  :where(html.dashboard) .default-options input:checked + span {
+    @apply bg-ink;
+  }
+  :where(html.dashboard) .permissions input[type="checkbox"] {
+    @apply accent-ink;
+  }
+  :where(html.dashboard) .text-button {
+    @apply text-link;
+  }
+  :where(html.dashboard) .policy-columns,
+  :where(html.dashboard) .connection-columns {
+    @apply bg-inset text-muted;
+  }
+  :where(html.dashboard) .badge {
+    @apply rounded-[3px];
+  }
+  :where(html.dashboard) .pending {
+    @apply bg-selected;
+    color: #6d5010;
+  }
+  :where(html.dashboard) .note {
+    background: #fff6d8;
+    border-color: #e9ba42;
+  }
+  :where(html.dashboard) pre {
+    @apply bg-inset rounded-[3px];
+  }
+  :where(html.dashboard) .permissions,
+  :where(html.dashboard) .setup {
+    @apply max-w-220;
+  }
+  :where(html.dashboard) .empty {
+    @apply p-[44px_24px] text-center;
+  }
+  :where(html.dashboard) .empty h2 {
+    @apply m-[0_0_8px];
+  }
+  :where(html.dashboard) .empty p {
+    @apply m-0 text-muted;
+  }
+  :where(html.dashboard) .connection-row .connection-identity a {
+    @apply text-ink;
+  }
+  :where(html.dashboard) .request-id {
+    @apply block;
+    font:
+      11px ui-monospace,
+      monospace;
+    @apply text-muted mt-[5px];
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .operation .result pre,
+  :where(html.dashboard) .operation .amp-context {
+    @apply bg-inset rounded-[3px];
+  }
+  :where(html.dashboard) .operation .scope-option input {
+    @apply accent-ink;
+  }
+  :where(html.dashboard) footer {
+    @apply text-muted leading-[1.6];
+  }
+  @media (max-width: 800px) {
+    :where(html.dashboard) .shell {
+      @apply grid-cols-[1fr] min-h-0;
+    }
+    :where(html.dashboard) .sidebar {
+      @apply p-[12px_20px];
+      border-right: 0;
+      border-bottom: 1px solid #dedfe3;
+    }
+    :where(html.dashboard) .sidebar nav {
+      @apply flex flex-wrap;
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply min-h-10;
+    }
+    :where(html.dashboard) main {
+      @apply p-[28px_20px];
+    }
+    :where(html.dashboard) .topbar {
+      @apply gap-4 p-[16px_20px];
+    }
+    :where(html.dashboard) .product-name {
+      @apply hidden;
+    }
+  }
+  :where(html.dashboard) table {
+    @apply min-w-155;
+  }
+  :where(html.dashboard) th,
+  :where(html.dashboard) .badge,
+  :where(html.dashboard) .operation-list td:last-child a,
+  :where(html.dashboard) .audit-list td:nth-child(3) {
+    @apply whitespace-nowrap;
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .operation-list {
+      @apply block min-w-0;
+    }
+    :where(html.dashboard) .operation-list thead {
+      @apply absolute w-[1px] h-[1px] overflow-hidden;
+      clip-path: inset(50%);
+    }
+    :where(html.dashboard) .operation-list tbody {
+      @apply block;
+    }
+    :where(html.dashboard) .operation-list tr {
+      @apply grid grid-cols-[minmax(0,1fr)_auto] p-[14px_0];
+      border-bottom: 1px solid #dedfe3;
+      @apply gap-2;
+    }
+    :where(html.dashboard) .operation-list td {
+      @apply p-0;
+      border: 0;
+    }
+    :where(html.dashboard) .operation-list td:first-child {
+      grid-column: 1 / -1;
+    }
+    :where(html.dashboard) .operation-list td:last-child {
+      grid-column: 1 / -1;
+    }
+    :where(html.dashboard) .operation-list td:last-child a {
+      @apply inline-block p-[8px_0];
+    }
+  }
+  @media (max-width: 480px) {
+    :where(html.dashboard) .topbar {
+      @apply flex-wrap gap-3;
+    }
+    :where(html.dashboard) .topbar .owner {
+      order: 3;
+      @apply w-full m-0;
+    }
+    :where(html.dashboard) .topbar form {
+      @apply ml-auto;
+    }
+    :where(html.dashboard) .sidebar {
+      @apply p-[10px];
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply gap-[6px] p-[10px] text-[12px];
+    }
+    :where(html.dashboard) .sidebar nav {
+      @apply grid grid-cols-2;
+    }
+    :where(html.dashboard) .tool-navigation .help {
+      @apply basis-full;
+    }
+    :where(html.dashboard) .tool-navigation {
+      @apply gap-x-4 gap-y-2;
+    }
+    :where(html.dashboard) main {
+      @apply p-[24px_16px];
+    }
+    :where(html.dashboard) .card {
+      @apply p-4;
+    }
+    :where(html.dashboard) .tabs {
+      @apply grid grid-cols-[repeat(3,minmax(0,1fr))] gap-0;
+    }
+    :where(html.dashboard) .tabs[aria-label="Connection pages"] {
+      @apply grid-cols-[repeat(2,minmax(0,1fr))];
+    }
+    :where(html.dashboard) .tabs a {
+      @apply flex items-center justify-center text-center p-[12px_8px] text-[12px];
+    }
+    :where(html.dashboard) h1 {
+      @apply text-[28px];
+    }
+  }
+  :where(html.dashboard) .operation {
+    @apply max-w-215 m-auto;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .operation h1 {
+    @apply capitalize;
+  }
+  :where(html.dashboard) .operation .heading h1 {
+    @apply mt-4;
+  }
+  :where(html.dashboard) .operation .heading {
+    @apply flex-row flex-wrap items-center;
+  }
+  :where(html.dashboard) .operation h2 {
+    @apply mt-0;
+  }
+  :where(html.dashboard) .operation summary {
+    @apply font-semibold;
+  }
+  :where(html.dashboard) .operation details.card {
+    @apply p-[18px_24px];
+  }
+  :where(html.dashboard) .operation pre {
+    @apply leading-[1.65] text-[13px];
+  }
+  :where(html.dashboard) .operation .attribution {
+    @apply text-[14px] m-[22px_0];
+  }
+  :where(html.dashboard) .operation .result pre {
+    background: #f7f9f5;
+    border: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .operation .result details {
+    @apply mt-6;
+  }
+  :where(html.dashboard) .operation .result summary {
+    @apply text-[13px];
+    color: #586b62;
+  }
+  :where(html.dashboard) .amp-context {
+    background: #f2f5ef;
+    @apply rounded-[8px] p-4 m-[18px_0];
+  }
+  :where(html.dashboard) .amp-context dl {
+    @apply grid-cols-[110px_1fr] m-0;
+  }
+  :where(html.dashboard) .approval-actions {
+    @apply items-end mt-6;
+  }
+  :where(html.dashboard) .approval-form {
+    @apply flex items-end gap-4;
+    flex: 1;
+  }
+  :where(html.dashboard) .approval-scope {
+    border: 0;
+    @apply p-0 m-0 min-w-0;
+    flex: 1;
+  }
+  :where(html.dashboard) .approval-scope legend {
+    @apply font-[650] mb-3;
+  }
+  :where(html.dashboard) .scope-options {
+    @apply flex flex-wrap gap-[12px_22px];
+  }
+  :where(html.dashboard) .scope-option {
+    @apply inline-flex items-center gap-[7px] cursor-pointer whitespace-nowrap;
+  }
+  :where(html.dashboard) .scope-option input {
+    @apply w-4 h-4 m-0;
+    accent-color: #216442;
+  }
+  :where(html.dashboard) .scope-help {
+    color: #586b62;
+    @apply text-[13px] leading-[1.5] m-[10px_0_0];
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .amp-context dl {
+      @apply grid-cols-[1fr];
+    }
+    :where(html.dashboard) .approval-form {
+      @apply grid w-full;
+    }
+    :where(html.dashboard) .approval-form .primary {
+      @apply w-full;
+    }
+  }
+
+  /* login */
+  :where(html.login) body {
+    @apply m-0;
+    background: #f4f1ea;
+    color: #20231f;
+    font:
+      16px system-ui,
+      sans-serif;
+    @apply grid;
+    place-items: center;
+    @apply min-h-[100vh];
+  }
+  :where(html.login) main {
+    background: white;
+    @apply box-border p-10 rounded-[16px];
+    box-shadow: 0 12px 40px #0002;
+    @apply w-[min(27rem,calc(100%_-_2rem))];
+  }
+  @media (max-width: 480px) {
+    :where(html.login) main {
+      @apply p-6;
+    }
+  }
+  :where(html.login) h1 {
+    @apply m-[.2rem_0];
+  }
+  :where(html.login) .badge {
+    color: #735c0f;
+    background: #fff1b8;
+    @apply p-[.25rem_.55rem] rounded-[99px] text-[.75rem] font-bold;
+  }
+  :where(html.login) label,
+  :where(html.login) input,
+  :where(html.login) button {
+    @apply block w-full box-border;
+  }
+  :where(html.login) label {
+    @apply mt-[1.5rem] font-semibold;
+  }
+  :where(html.login) input {
+    @apply m-[.45rem_0_1rem] p-[.75rem];
+    border: 1px solid #aaa;
+    @apply rounded-[8px];
+  }
+  :where(html.login) button {
+    @apply p-[.8rem];
+    border: 0;
+    @apply rounded-[8px];
+    background: #22543d;
+    color: white;
+    @apply font-bold;
+  }
+  :where(html.login) .error {
+    color: #a11;
+  }
+
+  /* chrome */
+  html.chrome {
+    font-family:
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    @apply text-ink bg-canvas text-[14px] leading-[1.5];
+  }
+  :where(html.chrome) * {
+    @apply box-border;
+  }
+  :where(html.chrome) body {
+    @apply m-0;
+  }
+  :where(html.chrome) a {
+    @apply text-link;
+    text-underline-offset: 3px;
+  }
+  :where(html.chrome) .skip {
+    @apply absolute left-[16px] top-[-80px] p-3;
+    background: white;
+    @apply z-[2];
+  }
+  :where(html.chrome) .skip:focus {
+    @apply top-[12px];
+  }
+  :where(html.chrome) .topbar {
+    @apply min-h-19;
+    border-bottom: 1px solid #dedfe3;
+    @apply flex items-center gap-6 p-[16px_28px];
+  }
+  :where(html.chrome) .topbar form {
+    @apply ml-auto;
+  }
+  :where(html.chrome) .brand {
+    @apply flex items-center gap-3 no-underline text-ink text-[26px] font-extrabold tracking-[-1px];
+  }
+  :where(html.chrome) .brand-mark {
+    @apply relative w-6 h-6 bg-ink mr-[5px];
+  }
+  :where(html.chrome) .brand-mark:after {
+    content: "";
+    @apply absolute w-[17px] h-[17px];
+    background: #ffcf4c;
+    @apply rounded-full right-[-7px] bottom-[-5px];
+  }
+  :where(html.chrome) .brand-slash {
+    color: #68748a;
+    @apply font-normal;
+  }
+  :where(html.chrome) .product-name {
+    @apply text-muted text-[13px];
+  }
+  :where(html.chrome) .shell {
+    @apply grid grid-cols-[190px_minmax(0,1fr)] min-h-[calc(100vh_-_76px)];
+  }
+  :where(html.chrome) .sidebar {
+    border-right: 1px solid #dedfe3;
+    @apply p-[30px_14px];
+  }
+  :where(html.chrome) .sidebar nav {
+    @apply grid gap-2;
+  }
+  :where(html.chrome) .sidebar a {
+    @apply flex items-center gap-3 min-h-11 p-[10px_12px] text-ink no-underline;
+    font:
+      13px ui-monospace,
+      monospace;
+    @apply rounded-[3px];
+  }
+  :where(html.chrome) .sidebar a:hover {
+    background: #f0eee7;
+  }
+  :where(html.chrome) .sidebar a[aria-current] {
+    @apply bg-selected;
+  }
+  :where(html.chrome) .nav-symbol {
+    @apply w-[18px] text-center text-muted;
+  }
+  :where(html.chrome) main {
+    @apply min-w-0 w-full max-w-240 m-[0_auto] p-[38px_40px_28px];
+  }
+  :where(html.chrome) h1 {
+    @apply text-[32px] leading-[1.2] tracking-[-1.1px] m-[16px_0_10px];
+  }
+  :where(html.chrome) .sub {
+    @apply text-muted leading-[1.6];
+    overflow-wrap: anywhere;
+  }
+  :where(html.chrome) .card {
+    @apply bg-surface;
+    border: 1px solid #dcdde1;
+    @apply rounded-[4px] p-6 m-[18px_0];
+  }
+  :where(html.chrome) button {
+    @apply inline-block min-h-10;
+    border: 1px solid #152443;
+    @apply rounded-[3px] p-[10px_16px] bg-ink;
+    color: white;
+    font: inherit;
+    @apply font-semibold cursor-pointer;
+  }
+  :where(html.chrome) button:hover {
+    background: #293e64;
+  }
+  :where(html.chrome) .topbar button {
+    @apply bg-transparent text-ink border-control;
+    font:
+      12px ui-monospace,
+      monospace;
+  }
+  :where(html.chrome) .topbar button:hover {
+    background: #edf1f8;
+  }
+  :where(html.chrome) .danger {
+    background: transparent;
+    color: #9c3030;
+    border-color: #be7777;
+  }
+  :where(html.chrome) .danger:hover {
+    background: #fff0f0;
+  }
+  :where(html.chrome) .badge {
+    @apply inline-block;
+    font:
+      12px ui-monospace,
+      monospace;
+    @apply rounded-[3px] p-[5px_8px] bg-inset;
+  }
+  :where(html.chrome) .connected {
+    @apply bg-positive text-positive-ink;
+  }
+  :where(html.chrome) code {
+    font-family: ui-monospace, monospace;
+    overflow-wrap: anywhere;
+  }
+  :where(html.chrome) .code {
+    @apply block bg-inset p-4 rounded-[3px] text-[14px] m-[14px_0];
+  }
+  :where(html.chrome) .row {
+    @apply flex items-center justify-between gap-4;
+  }
+  :where(html.chrome) .url {
+    overflow-wrap: anywhere;
+    @apply text-[13px];
+  }
+  :where(html.chrome) form {
+    @apply m-0;
+  }
+  :where(html.chrome) a:focus-visible,
+  :where(html.chrome) button:focus-visible {
+    outline: 3px solid #2866cb;
+    @apply outline-offset-[3px];
+  }
+  :where(html.chrome) footer {
+    @apply text-muted text-[12px] mt-8 leading-[1.6];
+  }
+  @media (max-width: 800px) {
+    :where(html.chrome) .shell {
+      @apply grid-cols-[1fr] min-h-0;
+    }
+    :where(html.chrome) .sidebar {
+      @apply p-[12px_20px];
+      border-right: 0;
+      border-bottom: 1px solid #dedfe3;
+    }
+    :where(html.chrome) .sidebar nav {
+      @apply flex flex-wrap;
+    }
+    :where(html.chrome) main {
+      @apply p-[28px_20px];
+    }
+  }
+  @media (max-width: 600px) {
+    :where(html.chrome) .topbar {
+      @apply p-[16px_20px];
+    }
+    :where(html.chrome) .product-name {
+      @apply hidden;
+    }
+    :where(html.chrome) .card {
+      @apply p-4;
+    }
+    :where(html.chrome) .row {
+      @apply items-start flex-col;
+    }
+  }
+  @media (max-width: 480px) {
+    :where(html.chrome) .topbar {
+      @apply flex-wrap gap-3;
+    }
+    :where(html.chrome) .sidebar {
+      @apply p-[10px];
+    }
+    :where(html.chrome) .sidebar nav {
+      @apply grid grid-cols-2;
+    }
+    :where(html.chrome) .sidebar a {
+      @apply min-h-10 gap-[6px] p-[10px] text-[12px];
+    }
+    :where(html.chrome) main {
+      @apply py-6 px-4;
+    }
+    :where(html.chrome) h1 {
+      @apply text-[28px];
+    }
+  }
+}

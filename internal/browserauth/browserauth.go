@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/webui"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
@@ -156,6 +157,8 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 
 // Register registers the authentication endpoints on mux.
 func (a *Auth) Register(mux *http.ServeMux) {
+	// Sign-in needs styling before a session exists. Expose only this exact file.
+	mux.HandleFunc("GET /assets/ui.css", webui.Stylesheet)
 	cop := http.NewCrossOriginProtection()
 	if a.portalUserID != "" {
 		mux.Handle("GET /login", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -488,10 +491,5 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 }
 
 var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Gateway sign in</title><style>
-body{margin:0;background:#f4f1ea;color:#20231f;font:16px system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}
-main{background:white;padding:2.5rem;border-radius:16px;box-shadow:0 12px 40px #0002;width:min(22rem,calc(100% - 4rem))}
-h1{margin:.2rem 0}.badge{color:#735c0f;background:#fff1b8;padding:.25rem .55rem;border-radius:99px;font-size:.75rem;font-weight:700}
-label,input,button{display:block;width:100%;box-sizing:border-box}label{margin-top:1.5rem;font-weight:600}input{margin:.45rem 0 1rem;padding:.75rem;border:1px solid #aaa;border-radius:8px}button{padding:.8rem;border:0;border-radius:8px;background:#22543d;color:white;font-weight:700}.error{color:#a11}
-</style></head><body><main><span class="badge">DEMO MODE</span><h1>Owner sign in</h1><p>This demo uses a local password.</p>{{if .}}<p class="error">{{.}}</p>{{end}}<form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`))
+<html lang="en" class="login"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gateway sign in</title><link rel="stylesheet" href="/assets/ui.css"></head><body><main><span class="badge">DEMO MODE</span><h1>Owner sign in</h1><p>This demo uses a local password.</p>{{if .}}<p class="error">{{.}}</p>{{end}}<form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`))
