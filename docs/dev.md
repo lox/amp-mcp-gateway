@@ -147,6 +147,19 @@ owner-authenticated, same-origin POST. Direct GET links do not start a grant.
 The response opens the provider in a new navigation, preserving the gateway's
 `form-action 'self'` policy; a Continue link is available if JavaScript is disabled.
 
+OAuth grants use an explicit credential binding: connection ID, endpoint, account,
+network policy and OAuth client, authorization/token endpoints, secrets, scopes,
+resource and authentication style. Unrelated connection fields do not change it.
+The binding stores secret environment-variable names, not their resolved values.
+Changing a bound field requires reconnecting; configuration replacement separately
+compares the full connection so runtime settings still take effect.
+
+**Upgrade from whole-connection credential hashes:** reconnect each OAuth connection
+once after deploying the explicit binding. There is no migration or legacy-key
+fallback; old token records remain encrypted but are not used. Reconnecting revokes
+queued approvals. Test the connection afterwards, and do not retry operations with
+an unknown outcome automatically.
+
 The gateway checks OAuth grants every minute, refreshing tokens within two minutes
 of expiry even while idle. Expired tokens also refresh on use. Credentials, rotated
 refresh tokens, last-refresh times and refresh outcomes are encrypted and survive
