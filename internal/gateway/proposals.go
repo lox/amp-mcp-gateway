@@ -60,11 +60,16 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		for _, c := range g.cfg.Connections {
 			found = found || c.ID == change.Connection
 		}
+		native := false
 		for _, integration := range g.cfg.Integrations {
-			found = found || integration.ID == change.Connection
+			native = native || integration.ID == change.Connection
 		}
+		found = found || native
 		if !found || (change.Default != "" && !validPolicy(change.Default)) || len(change.Tools) > 1000 {
 			return policyResult{}, errors.New("unknown provider or invalid policies")
+		}
+		if native && change.Private != nil {
+			return policyResult{}, errors.New("private access is only supported for remote connections")
 		}
 		if change.Private != nil && *change.Private && g.cfg.AmpUserID == "" {
 			return policyResult{}, errors.New("private connections require Amp workload identity")

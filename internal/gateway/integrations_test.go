@@ -211,6 +211,10 @@ func TestFlyPolicyCanUseAgentProposalFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	private := true
+	if _, err := g.proposePolicies(t.Context(), policyInput{Changes: []policyChange{{Connection: flyIntegrationID, Private: &private}}}); err == nil {
+		t.Fatal("native integration accepted a private-connection proposal")
+	}
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
