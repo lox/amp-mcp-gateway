@@ -410,7 +410,9 @@ builds branches and pull requests; fork PRs are disabled. The pipeline uploads
 `.buildkite/pipeline.yml` from the checkout.
 
 Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
-run formatting checks, race tests, vet and build the gateway. A hosted
+run formatting checks, race tests, vet and build the gateway. A separate plugin-test
+job installs the pinned Bun version through mise and runs `mise run check-plugin`.
+It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
 fall back to normal downloads and compilation. The deploy job installs only
 `flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote

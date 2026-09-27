@@ -12,6 +12,14 @@ steps:
     command: .buildkite/check
     timeout_in_minutes: 15
 
+  - label: ":bun: Test Amp plugin"
+    key: check-plugin
+    plugins:
+      - mise#v1.1.5:
+          install_args: bun
+    command: mise run check-plugin
+    timeout_in_minutes: 5
+
   - label: ":fly: Deploy main"
     key: deploy
     depends_on: check
