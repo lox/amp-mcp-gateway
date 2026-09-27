@@ -214,6 +214,23 @@ func TestJavaScriptIntegrationUsesGovernedDispatch(t *testing.T) {
 	if !strings.Contains(string(o.Result), "plugin:approved") {
 		t.Fatalf("unexpected result: %s", o.Result)
 	}
+	var failure callInput
+	failure.RequestID = "plugin-failure"
+	failure.Calls = append(failure.Calls, struct {
+		ToolID    string         `json:"tool_id"`
+		Arguments map[string]any `json:"arguments"`
+	}{"fixture.network", map[string]any{}})
+	o, err = g.submit(t.Context(), failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	o = await(t, s, o.ID, "failed")
+	if !strings.Contains(string(o.Result), "without external side effects") {
+		t.Fatalf("deterministic plugin failure was not retained: %s", o.Result)
+	}
 }
 
 func TestPolicyChangeAndUnknownOutcome(t *testing.T) {

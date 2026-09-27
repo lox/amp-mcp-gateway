@@ -349,11 +349,19 @@ do not exist in the guest.
 At startup the gateway limits manifests and plugin input/output to 1 MiB and Wasm
 artifacts to 32 MiB. It compiles the artifact once, then creates a fresh instance
 for every operation with a 64 MiB linear-memory limit and cancellable execution.
+Startup creates and closes one capability-free validation instance so every manifest
+tool must match a real export; it does not call those exports.
 WASI is enabled because the JavaScript PDK requires it, but the module receives no
 mounted filesystem, environment, stdout/stderr or allowed HTTP hosts. Extism's
 generic HTTP import is therefore denied. Manifests may reference only a sibling
 `.wasm` file. Startup rejects `EXTISM_ENABLE_WASI_OUTPUT` when plugins are configured
 because that SDK override would expose stdout and stderr.
+
+Plugin traps, timeouts, oversized or malformed results are returned as MCP error
+results and persisted as `failed`. They are not `unknown`: without external
+capabilities, the plugin cannot have produced an upstream effect. The gateway will
+reserve `unknown` for a future HTTP broker reporting that a mutation may have left
+the process without a reliable response.
 
 The manifest and Wasm digest is part of the operation's configuration binding.
 Changing either invalidates queued approvals after restart. Plugins are not yet

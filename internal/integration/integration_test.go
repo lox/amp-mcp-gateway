@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,12 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func fixtureManager(t *testing.T) *Manager {
 	t.Helper()
@@ -71,16 +80,56 @@ func TestJavaScriptPluginCall(t *testing.T) {
 func TestJavaScriptPluginSandbox(t *testing.T) {
 	m := fixtureManager(t)
 	binding := m.Binding("fixture")
-	if _, err := m.Call(t.Context(), "fixture", "network", binding, map[string]any{}); err == nil || !strings.Contains(err.Error(), "not allowed") {
-		t.Fatalf("network access was not denied: %v", err)
+	requests := 0
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("unexpected")), Header: http.Header{}}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	result, err := m.Call(t.Context(), "fixture", "network", binding, map[string]any{})
+	if err != nil || !result.IsError || requests != 0 {
+		t.Fatalf("network access was not denied: result=%#v err=%v requests=%d", result, err, requests)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := m.Call(ctx, "fixture", "spin", binding, map[string]any{}); err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
-		t.Fatalf("runaway plugin was not stopped: %v", err)
+	result, err = m.Call(ctx, "fixture", "spin", binding, map[string]any{})
+	if err != nil || !result.IsError {
+		t.Fatalf("runaway plugin was not stopped: result=%#v err=%v", result, err)
 	}
 	if _, err := m.Call(t.Context(), "fixture", "echo", binding, map[string]any{"text": "after timeout"}); err != nil {
 		t.Fatalf("fresh instance failed after timeout: %v", err)
+	}
+}
+
+func TestManifestToolsMustBeExported(t *testing.T) {
+	directory := t.TempDir()
+	wasm, err := os.ReadFile(filepath.Join("testdata", "fixture", "fixture.wasm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "fixture.wasm"), wasm, 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join("testdata", "fixture", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest manifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Tools = append(manifest.Tools, Tool{Name: "missing", Description: "Missing export", InputSchema: map[string]any{"type": "object"}})
+	raw, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(directory, "manifest.json")
+	if err := os.WriteFile(manifestPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(t.Context(), []Config{{Manifest: manifestPath}}, nil); err == nil || !strings.Contains(err.Error(), "not exported") {
+		t.Fatalf("missing export accepted: %v", err)
 	}
 }
 

@@ -233,6 +233,10 @@ and returns a JSON-encoded MCP `CallToolResult`. The gateway synthesizes
 `example.lookup`, validates its schema, persists and approves calls normally, and
 binds queued authority to the exact manifest and Wasm digest. Each call gets a fresh
 instance with a 64 MiB memory ceiling and context cancellation.
+Startup rejects manifests whose declared tool functions are not exported. Runtime
+traps, timeouts and malformed results are recorded as definite failed operations,
+not ambiguous upstream writes, because this capability set cannot cause external
+effects.
 
 This slice deliberately grants no filesystem, environment, output stream or network
 access. It proves sandboxed dispatch but cannot call provider APIs yet. The next

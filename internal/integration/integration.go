@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"time"
 
 	extism "github.com/extism/go-sdk"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -144,6 +145,24 @@ func load(ctx context.Context, cfg Config) (loaded, error) {
 	if err != nil {
 		return loaded{}, fmt.Errorf("compile wasm: %w", err)
 	}
+	validationCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	instance, err := compiled.Instance(validationCtx, extism.PluginInstanceConfig{ModuleConfig: wazero.NewModuleConfig()})
+	if err != nil {
+		compiled.Close(context.Background())
+		return loaded{}, fmt.Errorf("instantiate wasm for validation: %w", err)
+	}
+	for _, tool := range manifest.Tools {
+		if !instance.FunctionExists(tool.Name) {
+			instance.Close(context.Background())
+			compiled.Close(context.Background())
+			return loaded{}, fmt.Errorf("tool %q is not exported by the plugin", tool.Name)
+		}
+	}
+	if err := instance.Close(context.Background()); err != nil {
+		compiled.Close(context.Background())
+		return loaded{}, fmt.Errorf("close validation instance: %w", err)
+	}
 	return loaded{
 		definition: Definition{ID: manifest.ID, Name: manifest.Name, Version: manifest.Version, Account: cfg.Account, Policy: cfg.Policy, Digest: digest, Tools: slices.Clone(manifest.Tools)},
 		compiled:   compiled,
@@ -246,31 +265,35 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	}
 	input, err := json.Marshal(args)
 	if err != nil {
-		return nil, err
+		return pluginFailure(), nil
 	}
 	if len(input) > maxInputBytes {
-		return nil, errors.New("integration plugin input exceeds limit")
+		return pluginFailure(), nil
 	}
 	instance, err := plugin.compiled.Instance(ctx, extism.PluginInstanceConfig{ModuleConfig: wazero.NewModuleConfig()})
 	if err != nil {
-		return nil, fmt.Errorf("instantiate integration plugin: %w", err)
+		return pluginFailure(), nil
 	}
 	defer instance.Close(context.Background())
 	exit, output, err := instance.CallWithContext(ctx, tool, input)
 	if err != nil {
-		return nil, fmt.Errorf("call integration plugin: %w", err)
+		return pluginFailure(), nil
 	}
 	if exit != 0 {
-		return nil, fmt.Errorf("integration plugin exited with status %d", exit)
+		return pluginFailure(), nil
 	}
 	if len(output) > maxOutputBytes {
-		return nil, errors.New("integration plugin output exceeds limit")
+		return pluginFailure(), nil
 	}
 	var result mcp.CallToolResult
 	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, errors.New("integration plugin returned an invalid MCP tool result")
+		return pluginFailure(), nil
 	}
 	return &result, nil
+}
+
+func pluginFailure() *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Integration plugin failed without external side effects. The operation can be retried after fixing the plugin."}}}
 }
 
 // Close releases compiled plugin runtimes.

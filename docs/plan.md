@@ -73,7 +73,8 @@ the Extism PDK to Wasm. Each operation gets a fresh wazero instance, bounded mem
 context cancellation and no filesystem, environment, stdout/stderr or network capability.
 The immutable operation binding includes the exact manifest and artifact digest.
 A checked-in JavaScript fixture proves successful dispatch, schema validation,
-approval/audit routing, network denial and runaway-code cancellation.
+export validation, approval/audit routing, definite sandbox-failure reporting,
+network denial and runaway-code cancellation.
 
 The next plugin slice is a gateway-owned HTTP host function. It must restrict
 destinations, inject credentials outside guest memory where possible, bound request
