@@ -215,11 +215,34 @@ type operationResult struct {
 	ID          string          `json:"id"`
 	Status      string          `json:"status"`
 	ApprovalURL string          `json:"approval_url"`
+	ArtifactURL string          `json:"artifact_url,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
 }
 
 func (g *Gateway) result(o store.Operation) operationResult {
-	return operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
+	out := operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
+	if _, mimeType, ok := firstImageContent(o.Result); ok && o.Status == "succeeded" && safeImageMIME(mimeType) {
+		out.ArtifactURL = g.cfg.BaseURL + "/operations/" + o.ID + "/image"
+	}
+	return out
+}
+
+func firstImageContent(result json.RawMessage) ([]byte, string, bool) {
+	var upstreamResult mcp.CallToolResult
+	if json.Unmarshal(result, &upstreamResult) != nil {
+		return nil, "", false
+	}
+	for _, block := range upstreamResult.Content {
+		image, ok := block.(*mcp.ImageContent)
+		if ok {
+			return image.Data, image.MIMEType, true
+		}
+	}
+	return nil, "", false
+}
+
+func safeImageMIME(mimeType string) bool {
+	return mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "image/webp"
 }
 
 func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, operationResult) {
@@ -517,6 +540,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 		g.connectionSettings(w, r, m)
 	})
 	mux.HandleFunc("GET /operations/{id}", g.operation)
+	mux.HandleFunc("GET /operations/{id}/image", g.operationImage)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
 		decision := r.PathValue("decision")
 		if decision != "approve" && decision != "deny" {
@@ -650,6 +674,24 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject})
+}
+
+func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
+	o, err := g.store.Get(r.Context(), r.PathValue("id"))
+	if err != nil || o.Status != "succeeded" {
+		http.NotFound(w, r)
+		return
+	}
+	data, mimeType, ok := firstImageContent(o.Result)
+	if !ok || !safeImageMIME(mimeType) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(data)
 }
 
 func (g *Gateway) render(w http.ResponseWriter, data any) {
