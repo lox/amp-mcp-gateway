@@ -5,7 +5,6 @@ let currentConfig = null;
 let operationQueue = Promise.resolve();
 const completedCommands = new Set();
 const maxSnapshotBytes = 6 * 1024 * 1024;
-const maxSnapshotNodes = 500;
 const maxSnapshotTextLength = 16 * 1024;
 const snapshotEncoder = new TextEncoder();
 
@@ -197,9 +196,9 @@ async function execute(target, tool, args) {
     case "screenshot":
       return screenshot(target);
     case "click":
-      return click(target, args.document_id, args.backend_node_id);
+      return click(target, args.document_id, args.backend_node_id, args.expected_url, args.expected_role, args.expected_name);
     case "type":
-      return typeText(target, args.document_id, args.backend_node_id, args.text, args.submit === true);
+      return typeText(target, args.document_id, args.backend_node_id, args.expected_url, args.expected_role, args.expected_name, args.text, args.submit === true);
     case "scroll":
       return scroll(target, args.delta_y);
     case "navigate":
@@ -241,7 +240,7 @@ async function snapshot(target) {
       ...properties,
     };
     const nodeBytes = snapshotEncoder.encode(JSON.stringify(snapshotNode)).byteLength;
-    if (result.nodes.length >= maxSnapshotNodes || payloadBytes + nodeBytes + (result.nodes.length ? 1 : 0) > maxSnapshotBytes) {
+    if (payloadBytes + nodeBytes + (result.nodes.length ? 1 : 0) > maxSnapshotBytes) {
       result.truncated = true;
       break;
     }
@@ -269,8 +268,10 @@ async function screenshot(target) {
   throw new Error("Screenshot exceeds the 6 MiB bridge payload limit.");
 }
 
-async function click(target, documentID, backendNodeId) {
+async function click(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName) {
+  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
   await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
   const {model} = await documentCommand(target, documentID, "DOM.getBoxModel", {backendNodeId});
   const quad = model.content || model.border;
   const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
@@ -281,8 +282,10 @@ async function click(target, documentID, backendNodeId) {
   return {clicked: backendNodeId};
 }
 
-async function typeText(target, documentID, backendNodeId, text, submit) {
+async function typeText(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName, text, submit) {
+  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
   await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
   await documentCommand(target, documentID, "DOM.focus", {backendNodeId});
   const {os} = await chrome.runtime.getPlatformInfo();
   const modifiers = selectAllModifier(os);
@@ -296,6 +299,19 @@ async function typeText(target, documentID, backendNodeId, text, submit) {
     await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
   }
   return {typed: backendNodeId, submitted: submit};
+}
+
+async function verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName) {
+  if (typeof expectedURL !== "string" || typeof expectedRole !== "string" || typeof expectedName !== "string") {
+    throw new Error("The mutation must identify the snapshotted URL, role, and accessible name.");
+  }
+  const tab = await chrome.tabs.get(target.tabId);
+  if (tab.url !== expectedURL) throw new Error("The shared tab URL changed after the accessibility snapshot.");
+  const tree = await documentCommand(target, documentID, "Accessibility.getPartialAXTree", {backendNodeId, fetchRelatives: false});
+  const node = tree.nodes?.find((candidate) => candidate.backendDOMNodeId === backendNodeId);
+  if (!node || node.role?.value !== expectedRole || node.name?.value !== expectedName) {
+    throw new Error("The target element changed after the accessibility snapshot.");
+  }
 }
 
 async function currentDocument(target) {
@@ -315,7 +331,10 @@ function selectAllModifier(platform) {
 }
 
 async function scroll(target, deltaY) {
-  await command(target, "Input.dispatchMouseEvent", {type: "mouseWheel", x: 0, y: 0, deltaX: 0, deltaY});
+  if (typeof deltaY !== "number" || !Number.isFinite(deltaY) || Math.abs(deltaY) > 10000) {
+    throw new Error("Scroll distance must be a finite number between -10000 and 10000.");
+  }
+  await command(target, "Runtime.evaluate", {expression: `window.scrollBy(0, ${deltaY})`});
   return {scrolled: deltaY};
 }
 

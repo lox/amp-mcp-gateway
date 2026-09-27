@@ -89,8 +89,9 @@ normal Chrome profile without exposing a listener on your machine.
 3. Open the tab you want to share, open the extension, and paste the displayed
    gateway URL and pairing code.
 4. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
-   accessibility-tree `backend_node_id` values. Pass both to `browser.click` and
-   `browser.type`; navigation invalidates the document ID and requires a new snapshot.
+   accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,
+   role, and accessible name to `browser.click` and `browser.type`; the extension
+   rejects mutations if any target descriptor changed after the snapshot.
 
 The available tools are `browser.snapshot`, `browser.screenshot`, `browser.scroll`,
 `browser.click`, `browser.type`, and `browser.navigate`. The example policies allow

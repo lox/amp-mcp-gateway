@@ -139,6 +139,73 @@ test("snapshots bound accessible text and total payload size", async () => {
   sentCommands.splice(0);
 });
 
+test("snapshots do not hide compact nodes after the first 500", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'wide-snapshot', tabId: 198}", context);
+  const nodes = Array.from({length: 600}, (_, index) => ({
+    nodeId: `node-${index}`,
+    backendDOMNodeId: index + 1,
+    role: {value: "button"},
+    name: {value: `Button ${index}`},
+  }));
+  commandResponses.push(
+    {frameTree: {frame: {loaderId: "wide-document"}}},
+    {nodes},
+    {frameTree: {frame: {loaderId: "wide-document"}}},
+  );
+  const result = await context.snapshotForTest({shareID: "wide-snapshot", tabId: 198});
+  assert.equal(result.nodes.length, 600);
+  assert.equal(result.truncated, false);
+  sentCommands.splice(0);
+});
+
+test("node mutations reject changed human-readable targets", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'described-mutation', tabId: 199}", context);
+  commandResponses.push(
+    {frameTree: {frame: {loaderId: "described-document"}}},
+    {nodes: [{backendDOMNodeId: 7, role: {value: "button"}, name: {value: "Delete account"}}]},
+  );
+  await assert.rejects(
+    context.executeForTest(
+      {shareID: "described-mutation", tabId: 199},
+      "click",
+      {document_id: "described-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
+    ),
+    /target element changed/,
+  );
+  assert.deepEqual(sentCommands.splice(0).map((call) => call.method), ["Page.getFrameTree", "Accessibility.getPartialAXTree"]);
+});
+
+test("node mutations recheck matching human-readable targets after scrolling", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'matching-mutation', tabId: 201}", context);
+  const document = {frameTree: {frame: {loaderId: "matching-document"}}};
+  const node = {nodes: [{backendDOMNodeId: 7, role: {value: "button"}, name: {value: "Save"}}]};
+  commandResponses.push(
+    document, node,
+    document, {},
+    document, node,
+    document, {model: {content: [0, 0, 10, 0, 10, 10, 0, 10]}},
+    document, {},
+    document, {},
+    document, {},
+  );
+  const result = await context.executeForTest(
+    {shareID: "matching-mutation", tabId: 201},
+    "click",
+    {document_id: "matching-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
+  );
+  assert.equal(result.clicked, 7);
+  assert.equal(sentCommands.splice(0).filter((call) => call.method === "Accessibility.getPartialAXTree").length, 2);
+});
+
+test("scroll moves the document without hit testing a page element", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'scroll-share', tabId: 200}", context);
+  commandResponses.push({});
+  await context.executeForTest({shareID: "scroll-share", tabId: 200}, "scroll", {delta_y: 240});
+  const call = sentCommands.pop();
+  assert.equal(call.method, "Runtime.evaluate");
+  assert.equal(call.params.expression, "window.scrollBy(0, 240)");
+});
+
 test("node mutations reject IDs from an earlier document", async () => {
   vm.runInNewContext("currentConfig = {shareID: 'mutation-share', tabId: 210}", context);
   commandResponses.push({frameTree: {frame: {loaderId: "document-two"}}});
@@ -146,7 +213,7 @@ test("node mutations reject IDs from an earlier document", async () => {
     context.executeForTest(
       {shareID: "mutation-share", tabId: 210},
       "click",
-      {document_id: "document-one", backend_node_id: 7},
+      {document_id: "document-one", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
     ),
     /document changed/,
   );
