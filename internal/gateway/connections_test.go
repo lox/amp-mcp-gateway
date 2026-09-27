@@ -548,6 +548,27 @@ func TestOAuthStatusPage(t *testing.T) {
 	}
 }
 
+func TestConnectionHealthTargetHasCSSSafePrefix(t *testing.T) {
+	for _, id := range []string{"notes", "1notes", "-1notes", "_notes"} {
+		t.Run(id, func(t *testing.T) {
+			if !connectionID.MatchString(id) {
+				t.Fatal("test must exercise a valid connection name")
+			}
+			w := httptest.NewRecorder()
+			if err := page.ExecuteTemplate(w, "connection-health", map[string]any{"ID": id}); err != nil {
+				t.Fatal(err)
+			}
+			// Prefixing with a letter makes even digit-prefixed connection names
+			// valid CSS ID selectors. Both the target and selector must keep it.
+			for _, want := range []string{`id="health-` + id + `"`, `hx-target="#health-` + id + `"`, `hx-post="/connections/` + id + `/test"`} {
+				if !strings.Contains(w.Body.String(), want) {
+					t.Fatalf("missing %s", want)
+				}
+			}
+		})
+	}
+}
+
 func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 	g, s, _ := fixture(t)
 	var requests, calls atomic.Int32
