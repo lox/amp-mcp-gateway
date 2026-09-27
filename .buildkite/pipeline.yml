@@ -22,7 +22,7 @@ steps:
 
   - label: ":fly: Deploy main"
     key: deploy
-    depends_on: check
+    depends_on: [check, check-plugin]
     if: build.branch == "main" && build.pull_request.id == null
     plugins:
       - mise#v1.1.5:
