@@ -11,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -65,9 +67,22 @@ type Gateway struct {
 
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
-	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	cfg.Integrations = slices.Clone(cfg.Integrations)
+	cfg.Tools = slices.Clone(cfg.Tools)
+	cfg.ToolDefaults = maps.Clone(cfg.ToolDefaults)
+	legacyFlyPolicy := ""
+	legacyFlyTools := 0
+	for _, tool := range cfg.Tools {
+		if tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Connection == flyIntegrationID && tool.Name == flyRequestToken {
+			legacyFlyTools++
+			legacyFlyPolicy = tool.Policy
+		}
+	}
+	if legacyFlyTools > 1 {
+		return nil, errors.New("duplicate tool ID")
+	}
 	integrations := make(map[string]Integration, len(cfg.Integrations))
-	for _, integration := range cfg.Integrations {
+	for i, integration := range cfg.Integrations {
 		if integration.ID != flyIntegrationID || integration.Provider != "fly" {
 			return nil, errors.New("unsupported integration configuration")
 		}
@@ -82,6 +97,16 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		if err := fly.ValidateToken(integration.Credential); err != nil {
 			return nil, errors.New("invalid Fly.io integration credential")
 		}
+		if integration.Policy == "" {
+			integration.Policy = legacyFlyPolicy
+			if integration.Policy == "" {
+				integration.Policy = cfg.defaultPolicy(integration.ID)
+			}
+		}
+		if !validPolicy(integration.Policy) {
+			return nil, errors.New("invalid integration policy")
+		}
+		cfg.Integrations[i] = integration
 		integrations[integration.ID] = integration
 	}
 	if cfg.AmpUserID == "" {
@@ -91,6 +116,17 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 			}
 		}
 	}
+	if cfg.ToolDefaults == nil {
+		cfg.ToolDefaults = map[string]string{}
+	}
+	for _, integration := range cfg.Integrations {
+		cfg.Tools = slices.DeleteFunc(cfg.Tools, func(tool Tool) bool {
+			return tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Connection == flyIntegrationID && tool.Name == flyRequestToken
+		})
+		cfg.ToolDefaults[integration.ID] = integration.Policy
+		cfg.Tools = append(cfg.Tools, flyTool(""))
+	}
+	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
 	for _, policy := range cfg.ToolDefaults {
 		if !validPolicy(policy) {
 			return nil, errors.New("invalid connection default")
@@ -238,14 +274,22 @@ func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, ope
 
 // MCP serves execution and policy proposal tools behind a revocable owner bearer token.
 func (g *Gateway) MCP(token string) http.Handler {
-	h := g.mcpHandler()
+	return g.bearerAuthenticated(token, g.mcpHandler())
+}
+
+// Leases serves one-time credential redemption for legacy bearer clients.
+func (g *Gateway) Leases(token string) http.Handler {
+	return g.bearerAuthenticated(token, http.HandlerFunc(g.redeemLease))
+}
+
+func (g *Gateway) bearerAuthenticated(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.cfg.AmpUserID != "" || token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", 401)
 			return
 		}
-		h.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }
 

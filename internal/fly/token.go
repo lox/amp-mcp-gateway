@@ -10,6 +10,8 @@ import (
 	"github.com/superfly/macaroon/flyio"
 )
 
+const clockSkewAllowance = 30 * time.Second
+
 // ValidateToken verifies that raw is a syntactically valid Fly permission token.
 // Only Fly.io can verify its signature and current revocation state.
 func ValidateToken(raw string) error {
@@ -39,7 +41,7 @@ func Attenuate(parent string, now time.Time, lifetime time.Duration) (string, er
 	if err != nil {
 		return "", errors.New("decode Fly.io access token")
 	}
-	if err := m.Add(&macaroon.ValidityWindow{NotBefore: now.Unix(), NotAfter: now.Add(lifetime).Unix()}); err != nil {
+	if err := m.Add(&macaroon.ValidityWindow{NotBefore: now.Add(-clockSkewAllowance).Unix(), NotAfter: now.Add(lifetime).Unix()}); err != nil {
 		return "", errors.New("attenuate Fly.io access token")
 	}
 	permission, err = m.Encode()

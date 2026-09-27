@@ -27,7 +27,7 @@ const (
 // Integration is a browser-managed native capability provider. Credential is
 // encrypted inside the catalogue and never reaches presentation data.
 type Integration struct {
-	ID, Provider, Account, Credential string
+	ID, Provider, Account, Credential, Policy string
 }
 
 func flyTool(policy string) Tool {
@@ -114,9 +114,7 @@ func (g *Gateway) saveFlyIntegration(w http.ResponseWriter, r *http.Request, m *
 	}
 	next := g.catalogue()
 	next.Integrations = slices.DeleteFunc(next.Integrations, func(i Integration) bool { return i.ID == flyIntegrationID })
-	next.Integrations = append(next.Integrations, Integration{ID: flyIntegrationID, Provider: "fly", Account: account, Credential: credential})
-	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.Connection == flyIntegrationID })
-	next.Tools = append(next.Tools, flyTool(policy))
+	next.Integrations = append(next.Integrations, Integration{ID: flyIntegrationID, Provider: "fly", Account: account, Credential: credential, Policy: policy})
 	err := g.saveCatalogue(r.Context(), next, m, store.Event{Kind: "integration-saved", Actor: browserActor(r)})
 	g.mu.Unlock()
 	if err != nil {
@@ -135,7 +133,6 @@ func (g *Gateway) removeFlyIntegration(w http.ResponseWriter, r *http.Request, m
 	}
 	next := g.catalogue()
 	next.Integrations = slices.DeleteFunc(next.Integrations, func(i Integration) bool { return i.ID == flyIntegrationID })
-	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.ID == flyIntegrationID+"."+flyRequestToken })
 	err := g.saveCatalogue(r.Context(), next, m, store.Event{Kind: "integration-removed", Actor: browserActor(r)})
 	g.mu.Unlock()
 	if err != nil {

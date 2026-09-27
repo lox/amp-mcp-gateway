@@ -338,9 +338,10 @@ unset FLY_ACCESS_TOKEN
 ```
 
 The URL is bound to the requesting Amp user, workspace, project and thread, and can
-be consumed once. The Fly token's validity starts at redemption, retains all parent
-caveats, and cannot be individually listed or revoked. Revoking the parent invalidates
-its derived tokens. Replacing or removing the integration invalidates unredeemed URLs,
+be consumed once. The Fly token's expiry is calculated at redemption; its not-before
+time is backdated 30 seconds for clock skew. It retains all parent caveats and cannot
+be individually listed or revoked. Revoking the parent invalidates its derived tokens.
+Replacing or removing the integration invalidates unredeemed URLs,
 denies queued calls and revokes standing approvals. The short-lived token can be
 reused until expiry, and the gateway does not audit the subsequent Fly operations.
 An agent with arbitrary shell access can deliberately print it; the shell pattern

@@ -202,6 +202,22 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 			next.PrivateConnections = map[string]bool{}
 		}
 		for _, d := range p.Drafts {
+			native := false
+			for i := range next.Integrations {
+				if next.Integrations[i].ID != d.Connection {
+					continue
+				}
+				native = true
+				next.Integrations[i].Policy = d.Default
+				for _, tool := range d.Tools {
+					if tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Policy != "" {
+						next.Integrations[i].Policy = tool.Policy
+					}
+				}
+			}
+			if native {
+				continue
+			}
 			next.ToolDefaults[d.Connection] = d.Default
 			if d.Private {
 				next.PrivateConnections[d.Connection] = true

@@ -40,7 +40,7 @@ func TestAttenuateAddsRequestedWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	windows := macaroon.GetCaveats[*macaroon.ValidityWindow](&m.UnsafeCaveats)
-	if len(windows) != 1 || windows[0].NotBefore != now.Unix() || windows[0].NotAfter != now.Add(10*time.Minute).Unix() {
+	if len(windows) != 1 || windows[0].NotBefore != now.Add(-clockSkewAllowance).Unix() || windows[0].NotAfter != now.Add(10*time.Minute).Unix() {
 		t.Fatalf("unexpected validity windows: %#v", windows)
 	}
 }

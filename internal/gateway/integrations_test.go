@@ -31,7 +31,7 @@ func gatewayFlyToken(t *testing.T) string {
 }
 
 func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
-	g, s, _ := fixture(t)
+	g, s, b := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
@@ -65,12 +65,19 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 			t.Fatalf("integration credential exposed on %s", path)
 		}
 	}
-	var restored Config
+	restored := g.cfg
 	if err := LoadCatalogue(t.Context(), &restored, s); err != nil {
 		t.Fatal(err)
 	}
-	if len(restored.Integrations) != 1 || restored.Integrations[0].Credential != parent || restored.Tools[1].ID != "fly.request_token" {
+	if len(restored.Integrations) != 1 || restored.Integrations[0].Credential != parent || restored.Integrations[0].Policy != "require_approval" || len(restored.Tools) != 1 {
 		t.Fatalf("Fly integration not restored: %#v %#v", restored.Integrations, restored.Tools)
+	}
+	restarted, err := New(restored, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restarted.tools["fly.request_token"]; !ok {
+		t.Fatal("restored integration did not synthesize its tool")
 	}
 	var request callInput
 	request.RequestID = "fly-lease-request"
@@ -137,12 +144,28 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 	}
 }
 
+func TestFlyIntegrationMigratesPersistedGeneratedTool(t *testing.T) {
+	g, s, b := fixture(t)
+	g.cfg.Integrations = []Integration{{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t)}}
+	g.cfg.Tools = append(g.cfg.Tools, flyTool("allow"))
+
+	restarted, err := New(g.cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.tools["fly.request_token"].Policy != "allow" || restarted.cfg.Integrations[0].Policy != "allow" {
+		t.Fatalf("persisted Fly policy was not migrated: %#v %#v", restarted.tools["fly.request_token"], restarted.cfg.Integrations[0])
+	}
+	if got := restarted.catalogue(); len(got.Tools) != 1 || got.Tools[0].ID == "fly.request_token" {
+		t.Fatalf("generated Fly tool remained in persisted catalogue: %#v", got.Tools)
+	}
+}
+
 func TestFlyCredentialChangeInvalidatesUnredeemedLease(t *testing.T) {
 	g, s, b := fixture(t)
 	parent := gatewayFlyToken(t)
-	integration := Integration{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: parent}
+	integration := Integration{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: parent, Policy: "allow"}
 	g.cfg.Integrations = []Integration{integration}
-	g.cfg.Tools = append(g.cfg.Tools, flyTool("allow"))
 	var err error
 	g, err = New(g.cfg, s, b)
 	if err != nil {
@@ -182,8 +205,7 @@ func TestFlyCredentialChangeInvalidatesUnredeemedLease(t *testing.T) {
 
 func TestFlyPolicyCanUseAgentProposalFlow(t *testing.T) {
 	g, s, b := fixture(t)
-	g.cfg.Integrations = []Integration{{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t)}}
-	g.cfg.Tools = append(g.cfg.Tools, flyTool("require_approval"))
+	g.cfg.Integrations = []Integration{{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t), Policy: "require_approval"}}
 	var err error
 	g, err = New(g.cfg, s, b)
 	if err != nil {
@@ -207,6 +229,13 @@ func TestFlyPolicyCanUseAgentProposalFlow(t *testing.T) {
 	}
 	if g.tools["fly.request_token"].Policy != "deny" {
 		t.Fatal("Fly policy proposal was not applied")
+	}
+	var restored Config
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Integrations) != 1 || restored.Integrations[0].Policy != "deny" || len(restored.Tools) != 1 {
+		t.Fatalf("native policy was not persisted independently of legacy tools: %#v %#v", restored.Integrations, restored.Tools)
 	}
 }
 
@@ -232,11 +261,54 @@ func TestStaleFlyRemovalDoesNotDeleteRemoteConnectionTools(t *testing.T) {
 	}
 }
 
+func TestFailedFlySaveDoesNotMutateLiveIntegration(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	parent := gatewayFlyToken(t)
+	values := url.Values{"account": {"Fixture"}, "token": {parent}, "policy": {"require_approval"}}
+	if w := formRequest(h, cookie, "POST", "/integrations/fly", values); w.Code != http.StatusSeeOther {
+		t.Fatalf("configure Fly: %d %s", w.Code, w.Body.String())
+	}
+	o, err := g.submit(t.Context(), input("running-during-fly-save", "payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "owner", true); err != nil {
+		t.Fatal(err)
+	}
+	running, err := s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := flytoken.Attenuate(parent, time.Now(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values.Set("token", replacement)
+	values.Set("policy", "allow")
+	if w := formRequest(h, cookie, "POST", "/integrations/fly", values); w.Code != http.StatusBadRequest {
+		t.Fatalf("save during dispatch returned %d: %s", w.Code, w.Body.String())
+	}
+	if w := formRequest(h, cookie, "POST", "/integrations/fly/remove", nil); w.Code != http.StatusConflict {
+		t.Fatalf("remove during dispatch returned %d: %s", w.Code, w.Body.String())
+	}
+	integration, ok := g.integration(flyIntegrationID)
+	if !ok || integration.Credential != parent || integration.Policy != "require_approval" || g.tools["fly.request_token"].Policy != "require_approval" {
+		t.Fatalf("failed save mutated live integration: %#v %#v", integration, g.tools["fly.request_token"])
+	}
+	if err := s.Finish(t.Context(), running, "failed", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFlyLeaseCapacityIsDefiniteFailure(t *testing.T) {
 	g, s, b := fixture(t)
-	integration := Integration{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t)}
+	integration := Integration{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t), Policy: "allow"}
 	g.cfg.Integrations = []Integration{integration}
-	g.cfg.Tools = append(g.cfg.Tools, flyTool("allow"))
 	var err error
 	g, err = New(g.cfg, s, b)
 	if err != nil {

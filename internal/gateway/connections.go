@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,7 +159,12 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 }
 
 func (g *Gateway) catalogue() catalogue {
-	return catalogue{g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools, g.cfg.ToolDefaults, g.cfg.PrivateConnections}
+	tools, defaults := slices.Clone(g.cfg.Tools), maps.Clone(g.cfg.ToolDefaults)
+	if _, configured := g.integration(flyIntegrationID); configured {
+		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.ID == flyIntegrationID+"."+flyRequestToken })
+		delete(defaults, flyIntegrationID)
+	}
+	return catalogue{Connections: slices.Clone(g.cfg.Connections), Integrations: slices.Clone(g.cfg.Integrations), Tools: tools, ToolDefaults: defaults, PrivateConnections: maps.Clone(g.cfg.PrivateConnections)}
 }
 
 func validPolicy(policy string) bool {
@@ -195,8 +201,8 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
 	m.Install(manager)
-	g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools = c.Connections, c.Integrations, c.Tools
-	g.cfg.ToolDefaults, g.cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
+	g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools = compiled.cfg.Connections, compiled.cfg.Integrations, compiled.cfg.Tools
+	g.cfg.ToolDefaults, g.cfg.PrivateConnections = compiled.cfg.ToolDefaults, compiled.cfg.PrivateConnections
 	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
 	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.
 	return nil
