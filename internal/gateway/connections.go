@@ -578,7 +578,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 	g.mu.Unlock()
 	// Classification is advisory and may be slow. Never hold the catalogue lock
 	// over a provider request, or publish its result without rechecking the snapshot.
-	draft.suggestPolicies(r.Context(), g.policyClient, previous.Tools)
+	draft.suggestPolicies(r.Context(), !r.PostForm.Has("skip_jev"), g.policyClient, previous.Tools)
 	// Keep explanations alongside preserved choices when refreshing an unsaved review.
 	for _, tool := range draft.Tools {
 		for _, old := range previous.Tools {

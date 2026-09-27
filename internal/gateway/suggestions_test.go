@@ -23,7 +23,7 @@ type suggestionTransport func(*http.Request) (*http.Response, error)
 func (f suggestionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
-	for _, mode := range []string{"suggest", "no-key", "failure", "stale"} {
+	for _, mode := range []string{"suggest", "skip", "no-key", "failure", "stale"} {
 		t.Run(mode, func(t *testing.T) {
 			g, s, _ := fixture(t)
 			remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
@@ -82,6 +82,9 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			}
 			h, cookie := adminUI(t, g, m)
 			values := url.Values{}
+			if mode == "skip" {
+				values.Set("skip_jev", "true")
+			}
 			w := formRequest(h, cookie, "POST", "/connections/notes/discover", values)
 			if mode == "stale" {
 				if w.Code != 409 {
@@ -93,8 +96,11 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			if w.Code != 200 || len(match) != 2 {
 				t.Fatalf("review: %d %s", w.Code, w.Body.String())
 			}
-			if mode == "no-key" && calls.Load() != 0 {
+			if (mode == "no-key" || mode == "skip") && calls.Load() != 0 {
 				t.Fatal("unexpected classification request")
+			}
+			if mode == "skip" && !strings.Contains(w.Body.String(), "No tool metadata was sent to TypeSafe") {
+				t.Fatal("missing skip explanation")
 			}
 			if mode == "no-key" && !strings.Contains(w.Body.String(), "TYPESAFE_API_KEY is not set") {
 				t.Fatal("no fallback explanation")
@@ -169,7 +175,7 @@ func TestSuggestionsPreserveBlockedDefaultsAndUnsavedInheritance(t *testing.T) {
 		if def == "allow" {
 			previous = []Tool{tool}
 		}
-		draft.suggestPolicies(t.Context(), client, previous)
+		draft.suggestPolicies(t.Context(), true, client, previous)
 		if draft.Tools[0].Policy != "" {
 			t.Fatal("overrode inheritance")
 		}

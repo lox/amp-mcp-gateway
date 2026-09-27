@@ -10,7 +10,7 @@ import (
 
 // suggestPolicies changes only newly discovered, unconfigured tools in this
 // unpublished draft. Existing choices and changed-tool restrictions win.
-func (draft *toolDraft) suggestPolicies(ctx context.Context, client policy.Client, previous []Tool) {
+func (draft *toolDraft) suggestPolicies(ctx context.Context, enabled bool, client policy.Client, previous []Tool) {
 	draft.Suggestions = make(map[string]policy.Suggestion)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -30,6 +30,10 @@ func (draft *toolDraft) suggestPolicies(ctx context.Context, client policy.Clien
 		}
 		// The connection default may allow calls, but new suggestions must fail closed.
 		results[i] = policy.Suggestion{Policy: "require_approval", Reason: "Jev did not complete an assessment. Approval is required until you choose otherwise."}
+		if !enabled {
+			results[i].Reason = "Refreshed without Jev. No tool metadata was sent to TypeSafe. Approval is required until you choose otherwise."
+			continue
+		}
 		if client.Key == "" {
 			results[i].Reason = "Jev is not configured. Approval is required until you choose otherwise."
 			continue

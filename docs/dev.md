@@ -107,13 +107,14 @@ editing is needed.
 
 The page discloses that new tool names, descriptions and input schemas go to
 TypeSafe. Connection credentials and actual call arguments are not sent; metadata
-itself may contain private data. Remove the key to disable classification. Each
+itself may contain private data. Use **⋯ → Refresh without Jev** to skip sending
+metadata for a refresh, or remove the key to disable classification entirely. Each
 icon explains the original suggestion even if you override it, with the model
 version and a reminder that tool metadata is not a safety guarantee. Classification
 uses at most four concurrent requests and a thirty-second overall budget.
 
 Without a key, discovery still works and the page explains that Jev is unavailable.
-New tools require approval, even if the connection default allows calls. Failed,
+New tools require approval, even if the connection default allows calls. Skipped, failed,
 timed-out or uncertain classifications also require approval. Blocked
 connection defaults remain blocked. Existing saved policies and unsaved review
 choices are preserved; changed definitions still require approval unless blocked.

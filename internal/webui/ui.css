@@ -408,7 +408,8 @@
     @apply flex items-center justify-center w-7 h-8 rounded list-none;
     color: #526486;
   }
-  :where(html.dashboard) .policy-suggestion > summary::-webkit-details-marker {
+  :where(html.dashboard) .policy-suggestion > summary::-webkit-details-marker,
+  :where(html.dashboard) .refresh-options > summary::-webkit-details-marker {
     display: none;
   }
   :where(html.dashboard) .policy-suggestion > summary:hover,
@@ -436,12 +437,19 @@
   :where(html.dashboard) .suggestion-popover .help {
     @apply text-[12px];
   }
-  :where(html.dashboard) .policy-suggestion.above .suggestion-popover {
+  :where(html.dashboard) .policy-suggestion.above .suggestion-popover,
+  :where(html.dashboard) .refresh-options.above .suggestion-popover {
     top: auto;
     bottom: calc(100% + 6px);
   }
   :where(html.dashboard) .suggestion-disclosure {
     @apply text-[12px] m-[8px_0_16px];
+  }
+  :where(html.dashboard) .refresh-options {
+    @apply relative inline-block align-top ml-1 text-left;
+  }
+  :where(html.dashboard) .refresh-options > summary {
+    @apply flex items-center justify-center w-8 h-10 list-none rounded-[3px] border border-control cursor-pointer;
   }
   :where(html.dashboard) .remove-exception {
     @apply p-[6px];

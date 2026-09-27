@@ -86,7 +86,7 @@ var page = template.Must(template.New("page").Parse(`{{define "suggestion"}}{{if
 <p id="default-warning" class="default-warning" {{if ne .Draft.Default "allow"}}hidden{{end}}>Allow permits calls without approval for tools using the connection default. New tools get explicit reviewable policies. Tool names and read-only hints are not a safety guarantee.</p></fieldset>
 <p class="note">Changed blocked tools stay blocked. Other changed tools require approval again.</p>
 {{if .Draft.Removed}}<details><summary>Removed tools</summary><ul>{{range .Draft.Removed}}<li><code>{{.}}</code></li>{{end}}</ul></details>{{end}}
-<div id="exceptions-card" class="card exceptions-card"><div class="exceptions-heading"><h2 id="tools-heading">Tools</h2><div class="refresh-tools"><button type="submit" formaction="/connections/{{.Connection.ID}}/discover">Refresh tools</button>{{if or .Draft.Changes .Draft.Removed}}<p class="help">{{.Added}} new · {{.Changed}} changed · {{len .Draft.Removed}} removed<br>Preview only · save to apply</p>{{end}}</div></div>
+<div id="exceptions-card" class="card exceptions-card"><div class="exceptions-heading"><h2 id="tools-heading">Tools</h2><div class="refresh-tools"><button type="submit" formaction="/connections/{{.Connection.ID}}/discover">Refresh tools</button>{{if .JevAvailable}}<details class="refresh-options" name="policy-explanation"><summary aria-label="Refresh options">⋯</summary><div class="suggestion-popover"><button type="submit" name="skip_jev" value="true" formaction="/connections/{{.Connection.ID}}/discover">Refresh without Jev</button><p class="help">Keep tool metadata here. New tools require approval.</p></div></details>{{end}}{{if or .Draft.Changes .Draft.Removed}}<p class="help">{{.Added}} new · {{.Changed}} changed · {{len .Draft.Removed}} removed<br>Preview only · save to apply</p>{{end}}</div></div>
 <p class="help suggestion-disclosure">{{if .JevAvailable}}Jev uses new tool names, descriptions and schemas sent to TypeSafe.{{else}}Automatic suggestions unavailable: TYPESAFE_API_KEY is not set. New tools require approval unless blocked.{{end}}</p>
 <div class="exception-search" id="exception-search" hidden><label class="visually-hidden" for="tool-search">Search tools</label><input type="search" id="tool-search" placeholder="Search tools…"><button type="button" id="add-exception">Add exception</button></div>
 <div id="bulk-actions" class="bulk-actions" hidden><span id="selection-count">0 selected</span><button type="button" data-policy="allow">Allow</button><button type="button" data-policy="require_approval">Require approval</button><button type="button" data-policy="deny" class="danger">Block</button><button type="button" data-policy="inherit">Use default</button><button type="button" class="text-button" id="clear-selection">Clear</button></div>
@@ -106,7 +106,7 @@ var page = template.Must(template.New("page").Parse(`{{define "suggestion"}}{{if
  const defaults = form.querySelectorAll('input[name="default_policy"]');
  let view = 'exceptions';
  let dirty = false;
- form.querySelectorAll('.policy-suggestion').forEach(explanation => explanation.addEventListener('toggle', () => {
+ form.querySelectorAll('.policy-suggestion, .refresh-options').forEach(explanation => explanation.addEventListener('toggle', () => {
   if (!explanation.open) return;
   explanation.classList.remove('above');
   const panel = explanation.querySelector('.suggestion-popover');
@@ -116,11 +116,11 @@ var page = template.Must(template.New("page").Parse(`{{define "suggestion"}}{{if
  }));
  form.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
-  const explanation = form.querySelector('.policy-suggestion[open]');
+  const explanation = form.querySelector('.policy-suggestion[open], .refresh-options[open]');
   if (explanation) { explanation.open = false; explanation.querySelector('summary').focus(); }
  });
  document.addEventListener('click', event => {
-  form.querySelectorAll('.policy-suggestion[open]').forEach(explanation => {
+  form.querySelectorAll('.policy-suggestion[open], .refresh-options[open]').forEach(explanation => {
    if (!explanation.contains(event.target)) explanation.open = false;
   });
  });
