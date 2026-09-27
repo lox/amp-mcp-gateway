@@ -548,6 +548,27 @@ func TestOAuthStatusPage(t *testing.T) {
 	}
 }
 
+func TestConnectionHealthTargetHasCSSSafePrefix(t *testing.T) {
+	for _, id := range []string{"notes", "1notes", "-1notes", "_notes"} {
+		t.Run(id, func(t *testing.T) {
+			if !connectionID.MatchString(id) {
+				t.Fatal("test must exercise a valid connection name")
+			}
+			w := httptest.NewRecorder()
+			if err := page.ExecuteTemplate(w, "connection-health", map[string]any{"ID": id}); err != nil {
+				t.Fatal(err)
+			}
+			// Prefixing with a letter makes even digit-prefixed connection names
+			// valid CSS ID selectors. Both the target and selector must keep it.
+			for _, want := range []string{`id="health-` + id + `"`, `hx-target="#health-` + id + `"`, `hx-post="/connections/` + id + `/test"`} {
+				if !strings.Contains(w.Body.String(), want) {
+					t.Fatalf("missing %s", want)
+				}
+			}
+		})
+	}
+}
+
 func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 	g, s, _ := fixture(t)
 	var requests, calls atomic.Int32
@@ -576,15 +597,18 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 	for _, tc := range []struct {
 		cookie *http.Cookie
 		origin string
+		htmx   string
 		want   int
 	}{
-		{nil, "", 303}, {cookie, "https://attacker.example", 403},
+		{nil, "", "", 303}, {cookie, "https://attacker.example", "", 403},
+		{nil, "", "true", 401}, {cookie, "https://attacker.example", "true", 403},
 	} {
 		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
 		if tc.cookie != nil {
 			r.AddCookie(tc.cookie)
 		}
 		r.Header.Set("Origin", tc.origin)
+		r.Header.Set("HX-Request", tc.htmx)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != tc.want || requests.Load() != 0 {
@@ -597,6 +621,7 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
 		r.AddCookie(cookie)
 		r.Header.Set("Accept", "text/vnd.gateway.health+html")
+		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		want := "Healthy"
