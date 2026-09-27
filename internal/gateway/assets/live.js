@@ -112,6 +112,12 @@ document.addEventListener('htmx:afterSwap', event => {
 
 document.addEventListener('htmx:afterRequest', event => {
   const { elt, successful } = event.detail;
+  if (!successful && elt.hasAttribute('data-live')) {
+    // A failed GET consumed its invalidation. Reconnect for a fresh one instead
+    // of waiting for another ledger change or the stream's minute-long lease.
+    stopLive();
+    setTimeout(syncLive, 1000);
+  }
   const health = elt.closest('.connection-status');
   if (health) elt.textContent = 'Test connection';
   const error = health?.querySelector('.test-error') || document.querySelector('.live-error');

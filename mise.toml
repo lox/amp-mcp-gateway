@@ -9,8 +9,8 @@ description = "Run disposable local demo (browser password: demo-only)"
 run = "go run ./cmd/mcp-gateway -demo"
 
 [tasks.check]
-description = "Format, test and vet Go and extension JavaScript"
-run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./... && node --check internal/gateway/assets/live.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --test extension/background.test.js"
+description = "Format, test and vet Go and browser JavaScript"
+run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./... && node --check internal/gateway/assets/live.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --test extension/background.test.js tests/live.test.js"
 
 [tasks.build]
 run = "go build -o bin/mcp-gateway ./cmd/mcp-gateway"
