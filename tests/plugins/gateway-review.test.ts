@@ -24,24 +24,26 @@ describe('gateway review', () => {
       { arguments: [] },
     ]) expect(() => reviewMessage({ ...input, ...patch })).toThrow()
   })
-  test.each([false, true])('human decision %s only controls opening', async decision => {
+  test.each([false, true])('human continuation %s never launches a browser or approves', async decision => {
     let tool: any
     let opened = ''
     register({ registerTool: (definition: any) => { tool = definition }, system: { open: async (url: string) => { opened = url } } } as any)
     const output = JSON.parse(await tool.execute(input, { ui: { confirm: async (options: any) => {
       expect(options.requireHuman).toBe(true)
-      expect(options.confirmButtonText).toBe('Open approval page')
+      expect(options.confirmButtonText).toBe('I’ve reviewed it')
+      expect(options.message).toContain(`**[Open approval page ↗](${input.approval_url})**`)
       return decision
     } } }))
     expect(output.decisionSubmitted).toBe(false)
-    expect(output.status).toBe(decision ? 'awaiting_browser_decision' : 'dismissed')
-    expect(opened).toBe(decision ? input.approval_url : '')
+    expect(output.status).toBe(decision ? 'check_operation' : 'dismissed')
+    expect(opened).toBe('')
   })
-  test('browser launch failure retains the link without claiming approval', async () => {
+  test('continuation needs no browser API and instructs polling rather than assuming approval', async () => {
     let tool: any
-    register({ registerTool: (definition: any) => { tool = definition }, system: { open: async () => { throw new Error('Unavailable') } } } as any)
+    register({ registerTool: (definition: any) => { tool = definition } } as any)
     const output = JSON.parse(await tool.execute(input, { ui: { confirm: async () => true } }))
-    expect(output.launchRequested).toBe(false)
+    expect(output.next).toContain('not proof of approval')
+    expect(output.next).toContain('Poll get_operation with this same ID')
     expect(output.approval_url).toBe(input.approval_url)
     expect(output.decisionSubmitted).toBe(false)
   })

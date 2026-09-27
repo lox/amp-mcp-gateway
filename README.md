@@ -96,8 +96,10 @@ to the next pending request. **Audit** shows the latest 200 recorded events.
 ## Review a call inside Amp
 
 The project plugin in [`.amp/plugins/gateway-review.ts`](.amp/plugins/gateway-review.ts)
-adds `gateway_review_operation`: a read-only preview with an **Open approval page**
-button. Reload plugins in Amp after checking out this branch. For personal use
+adds `gateway_review_operation`: a read-only preview with an **Open approval page ↗**
+link. Follow it to approve or deny in the gateway, then return to Amp and click
+**I’ve reviewed it** to check the operation's status. The button neither opens a
+browser nor grants approval. Reload plugins in Amp after updating. For personal use
 outside this project, publish the same file as `gateway-review.ts` in your personal
 plugins repository. A project copy takes precedence over a personal copy with the
 same name; keep them in sync when publishing updates.
@@ -111,18 +113,14 @@ page. This first version pins links to `https://lox-mcp-gateway.fly.dev`; change
 support local demo or portal URLs unchanged.
 
 The plugin holds no credentials and cannot submit, approve, deny or poll operations.
-Cancel dismisses the preview without changing the request. After opening the page,
+Cancel dismisses the preview without changing the request. After you continue,
 Amp uses the existing MCP `get_operation` tool with the same ID, up to 60 times at
 five-second intervals. A timeout is not success; an unknown outcome must not be
 automatically retried.
 
-Browser launch is best effort and may target the orb rather than your browser.
-Use the inline **Open approval page** link when needed. In the live fake-data test
-below, the card rendered and confirmation returned, but automatic browser launch
-failed; no operation was submitted or approved. An end-to-end approval test remains
-to be done.
-
-![Live Amp approval preview using fake data](docs/images/amp-gateway-review.png)
+The plugin uses a normal Markdown link rather than `system.open()`, which failed
+to launch the user's browser from an orb. Continuing is not proof of approval:
+Amp must read the gateway's status. End-to-end browser approval remains unverified.
 
 Run `mise run check-plugin` for the plugin tests (also run in Buildkite).
 

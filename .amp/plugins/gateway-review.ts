@@ -1,6 +1,6 @@
 import type { PluginAPI } from '@ampcode/plugin'
 
-export const description = 'Shows a read-only MCP Gateway preview and opens its browser approval page. Never approves or denies a call.'
+export const description = 'Shows a read-only MCP Gateway preview with a browser approval link. Never approves or denies a call.'
 
 const gatewayOrigin = 'https://lox-mcp-gateway.fly.dev'
 
@@ -28,8 +28,9 @@ export function reviewMessage(input: Record<string, unknown>) {
       '**Arguments**',
       `${fence}json\n${args}\n${fence}`,
       `Operation: ${input.operation_id}`,
-      `[Open approval page](${url})`,
-      'Opening the page does not execute the call. Approve or deny in the gateway.',
+      `**[Open approval page ↗](${url})**`,
+      'Follow the link to approve or deny in the gateway, then return here and click “I’ve reviewed it” to check the result.',
+      'The continuation button does not open a page or approve anything.',
       'Cancel only dismisses this preview; it does not deny the operation.',
     ].join('\n\n'),
   }
@@ -39,7 +40,7 @@ export default function (amp: PluginAPI) {
   amp.registerTool({
     name: 'gateway_review_operation',
     title: 'Review gateway call',
-    description: 'Show a read-only preview for a pending MCP Gateway operation and open its approval page. This tool does NOT approve, deny, submit, or poll. Supply the returned operation ID and approval_url plus a preview of the submitted call; do not invent account labels (use "Not available" when absent). After opened, poll the existing MCP get_operation with the SAME ID until terminal status or a bounded timeout. Never resubmit. If dismissed, stop unless the user asks otherwise.',
+    description: 'Show a read-only preview and clickable approval link for a pending MCP Gateway operation. This tool does NOT approve, deny, submit, open a browser, or poll. Supply the returned operation ID and approval_url plus a preview of the submitted call; do not invent account labels (use "Not available" when absent). After the user continues, poll the existing MCP get_operation with the SAME ID until terminal status or a bounded timeout. Continuing is not proof of approval. Never resubmit. If dismissed, stop unless the user asks otherwise.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -55,29 +56,19 @@ export default function (amp: PluginAPI) {
     },
     async execute(input, ctx) {
       const { url, message } = reviewMessage(input)
-      const open = await ctx.ui.confirm({
+      const reviewed = await ctx.ui.confirm({
         title: 'Review MCP tool call',
         message,
-        confirmButtonText: 'Open approval page',
+        confirmButtonText: 'I’ve reviewed it',
         requireHuman: true,
       })
-      if (!open) return JSON.stringify({ status: 'dismissed', operation_id: input.operation_id, decisionSubmitted: false })
-      // In remote executors system.open may target the remote machine. Keep the
-      // human-clickable URL in both the dialog and result as the reliable fallback.
-      let launchRequested = false
-      try {
-        await amp.system.open(url)
-        launchRequested = true
-      } catch {
-        // Opening a browser is best effort; never imply that approval occurred.
-      }
+      if (!reviewed) return JSON.stringify({ status: 'dismissed', operation_id: input.operation_id, decisionSubmitted: false })
       return JSON.stringify({
-        status: 'awaiting_browser_decision',
+        status: 'check_operation',
         operation_id: input.operation_id,
         approval_url: url,
-        launchRequested,
         decisionSubmitted: false,
-        next: 'Show the approval link to the user; the browser may have opened on the remote executor. Poll get_operation with this same ID, at most 60 times at 5-second intervals. Stop on succeeded, failed, denied, expired, or unknown. On unknown do not retry. On timeout report the last observed status and the link; never claim success or resubmit.',
+        next: 'The user continued; this is not proof of approval. Poll get_operation with this same ID, at most 60 times at 5-second intervals. Stop on succeeded, failed, denied, expired, or unknown. On unknown do not retry. On timeout report the last observed status and the approval link; never claim success or resubmit.',
       })
     },
   })
