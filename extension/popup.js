@@ -1,10 +1,19 @@
 let activeTab = null;
+let gatewayConfigured = false;
 
 async function load() {
   [activeTab] = await chrome.tabs.query({active: true, currentWindow: true});
   document.querySelector("#tab").textContent = activeTab?.title || activeTab?.url || "No active tab";
-  const stored = await chrome.storage.session.get("bridgeConfig");
-  if (stored.bridgeConfig?.gatewayURL) document.querySelector("#gateway").value = stored.bridgeConfig.gatewayURL;
+  const [local, session] = await Promise.all([
+    chrome.storage.local.get("gatewayURL"),
+    chrome.storage.session.get("bridgeConfig"),
+  ]);
+  const gatewayURL = local.gatewayURL || session.bridgeConfig?.gatewayURL;
+  if (gatewayURL) {
+    gatewayConfigured = true;
+    document.querySelector("#gateway").textContent = gatewayURL;
+    if (!local.gatewayURL) await chrome.storage.local.set({gatewayURL});
+  }
   await refreshStatus();
 }
 
@@ -13,7 +22,11 @@ async function refreshStatus() {
   const status = document.querySelector("#status");
   status.textContent = state.message;
   status.className = `status ${state.connected ? "connected" : state.configured ? "" : "error"}`;
-  document.querySelector("#pair").hidden = state.connected;
+  if (!gatewayConfigured) {
+    status.textContent = "Configure a gateway before pairing.";
+    status.className = "status error";
+  }
+  document.querySelector("#pair").hidden = state.connected || !gatewayConfigured;
   document.querySelector("#disconnect").hidden = !state.configured;
 }
 
@@ -21,11 +34,9 @@ document.querySelector("#pair").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.target.querySelector("button");
   button.disabled = true;
-  const gatewayURL = document.querySelector("#gateway").value.trim();
   try {
     const result = await chrome.runtime.sendMessage({
       type: "pair",
-      gatewayURL,
       pairingCode: document.querySelector("#code").value,
       tabId: activeTab.id,
     });
@@ -40,6 +51,8 @@ document.querySelector("#pair").addEventListener("submit", async (event) => {
     button.disabled = false;
   }
 });
+
+document.querySelector("#settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
 document.querySelector("#disconnect").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({type: "disconnect"});

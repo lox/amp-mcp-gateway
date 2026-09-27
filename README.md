@@ -203,6 +203,7 @@ The [plan](docs/plan.md) covers what comes next; the [feature matrix and TODOs](
 track what's implemented and what's still an idea.
 
 To share a normal Chrome tab with an orb, load the unpacked extension from
-`extension/`, pair it from **Integrations → Chrome** in the gateway dashboard,
+`extension/`, save the gateway origin in the extension's **Settings**, then pair it
+from **Integrations → Chrome** in the gateway dashboard,
 and use the configured `browser.*` tools through `find_tools` and `call_tools`. See the
 [Chrome extension guide](docs/dev.md#share-a-chrome-tab).

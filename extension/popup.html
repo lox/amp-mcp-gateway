@@ -12,9 +12,8 @@
     <h1>Share this tab</h1>
     <p id="tab" class="tab">Loading active tab…</p>
     <div id="status" class="status">Checking connection…</div>
+    <div class="gateway-row"><span>Gateway</span><code id="gateway">Not configured</code><button id="settings" class="text-button" type="button">Settings</button></div>
     <form id="pair">
-      <label for="gateway">Gateway URL</label>
-      <input id="gateway" name="gateway" type="url" placeholder="https://gateway.example.com" required>
       <label for="code">Pairing code</label>
       <input id="code" name="code" autocomplete="off" spellcheck="false" maxlength="200" required>
       <button type="submit">Pair and share</button>
