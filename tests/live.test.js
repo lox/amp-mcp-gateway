@@ -3,6 +3,35 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 
+test('audit refresh preserves expanded requests by identity, not row position', () => {
+  const listeners = {};
+  const entries = ['new', 'closed', 'expanded'].map(requestId => ({ dataset: { requestId }, open: false }));
+  const fragment = {
+    content: { querySelectorAll: () => entries },
+    set innerHTML(value) {},
+    get innerHTML() { return entries.map(e => `${e.dataset.requestId}:${e.open}`).join(','); },
+  };
+  const context = vm.createContext({
+    document: {
+      addEventListener: (name, callback) => { listeners[name] = callback; },
+      querySelector: () => null,
+      createElement: () => fragment,
+    },
+    window: { addEventListener() {}, getSelection: () => null },
+  });
+  vm.runInContext(readFileSync('internal/gateway/assets/live.js', 'utf8'), context);
+  const target = {
+    id: 'audit-live', innerHTML: 'old',
+    hasAttribute: () => true, contains: () => false,
+    querySelector: () => null, matches: () => false,
+    querySelectorAll: () => [{ dataset: { requestId: 'expanded' } }, { dataset: { requestId: 'removed' } }],
+  };
+  const event = { detail: { target, shouldSwap: true, serverResponse: 'new HTML' } };
+  listeners['htmx:beforeSwap'](event);
+  assert.equal(event.detail.serverResponse, 'new:false,closed:false,expanded:true');
+  assert.equal(event.detail.shouldSwap, true);
+});
+
 test('failed fragment refresh reconnects and retries without another ledger change', () => {
   const listeners = {};
   const timers = [];
