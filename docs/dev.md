@@ -14,7 +14,9 @@ its dependencies are locked in `package-lock.json`. Commit the generated
 Plain `go build` uses the committed CSS and needs no Node installation.
 
 The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates.
-Shared colour tokens live in `@theme`; component rules use `@apply` and preserve
+Shared colour tokens and a four-pixel spacing scale live in `@theme` (for example,
+`p-6` is 24px on both the 14px dashboard and 16px sign-in page). Prefer these
+spacing utilities when adjusting layouts. Component rules use `@apply` and preserve
 the existing selectors, breakpoints and browser defaults (Preflight is omitted).
 Document scopes keep sign-in and Chrome styling independent. Status classes such
 as `pending`, `succeeded`, `failed`, `denied` and `unknown` have explicit component
