@@ -45,6 +45,50 @@ func formRequest(h http.Handler, cookie *http.Cookie, method, path string, value
 	return w
 }
 
+func TestPrivatePoliciesPersistAsRollbackSafeDenies(t *testing.T) {
+	c := catalogue{
+		Connections:        []upstream.Connection{{ID: "notes", URL: "https://example.com/mcp", NoAuth: true}},
+		Tools:              []Tool{{ID: "notes.allowed", Connection: "notes", Name: "allowed", Policy: "allow", InputSchema: map[string]any{"type": "object"}}, {ID: "notes.inherited", Connection: "notes", Name: "inherited", InputSchema: map[string]any{"type": "object"}}},
+		ToolDefaults:       map[string]string{"notes": "require_approval"},
+		PrivateConnections: map[string]bool{"notes": true},
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy struct {
+		Tools        []Tool
+		ToolDefaults map[string]string
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Tools[0].Policy != "deny" || legacy.Tools[1].Policy != "deny" || legacy.ToolDefaults["notes"] != "deny" {
+		t.Fatalf("rollback would not fail closed: tools=%+v defaults=%+v", legacy.Tools, legacy.ToolDefaults)
+	}
+	for _, tool := range legacy.Tools {
+		if tool.Policy != "" && tool.Policy != "allow" && tool.Policy != "require_approval" && tool.Policy != "deny" {
+			t.Fatalf("rollback sees unsupported tool policy %q", tool.Policy)
+		}
+	}
+	for _, policy := range legacy.ToolDefaults {
+		if policy != "allow" && policy != "require_approval" && policy != "deny" {
+			t.Fatalf("rollback sees unsupported default policy %q", policy)
+		}
+	}
+	var restored catalogue
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Tools[0].Policy != "allow" || restored.Tools[1].Policy != "" || restored.ToolDefaults["notes"] != "require_approval" || !restored.PrivateConnections["notes"] {
+		t.Fatalf("private policies not restored: tools=%+v defaults=%+v", restored.Tools, restored.ToolDefaults)
+	}
+	preRelease, err := json.Marshal(persistedCatalogue{Tools: []persistedTool{{ID: "notes.allowed", Connection: "notes", Name: "allowed", Policy: "deny", Private: true, InputSchema: map[string]any{"type": "object"}}}, ToolDefaults: map[string]string{"notes": "deny"}, PrivateToolDefaults: []string{"notes"}})
+	if err != nil || json.Unmarshal(preRelease, &restored) != nil || !restored.PrivateConnections["notes"] || restored.Tools[0].Policy != "allow" || restored.ToolDefaults["notes"] != "allow" {
+		t.Fatalf("pre-release private policy not migrated: %+v, %v", restored, err)
+	}
+}
+
 func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	g, s, _ := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
@@ -206,9 +250,9 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	g, s, _ := fixture(t)
 	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
 	schema := map[string]any{"type": "object"}
-	for _, name := range []string{"blocked", "changed", "new", "unchanged"} {
+	for _, name := range []string{"blocked", "changed", "new", "private", "unchanged"} {
 		description := "original"
-		if name == "changed" || name == "blocked" {
+		if name == "changed" || name == "blocked" || name == "private" {
 			description = "different behavior"
 		}
 		remote.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -222,7 +266,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
 	cfg.ToolDefaults = map[string]string{"notes": "allow"}
 	cfg.Tools = nil
-	for name, policy := range map[string]string{"blocked": "deny", "changed": "", "unchanged": "allow", "gone": "require_approval"} {
+	for name, policy := range map[string]string{"blocked": "deny", "changed": "", "private": "allow", "unchanged": "allow", "gone": "require_approval"} {
 		cfg.Tools = append(cfg.Tools, Tool{ID: "notes." + name, Connection: "notes", Name: name, Description: "original", InputSchema: schema, Policy: policy})
 	}
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
@@ -248,7 +292,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 		t.Fatal("wrong change summary", draft.Changes, draft.Removed)
 	}
 	for _, tool := range draft.Tools {
-		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "unchanged": "allow"}[tool.Name]
+		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "private": "require_approval", "unchanged": "allow"}[tool.Name]
 		if tool.Policy != want {
 			t.Fatalf("%s: %q, want %q", tool.Name, tool.Policy, want)
 		}
@@ -270,7 +314,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	if _, ok := g.tools["notes.gone"]; ok {
 		t.Fatal("removed tool stayed available")
 	}
-	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" {
+	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" || g.tools["notes.private"].Policy != "require_approval" {
 		t.Fatal("incorrect effective refresh policies")
 	}
 	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
@@ -441,6 +485,20 @@ func TestConnectionDefaultExecution(t *testing.T) {
 	if next.tools["notes.write"].Policy != "deny" {
 		t.Fatal("default overrode exception")
 	}
+	// Connection privacy is orthogonal to the default execution policy.
+	cfg.Tools[0].Policy = ""
+	cfg.ToolDefaults["notes"] = "allow"
+	cfg.PrivateConnections = map[string]bool{"notes": true}
+	cfg.AmpUserID = "user-owner"
+	next, err = New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := false
+	identity := ampIdentity{UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ThreadVisibility: "private", ThreadMultiplayer: &no, ThreadNonOwnerCanInfluence: &no}
+	if got, err := next.submit(withAmpIdentity(t.Context(), identity), input("default-private", "hello")); err != nil || got.Status != "ready" || !got.Private {
+		t.Fatalf("private default: %+v, %v", got, err)
+	}
 }
 
 func TestOAuthStatusPage(t *testing.T) {
@@ -589,7 +647,7 @@ func TestDefaultPermissionRadios(t *testing.T) {
 	for _, policy := range []string{"deny", "require_approval", "allow"} {
 		t.Run(policy, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy}, "Connection": map[string]any{"ID": "notes"}})
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy, Private: true}, "WorkloadIdentity": true, "Connection": map[string]any{"ID": "notes"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -597,10 +655,59 @@ func TestDefaultPermissionRadios(t *testing.T) {
 			if len(checked) != 1 || checked[0][1] != policy {
 				t.Fatalf("saved default %q not selected: %v", policy, checked)
 			}
+			if !strings.Contains(w.Body.String(), `name="private_connection" value="true" checked`) {
+				t.Fatal("saved private connection not selected")
+			}
 			if !strings.Contains(w.Body.String(), `<button type="submit" formaction="/connections/notes/discover">Refresh tools</button>`) {
 				t.Fatal("refresh must submit discovery rather than saving policy edits")
 			}
 		})
+	}
+}
+
+func TestConnectionPrivacyCanBeSavedIndependently(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
+	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	if w.Code != 200 || len(match) != 2 {
+		t.Fatalf("no edit ticket: %d %s", w.Code, w.Body.String())
+	}
+	values := url.Values{"ticket": {match[1]}, "private_connection": {"true"}, "default_policy": {"require_approval"}, "policy_0": {"inherit"}}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	var restored Config
+	if !g.cfg.privateConnection("notes") || LoadCatalogue(t.Context(), &restored, s) != nil || !restored.privateConnection("notes") || restored.Tools[0].Policy != "" {
+		t.Fatalf("connection privacy was not persisted independently: %+v", restored)
+	}
+}
+
+func TestConnectionPrivacyRequiresWorkloadIdentity(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
+	if w.Code != 200 || strings.Contains(w.Body.String(), `<input type="checkbox" name="private_connection"`) {
+		t.Fatal("private setting shown without workload identity")
+	}
+	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	values := url.Values{"ticket": {match[1]}, "private_connection": {"true"}, "default_policy": {"require_approval"}, "policy_0": {"inherit"}}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 400 || g.cfg.privateConnection("notes") {
+		t.Fatal("forged private setting accepted without workload identity")
+	}
+	cfg := g.cfg
+	cfg.PrivateConnections = map[string]bool{"notes": true}
+	if _, err := New(cfg, s, g.backend); err == nil {
+		t.Fatal("private startup configuration accepted without workload identity")
 	}
 }
 

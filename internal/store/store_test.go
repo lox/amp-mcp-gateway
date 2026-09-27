@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,6 +29,79 @@ func testStore(t *testing.T) (*Store, string, string) {
 }
 func operation(id, status string) Operation {
 	return Operation{ID: id, Tool: "notes.create", Subject: "owner", Digest: "digest", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{"text": "sensitive-request-value"}}
+}
+
+func TestPrivateResultIsHiddenFromOlderOperationSchema(t *testing.T) {
+	s, _, _ := testStore(t)
+	o := operation("private-result", "ready")
+	o.Private = true
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := json.RawMessage(`{"secret":"private result"}`)
+	if err := s.Finish(t.Context(), claimed, "succeeded", result); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(t.Context(), o.ID)
+	if err != nil || !bytes.Equal(got.Result, result) {
+		t.Fatalf("current gateway lost private result: %s, %v", got.Result, err)
+	}
+	var ciphertext []byte
+	if err := s.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.open("operation:"+o.ID, ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older struct {
+		Result json.RawMessage `json:"result,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &older); err != nil || len(older.Result) != 0 {
+		t.Fatalf("older gateway schema can read private result: %s, %v", older.Result, err)
+	}
+}
+
+func TestMakingConnectionPrivateProtectsEarlierResultsFromOlderSchema(t *testing.T) {
+	s, _, _ := testStore(t)
+	o := operation("earlier-result", "ready")
+	o.Connection = "notes"
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := json.RawMessage(`{"secret":"earlier result"}`)
+	if err := s.Finish(t.Context(), claimed, "succeeded", result); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogueProtecting(t.Context(), []byte(`{}`), map[string]bool{"notes": true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(t.Context(), o.ID)
+	if err != nil || !got.Private || !bytes.Equal(got.Result, result) {
+		t.Fatalf("current gateway lost protected earlier result: %+v, %v", got, err)
+	}
+	var ciphertext []byte
+	if err := s.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.open("operation:"+o.ID, ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older struct {
+		Result json.RawMessage `json:"result,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &older); err != nil || len(older.Result) != 0 {
+		t.Fatalf("older gateway schema can read newly private earlier result: %s, %v", older.Result, err)
+	}
 }
 
 func TestApprovalAndClaimSingleWinner(t *testing.T) {

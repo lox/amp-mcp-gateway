@@ -28,27 +28,33 @@ type Store struct {
 
 // Operation is an immutable request with mutable execution state.
 type Operation struct {
-	ID             string          `json:"id"`
-	Tool           string          `json:"tool"`
-	Connection     string          `json:"connection"`
-	Account        string          `json:"account"`
-	Subject        string          `json:"subject"`
-	AmpSubject     string          `json:"amp_subject,omitempty"`
-	AmpUserID      string          `json:"amp_user_id,omitempty"`
-	AmpWorkspaceID string          `json:"amp_workspace_id,omitempty"`
-	AmpProjectID   string          `json:"amp_project_id,omitempty"`
-	AmpThreadID    string          `json:"amp_thread_id,omitempty"`
-	Model          string          `json:"model_reported,omitempty"`
-	Arguments      map[string]any  `json:"arguments"`
-	Digest         string          `json:"digest"`
-	LegacyDigest   string          `json:"-"`
-	Binding        string          `json:"binding"`
-	ApprovalScope  string          `json:"approval_scope,omitempty"`
-	ApprovalGrant  string          `json:"approval_grant,omitempty"`
-	Status         string          `json:"status"`
-	Created        int64           `json:"created"`
-	Expires        int64           `json:"expires"`
-	Result         json.RawMessage `json:"result,omitempty"`
+	ID                            string          `json:"id"`
+	Tool                          string          `json:"tool"`
+	Connection                    string          `json:"connection"`
+	Account                       string          `json:"account"`
+	Subject                       string          `json:"subject"`
+	AmpSubject                    string          `json:"amp_subject,omitempty"`
+	AmpUserID                     string          `json:"amp_user_id,omitempty"`
+	AmpWorkspaceID                string          `json:"amp_workspace_id,omitempty"`
+	AmpProjectID                  string          `json:"amp_project_id,omitempty"`
+	AmpThreadID                   string          `json:"amp_thread_id,omitempty"`
+	AmpThreadVisibility           string          `json:"amp_thread_visibility,omitempty"`
+	AmpThreadMultiplayer          bool            `json:"amp_thread_multiplayer,omitempty"`
+	AmpThreadNonOwnerCanInfluence bool            `json:"amp_thread_non_owner_can_influence,omitempty"`
+	AmpThreadContext              bool            `json:"amp_thread_context,omitempty"`
+	Model                         string          `json:"model_reported,omitempty"`
+	Arguments                     map[string]any  `json:"arguments"`
+	Digest                        string          `json:"digest"`
+	LegacyDigest                  string          `json:"-"`
+	Binding                       string          `json:"binding"`
+	ApprovalScope                 string          `json:"approval_scope,omitempty"`
+	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
+	Private                       bool            `json:"private,omitempty"`
+	ProtectedResult               json.RawMessage `json:"private_result,omitempty"`
+	Status                        string          `json:"status"`
+	Created                       int64           `json:"created"`
+	Expires                       int64           `json:"expires"`
+	Result                        json.RawMessage `json:"result,omitempty"`
 }
 
 // Event records a durable state transition without tool payloads or credentials.
@@ -175,6 +181,16 @@ func (s *Store) LoadCatalogue(ctx context.Context) ([]byte, error) {
 // SaveCatalogue commits configuration and revokes queued approvals atomically.
 // Running operations must finish before their authority can change.
 func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) error {
+	return s.saveCatalogue(ctx, b, nil, events...)
+}
+
+// SaveCatalogueProtecting also makes existing results from private connections
+// unreadable to older binaries in the same transaction as the policy change.
+func (s *Store) SaveCatalogueProtecting(ctx context.Context, b []byte, privateConnections map[string]bool, events ...Event) error {
+	return s.saveCatalogue(ctx, b, privateConnections, events...)
+}
+
+func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections map[string]bool, events ...Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -186,6 +202,40 @@ func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) er
 	}
 	if running != 0 {
 		return errors.New("wait for running operations before changing connections or policies")
+	}
+	if len(privateConnections) > 0 {
+		rows, err := tx.QueryContext(ctx, "SELECT id,status,payload FROM operations")
+		if err != nil {
+			return err
+		}
+		var protected []Operation
+		for rows.Next() {
+			o, err := s.decode(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			if privateConnections[o.Connection] && (!o.Private || (len(o.Result) > 0 && len(o.ProtectedResult) == 0)) {
+				o.Private = true
+				protected = append(protected, o)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, o := range protected {
+			payload, err := encodeOperation(o)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE operations SET payload=? WHERE id=?", s.seal("operation:"+o.ID, payload), o.ID); err != nil {
+				return err
+			}
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO catalogue VALUES (1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", s.seal("catalogue", b)); err != nil {
 		return err
@@ -257,8 +307,21 @@ func (s *Store) decode(row scanner) (Operation, error) {
 		return o, err
 	}
 	err = json.Unmarshal(raw, &o)
+	if o.Private && len(o.Result) == 0 {
+		o.Result = o.ProtectedResult
+	}
 	o.Status = status
 	return o, err
+}
+
+func encodeOperation(o Operation) ([]byte, error) {
+	if o.Private && len(o.Result) > 0 {
+		if len(o.ProtectedResult) == 0 {
+			o.ProtectedResult = o.Result
+		}
+		o.Result = nil
+	}
+	return json.Marshal(o)
 }
 
 // Get retrieves a stored operation.
@@ -298,7 +361,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 			}
 		}
 	}
-	b, err := json.Marshal(o)
+	b, err := encodeOperation(o)
 	if err != nil {
 		return o, err
 	}
@@ -411,7 +474,7 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 		return errors.New("invalid terminal status")
 	}
 	o.Result = result
-	b, err := json.Marshal(o)
+	b, err := encodeOperation(o)
 	if err != nil {
 		return err
 	}

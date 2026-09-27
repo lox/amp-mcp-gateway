@@ -39,6 +39,7 @@ type Config struct {
 	Connections                                               []upstream.Connection
 	Tools                                                     []Tool
 	ToolDefaults                                              map[string]string `json:",omitempty"`
+	PrivateConnections                                        map[string]bool   `json:",omitempty"`
 }
 
 // Backend is the upstream transport boundary.
@@ -62,6 +63,13 @@ type Gateway struct {
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	if cfg.AmpUserID == "" {
+		for _, private := range cfg.PrivateConnections {
+			if private {
+				return nil, errors.New("private connections require Amp workload identity")
+			}
+		}
+	}
 	for _, policy := range cfg.ToolDefaults {
 		if !validPolicy(policy) {
 			return nil, errors.New("invalid connection default")
@@ -102,7 +110,7 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		}
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
-		g.bindings[t.ID] = digest([]any{t, connection, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
+		g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
 	}
 	return g, nil
 }
@@ -153,7 +161,7 @@ func (g *Gateway) MCP(token string) http.Handler {
 
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
-	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection default and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of connection privacy, default policy, and tool exception changes for human browser review. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict the whole connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
 	})
@@ -164,9 +172,10 @@ func (g *Gateway) mcpHandler() http.Handler {
 		}
 		g.mu.RLock()
 		defer g.mu.RUnlock()
+		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" {
+			if t.Policy == "deny" || !identity.allows(g.cfg.privateConnection(t.Connection)) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -192,7 +201,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		return nil, g.result(o), nil
 	})
 	mcp.AddTool(s, &mcp.Tool{Name: "get_operation", Description: "Read durable status and upstream result by operation ID. Unknown means do not automatically retry."}, func(ctx context.Context, r *mcp.CallToolRequest, in getInput) (*mcp.CallToolResult, any, error) {
-		o, err := g.store.Get(ctx, in.ID)
+		o, err := g.getOperation(ctx, in.ID)
 		if err != nil {
 			return nil, nil, errors.New("operation unavailable")
 		}
@@ -218,6 +227,9 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	if !ok {
 		return store.Operation{}, errors.New("unknown tool")
 	}
+	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
+		return store.Operation{}, errors.New("unknown tool")
+	}
 	if c.Arguments == nil {
 		c.Arguments = map[string]any{}
 	}
@@ -237,12 +249,43 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = conn.Account
 		}
 	}
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindings[t.ID], Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
+	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
+	if identity.ThreadMultiplayer != nil {
+		o.AmpThreadMultiplayer = *identity.ThreadMultiplayer
+	}
+	if identity.ThreadNonOwnerCanInfluence != nil {
+		o.AmpThreadNonOwnerCanInfluence = *identity.ThreadNonOwnerCanInfluence
+	}
 	o.LegacyDigest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpSubject, o.AmpUserID, o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID})
-	return g.store.Submit(ctx, o)
+	stored, err := g.store.Submit(ctx, o)
+	if err != nil {
+		return stored, err
+	}
+	// An idempotent retry can return an operation made private after its original
+	// submission, even when the connection is no longer private.
+	if stored.Private && !identity.privateThread() {
+		return store.Operation{}, errors.New("unknown tool")
+	}
+	return stored, nil
+}
+
+func (g *Gateway) getOperation(ctx context.Context, id string) (store.Operation, error) {
+	o, err := g.store.Get(ctx, id)
+	if err != nil {
+		return o, err
+	}
+	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
+	g.mu.RLock()
+	private := o.Private || g.cfg.privateConnection(o.Connection)
+	g.mu.RUnlock()
+	if private && !identity.privateThread() {
+		return store.Operation{}, errors.New("private operation unavailable in this Amp thread")
+	}
+	return o, nil
 }
 
 // Run executes persisted requests serially until ctx is cancelled. It never retries dispatch.

@@ -21,17 +21,40 @@ const ampIssuer = "https://ampcode.com/api/workload-identity"
 var ampThreadID = regexp.MustCompile(`^T-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type ampIdentity struct {
-	Subject     string `json:"sub"`
-	UserID      string `json:"user_id"`
-	WorkspaceID string `json:"workspace_id"`
-	ProjectID   string `json:"project_id"`
-	ThreadID    string `json:"thread_id"`
-	TokenUse    string `json:"token_use"`
+	Subject                    string `json:"sub"`
+	UserID                     string `json:"user_id"`
+	WorkspaceID                string `json:"workspace_id"`
+	ProjectID                  string `json:"project_id"`
+	ThreadID                   string `json:"thread_id"`
+	ThreadVisibility           string `json:"thread_visibility"`
+	ThreadMultiplayer          *bool  `json:"thread_multiplayer"`
+	ThreadNonOwnerCanInfluence *bool  `json:"thread_non_owner_can_influence"`
+	TokenUse                   string `json:"token_use"`
 }
 type ampIdentityKey struct{}
 
 func withAmpIdentity(ctx context.Context, identity ampIdentity) context.Context {
 	return context.WithValue(ctx, ampIdentityKey{}, identity)
+}
+
+func (identity ampIdentity) privateThread() bool {
+	return identity.UserID != "" && ampThreadID.MatchString(identity.ThreadID) &&
+		identity.ThreadVisibility == "private" &&
+		identity.ThreadMultiplayer != nil && !*identity.ThreadMultiplayer &&
+		identity.ThreadNonOwnerCanInfluence != nil && !*identity.ThreadNonOwnerCanInfluence
+}
+
+func (identity ampIdentity) hasThreadContext() bool {
+	switch identity.ThreadVisibility {
+	case "private", "thread_group_shared", "thread_workspace_shared", "public_unlisted":
+		return identity.ThreadMultiplayer != nil && identity.ThreadNonOwnerCanInfluence != nil
+	default:
+		return false
+	}
+}
+
+func (identity ampIdentity) allows(private bool) bool {
+	return !private || identity.privateThread()
 }
 
 // AmpMCP authenticates each HTTP request using Amp's signed workload identity.
