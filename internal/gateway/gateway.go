@@ -423,7 +423,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/operations", http.StatusSeeOther) })
-	for _, path := range []string{"/operations", "/connections", "/approval-grants", "/audit"} {
+	for _, path := range []string{"/operations", "/connections", "/integrations", "/approval-grants", "/audit"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
 	}
 	mux.HandleFunc("GET /connections/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -487,6 +487,9 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		g.mu.RLock()
 		connections := make([]map[string]any, 0, len(g.cfg.Connections))
 		for _, c := range g.cfg.Connections {
+			if c.Browser {
+				continue
+			}
 			connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
 		}
 		g.mu.RUnlock()

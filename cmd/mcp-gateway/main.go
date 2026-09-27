@@ -141,8 +141,8 @@ func run() error {
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("/browser/connect", browser.Socket())
 	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI()))
-	mux.Handle("/browser", browserUI)
-	mux.Handle("/browser/", browserUI)
+	mux.Handle("/integrations/chrome", browserUI)
+	mux.Handle("/integrations/chrome/", browserUI)
 	mux.Handle("/", g.UI(auth, m))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))

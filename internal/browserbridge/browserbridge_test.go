@@ -277,7 +277,7 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 	m, _ := browserManager(t)
 	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
 	form := url.Values{"connection": {"browser"}}
-	r := httptest.NewRequest(http.MethodPost, "/browser/revoke", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/integrations/chrome/revoke", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	m.revoke(httptest.NewRecorder(), r)
 
@@ -289,5 +289,20 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 	var closeErr *websocket.CloseError
 	if !errors.As(err, &closeErr) || closeErr.Code != websocket.ClosePolicyViolation {
 		t.Fatalf("revocation close = %v, want policy violation", err)
+	}
+}
+
+func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
+	m, _ := browserManager(t)
+	h := m.UI()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/integrations/chrome/pair"`) || !strings.Contains(w.Body.String(), `href="/integrations"`) {
+		t.Fatalf("Chrome integration page is missing its integration routes: status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/browser", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("legacy browser UI route returned %d, want 404", w.Code)
 	}
 }
