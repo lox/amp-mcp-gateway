@@ -13,13 +13,14 @@ separate copies of this matrix in each document.
 | Capability | Status | Current behavior / remaining gap |
 | --- | --- | --- |
 | One MCP endpoint | Implemented | Streamable HTTP with `find_tools`, `call_tools`, `get_operation`, `propose_policy_changes`. |
-| Agent policy proposals | Implemented | Immutable multi-connection batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
+| Agent policy proposals | Implemented | Immutable multi-provider batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
 | Central upstream credentials | Implemented | Environment or encrypted pasted bearer tokens; encrypted OAuth grants with proactive refresh, persisted rotation/uncertain outcomes and bounded safe retries. Provider grant lifetimes still apply. |
 | Provider onboarding | Partial | Browser URL/auth flow, OAuth metadata discovery, PKCE and dynamic registration or supplied client credentials. Google and Dropbox's exact split-origin endpoints and offline access supported; other split-origin endpoints, expiring registration secrets and client-ID metadata documents unsupported. Dropbox consent, calls and refresh still need live validation. |
 | Real integrations | Partial | DeepWiki discovery verified in the demo; Buildkite reads, browser approval and denial verified in production. Live Google Sheets/Drive/Gmail metadata discovery verified; Google consent, execution and refresh still need validation. |
+| Native integrations | Partial | Integrations UI and Fly.io prototype store an encrypted scoped parent token and expose a governed short-lived token request. One-use, caller-bound redemption locally attenuates the token to at most 15 minutes. Real Fly validation and additional providers remain. |
 | Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | Chrome integration | Partial | Manifest V3 extension reverse-connects one selected HTTP(S) tab for snapshots, screenshots and policy-controlled interaction. Pairing is memory/session-only; multiple tabs and durable device pairing are not implemented. |
 | OIDC login | Implemented | Owner confirmed live Google login; domain and exact-owner checks tested. Gateway validation matches Amp's MCP workload token contract; direct remote-definition test remains. Demo/legacy bearer retained. |

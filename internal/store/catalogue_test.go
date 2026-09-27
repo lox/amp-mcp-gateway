@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCatalogueEncryptionRestartAndRevocation(t *testing.T) {
@@ -58,8 +59,15 @@ func TestCatalogueEncryptionRestartAndRevocation(t *testing.T) {
 	if _, err := s.Submit(ctx, operation("second-ready", "ready")); err != nil {
 		t.Fatal(err)
 	}
+	lease := CredentialLease{ID: "catalogue-bound-lease", OperationID: "pending", Integration: "fly", CredentialDigest: "credential-v1", Expires: time.Now().Add(time.Minute).Unix()}
+	if err := s.CreateCredentialLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SaveCatalogue(ctx, []byte("changed")); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.RedeemCredentialLease(ctx, lease.ID, lease); err == nil {
+		t.Fatal("credential lease survived catalogue update")
 	}
 	for _, id := range []string{"pending", "second-ready"} {
 		o, err := s.Get(ctx, id)

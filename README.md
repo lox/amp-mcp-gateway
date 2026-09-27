@@ -125,11 +125,27 @@ This supports remote Streamable HTTP servers on public HTTPS, not local commands
 See the [connection guide](docs/dev.md#connect-a-remote-mcp) for an example and
 provider limitations.
 
+## Connect a native integration
+
+**Integrations** are native providers whose capabilities use the same discovery,
+policy, approval and audit path as remote MCP tools. The first prototype is Fly.io.
+Store one scoped Fly access token and the gateway exposes `fly.request_token`.
+An approved call returns a caller-bound, single-use redemption URL—not a credential.
+Redeeming that URL derives a Fly token that retains every parent restriction and
+expires after at most 15 minutes.
+
+This supports ordinary `flyctl` work that must run inside the calling orb, including
+commands that need its source tree. The gateway records the request, approval and
+redemption, but cannot observe individual Fly calls after issuing the short-lived
+token. See the [Fly integration guide](docs/dev.md#flyio-integration) for setup and
+the safe shell pattern.
+
 ## What's there today
 
 Bearer-token and OAuth connections, token refresh, per-tool rules, browser
-approvals, a reverse-connected Chrome extension for one selected tab, and
-encrypted storage for OAuth tokens, arguments and results.
+approvals, a reverse-connected Chrome extension for one selected tab, encrypted
+storage for credentials, arguments and results, and a Fly.io short-lived
+credential integration prototype.
 
 A few limits worth knowing:
 

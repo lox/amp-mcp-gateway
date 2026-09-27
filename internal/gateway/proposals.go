@@ -46,7 +46,7 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		return policyResult{}, errors.New("verified Amp identity required")
 	}
 	if len(in.Changes) == 0 || len(in.Changes) > 32 {
-		return policyResult{}, errors.New("supply 1–32 connection changes")
+		return policyResult{}, errors.New("supply 1–32 provider changes")
 	}
 	p := policyProposal{Revision: digest(g.catalogue()), Expires: time.Now().Add(10 * time.Minute), Identity: identity}
 	seen := map[string]bool{}
@@ -60,8 +60,16 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		for _, c := range g.cfg.Connections {
 			found = found || c.ID == change.Connection
 		}
+		native := false
+		for _, integration := range g.cfg.Integrations {
+			native = native || integration.ID == change.Connection
+		}
+		found = found || native
 		if !found || (change.Default != "" && !validPolicy(change.Default)) || len(change.Tools) > 1000 {
-			return policyResult{}, errors.New("unknown connection or invalid policies")
+			return policyResult{}, errors.New("unknown provider or invalid policies")
+		}
+		if native && change.Private != nil {
+			return policyResult{}, errors.New("private access is only supported for remote connections")
 		}
 		if change.Private != nil && *change.Private && g.cfg.AmpUserID == "" {
 			return policyResult{}, errors.New("private connections require Amp workload identity")
@@ -199,6 +207,22 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 			next.PrivateConnections = map[string]bool{}
 		}
 		for _, d := range p.Drafts {
+			native := false
+			for i := range next.Integrations {
+				if next.Integrations[i].ID != d.Connection {
+					continue
+				}
+				native = true
+				next.Integrations[i].Policy = d.Default
+				for _, tool := range d.Tools {
+					if tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Policy != "" {
+						next.Integrations[i].Policy = tool.Policy
+					}
+				}
+			}
+			if native {
+				continue
+			}
 			next.ToolDefaults[d.Connection] = d.Default
 			if d.Private {
 				next.PrivateConnections[d.Connection] = true

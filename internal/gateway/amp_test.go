@@ -72,6 +72,23 @@ func TestAmpIdentity(t *testing.T) {
 			}
 		})
 	}
+	leaseAuth := g.ampAuthenticated(verifier, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if identity, _ := r.Context().Value(ampIdentityKey{}).(ampIdentity); identity.ThreadID != thread {
+			t.Fatal("verified identity was not attached")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), true)
+	for name, tokenUse := range map[string]string{"automatic MCP identity": "mcp", "orb-minted identity": "exchanged"} {
+		t.Run("lease accepts "+name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/leases/test", nil)
+			r.Header.Set("Authorization", "Bearer "+mint(func(c map[string]any) { c["token_use"] = tokenUse }))
+			w := httptest.NewRecorder()
+			leaseAuth.ServeHTTP(w, r)
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("got %d", w.Code)
+			}
+		})
+	}
 	server := httptest.NewServer(h)
 	defer server.Close()
 	token := mint(func(map[string]any) {})

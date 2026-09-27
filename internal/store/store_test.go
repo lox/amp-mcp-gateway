@@ -204,6 +204,43 @@ func TestRestartRecoveryIdempotencyAndEncryption(t *testing.T) {
 	}
 }
 
+func TestCredentialLeaseIsEncryptedIdentityBoundAndSingleUse(t *testing.T) {
+	s, _, _ := testStore(t)
+	ctx := t.Context()
+	lease := CredentialLease{
+		ID: "lease-secret-capability", OperationID: "lease-operation", Integration: "fly",
+		CredentialDigest: "version", LifetimeSeconds: 600,
+		AmpSubject: "private-subject-one", AmpUserID: "user-one", AmpThreadID: "thread-one",
+		Expires: time.Now().Add(time.Minute).Unix(),
+	}
+	if err := s.CreateCredentialLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext []byte
+	if err := s.db.QueryRowContext(ctx, "SELECT payload FROM credential_leases WHERE id=?", lease.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(ciphertext), lease.AmpSubject) {
+		t.Fatal("credential lease persisted plaintext identity")
+	}
+	wrong := lease
+	wrong.AmpThreadID = "thread-two"
+	if _, err := s.RedeemCredentialLease(ctx, lease.ID, wrong); err == nil {
+		t.Fatal("credential lease redeemed by another caller")
+	}
+	got, err := s.RedeemCredentialLease(ctx, lease.ID, lease)
+	if err != nil || got.AmpSubject != lease.AmpSubject {
+		t.Fatalf("redeem: %#v, %v", got, err)
+	}
+	if _, err := s.RedeemCredentialLease(ctx, lease.ID, lease); err == nil {
+		t.Fatal("credential lease redeemed twice")
+	}
+	events, err := s.OperationEvents(ctx, lease.OperationID)
+	if err != nil || len(events) != 2 || events[0].Kind != "lease-redeemed" || events[1].Kind != "lease-ready" {
+		t.Fatalf("lease events: %#v, %v", events, err)
+	}
+}
+
 func TestLegacyDigestOnlyMatchesOperationsWithoutNewIdentity(t *testing.T) {
 	s, _, _ := testStore(t)
 	ctx := t.Context()

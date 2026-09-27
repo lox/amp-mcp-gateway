@@ -129,16 +129,18 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	auth.Register(mux)
-	var mcpHandler http.Handler
+	var mcpHandler, leaseHandler http.Handler
 	if cfg.AmpUserID != "" {
-		mcpHandler, err = g.AmpMCP(ctx)
+		mcpHandler, leaseHandler, err = g.AmpHandlers(ctx)
 		if err != nil {
 			return err
 		}
 	} else {
 		mcpHandler = g.MCP(secrets.GatewayToken)
+		leaseHandler = g.Leases(secrets.GatewayToken)
 	}
 	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("POST /leases/{id}", leaseHandler)
 	mux.Handle("/browser/connect", browser.Socket())
 	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI()))
 	mux.Handle("/integrations/chrome", browserUI)

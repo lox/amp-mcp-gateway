@@ -58,6 +58,14 @@ Public DeepWiki discovery is verified in the demo; Buildkite OAuth and tool
 discovery have been validated against a real account. Real provider execution
 remains to be tested.
 
+A native Integrations prototype now includes Fly.io. The owner can store an encrypted
+scoped parent token and publish `fly.request_token` under the existing policy,
+approval, standing-grant and audit pipeline. Approved calls return an authenticated,
+single-use URL which derives a locally attenuated Fly token at redemption with a
+maximum 15-minute lifetime. This proves native integration routing and controlled
+credential leasing; it does not yet prove a real Fly token, per-command Fly auditing,
+or generalize provider-specific configuration beyond Fly.
+
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
 behavior before adding more onboarding features. Endpoint/credential editing,
@@ -86,8 +94,10 @@ optional workspace/project IDs are stored and shown during review. Pending reque
 can be approved once, for the thread, or across the project. Standing approvals are
 encrypted, durable, bound to the exact identity/tool/configuration context, listed
 for the owner, and revocable. Amp-hosted remote MCP definitions send the short-lived
-token directly, without a local bridge or stored gateway credential. Google browser
-login requires both the exact subject and configured hosted-domain claim. Both
+token directly, without a local bridge or stored gateway credential. Native credential
+redemption also accepts an orb-minted `token_use=exchanged` token with the same audience
+and exact thread identity because the automatic MCP token is not exposed to the shell.
+Google browser login requires both the exact subject and configured hosted-domain claim. Both
 identities map explicitly to one configured owner; there is no delegation tree.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
