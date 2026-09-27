@@ -68,7 +68,7 @@ func TestEmptyCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Call(t.Context(), "unconfigured", "write", nil); err == nil {
+	if _, err := m.Call(t.Context(), "unconfigured", "write", "", nil); err == nil {
 		t.Fatal("unconfigured connection accepted")
 	}
 	mux := http.NewServeMux()
@@ -103,7 +103,7 @@ func TestBearerListAndCall(t *testing.T) {
 	if err != nil || len(tools) != 1 || tools[0].Name != "hello" || tools[0].InputSchema == nil {
 		t.Fatalf("ListTools() = %#v, %v", tools, err)
 	}
-	if _, err := m.Call(t.Context(), "one", "hello", map[string]any{"name": "world"}); err != nil {
+	if _, err := m.Call(t.Context(), "one", "hello", "", map[string]any{"name": "world"}); err != nil {
 		t.Fatalf("Call() error = %v", err)
 	}
 	if badAuth {

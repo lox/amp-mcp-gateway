@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -99,7 +100,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	g, err := gateway.New(cfg, s, m)
+	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
+	if err != nil {
+		return err
+	}
+	g, err := gateway.New(cfg, s, browser)
 	if err != nil {
 		return err
 	}
@@ -134,6 +139,10 @@ func run() error {
 		mcpHandler = g.MCP(secrets.GatewayToken)
 	}
 	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/browser/connect", browser.Socket())
+	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI()))
+	mux.Handle("/integrations/chrome", browserUI)
+	mux.Handle("/integrations/chrome/", browserUI)
 	mux.Handle("/", g.UI(auth, m))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))

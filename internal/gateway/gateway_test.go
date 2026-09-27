@@ -25,7 +25,7 @@ type fixtureBackend struct {
 	callErr error
 }
 
-func (b *fixtureBackend) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
+func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
 	b.calls.Add(1)
 	if b.callErr != nil {
 		return nil, b.callErr
@@ -35,6 +35,35 @@ func (b *fixtureBackend) Call(ctx context.Context, connection, tool string, args
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool + ":" + args["text"].(string)}}}, nil
 }
+func (b *fixtureBackend) Binding(string) string { return "" }
+
+type bindingBackend struct {
+	fixtureBackend
+	binding string
+}
+
+func (b *bindingBackend) Binding(string) string { return b.binding }
+
+type sequencedBindingBackend struct {
+	fixtureBackend
+	bindings     []string
+	bindingCalls atomic.Int32
+	expected     atomic.Value
+}
+
+func (b *sequencedBindingBackend) Binding(string) string {
+	i := int(b.bindingCalls.Add(1)) - 1
+	if i >= len(b.bindings) {
+		i = len(b.bindings) - 1
+	}
+	return b.bindings[i]
+}
+
+func (b *sequencedBindingBackend) Call(ctx context.Context, connection, tool, expected string, args map[string]any) (*mcp.CallToolResult, error) {
+	b.expected.Store(expected)
+	return b.fixtureBackend.Call(ctx, connection, tool, expected, args)
+}
+
 func fixture(t *testing.T) (*Gateway, *store.Store, *fixtureBackend) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
@@ -184,6 +213,113 @@ func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 			t.Fatal("unknown call retried")
 		}
 	})
+}
+
+func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	b := &bindingBackend{binding: "browser-and-tab-one"}
+	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "browser", Account: "selected tab", Browser: true}}, Tools: []Tool{{ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := input("pairing-change", "click target")
+	in.Calls[0].ToolID = "browser.click"
+	o, err := g.submit(t.Context(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	b.binding = "browser-and-tab-two"
+	runWorker(t, g)
+	await(t, s, o.ID, "denied")
+	if b.calls.Load() != 0 {
+		t.Fatal("stale browser approval dispatched to a different tab")
+	}
+}
+
+func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	b := &sequencedBindingBackend{bindings: []string{"tab-one", "tab-one", "tab-two"}}
+	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := g.submit(t.Context(), input("binding-dispatch", "private"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	await(t, s, o.ID, "succeeded")
+	if got := b.expected.Load(); got != "tab-one" {
+		t.Fatalf("dispatch binding = %v, want tab-one", got)
+	}
+	if calls := b.bindingCalls.Load(); calls != 2 {
+		t.Fatalf("binding read %d times, want one submission read and one worker read", calls)
+	}
+}
+
+func TestGetOperationPromotesImageContent(t *testing.T) {
+	g, s, _ := fixture(t)
+	upstreamResult := &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: "visible screenshot metadata"}, &mcp.ImageContent{Data: []byte("image-bytes"), MIMEType: "image/jpeg"}},
+		StructuredContent: map[string]any{"url": "https://example.com", "mime_type": "image/jpeg"},
+	}
+	raw, err := json.Marshal(upstreamResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := store.Operation{ID: "image-result", Tool: "browser.screenshot", Connection: "browser", Status: "succeeded", Result: raw}
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(g.MCP("image-result-token"))
+	defer server.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "image-test", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"image-result-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_operation", Arguments: getInput{ID: o.ID}})
+	if err != nil || result.IsError || len(result.Content) != 1 {
+		t.Fatalf("get_operation = %#v, %v", result, err)
+	}
+	image, ok := result.Content[0].(*mcp.ImageContent)
+	if !ok || image.MIMEType != "image/jpeg" || string(image.Data) != "image-bytes" {
+		t.Fatalf("image content not promoted: %#v", result.Content)
+	}
+	structured, err := json.Marshal(result.StructuredContent)
+	encodedImage := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
+	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") || !strings.Contains(string(structured), "visible screenshot metadata") {
+		t.Fatalf("invalid structured operation metadata: %s, %v", structured, err)
+	}
+}
+
+func TestGetOperationPreservesOrdinaryResult(t *testing.T) {
+	g, _, _ := fixture(t)
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"ordinary result"}],"structuredContent":{"value":42}}`)
+	promoted, result := g.resultWithContent(store.Operation{ID: "ordinary-result", Status: "succeeded", Result: raw})
+	if promoted != nil {
+		t.Fatalf("ordinary content was promoted: %#v", promoted)
+	}
+	if string(result.Result) != string(raw) {
+		t.Fatalf("ordinary result changed to %s", result.Result)
+	}
 }
 
 type bearer struct{ token string }
