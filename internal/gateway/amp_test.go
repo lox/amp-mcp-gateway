@@ -231,6 +231,9 @@ func TestMakingConnectionPrivateHidesEarlierResults(t *testing.T) {
 	}
 	runWorker(t, g)
 	await(t, s, o.ID, "succeeded")
+	if err := s.SaveCatalogueProtecting(t.Context(), []byte(`{}`), map[string]bool{"notes": true}); err != nil {
+		t.Fatal(err)
+	}
 	g.cfg.PrivateConnections = map[string]bool{"notes": true}
 	shared := private
 	shared.ThreadVisibility = "thread_workspace_shared"
@@ -239,6 +242,10 @@ func TestMakingConnectionPrivateHidesEarlierResults(t *testing.T) {
 	}
 	if got, err := g.getOperation(withAmpIdentity(t.Context(), private), o.ID); err != nil || len(got.Result) == 0 {
 		t.Fatalf("earlier result unavailable in private context: %+v, %v", got, err)
+	}
+	delete(g.cfg.PrivateConnections, "notes")
+	if _, err := g.submit(withAmpIdentity(t.Context(), shared), input(o.ID, "historical result")); err == nil || err.Error() != "unknown tool" {
+		t.Fatalf("idempotent retry exposed private result after privacy was disabled: %v", err)
 	}
 }
 

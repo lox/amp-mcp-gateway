@@ -261,7 +261,16 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	}
 	o.LegacyDigest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpSubject, o.AmpUserID, o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID})
-	return g.store.Submit(ctx, o)
+	stored, err := g.store.Submit(ctx, o)
+	if err != nil {
+		return stored, err
+	}
+	// An idempotent retry can return an operation made private after its original
+	// submission, even when the connection is no longer private.
+	if stored.Private && !identity.privateThread() {
+		return store.Operation{}, errors.New("unknown tool")
+	}
+	return stored, nil
 }
 
 func (g *Gateway) getOperation(ctx context.Context, id string) (store.Operation, error) {
