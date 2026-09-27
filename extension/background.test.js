@@ -40,12 +40,20 @@ const context = {
   WebSocket: class {},
 };
 const source = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
-vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.executeForTest = execute; this.receiveForTest = receive; this.snapshotForTest = snapshot; this.screenshotForTest = screenshot; this.configForTest = () => currentConfig; this.drainForTest = () => operationQueue;`, context);
+vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.executeForTest = execute; this.receiveForTest = receive; this.snapshotForTest = snapshot; this.screenshotForTest = screenshot; this.saveGatewayForTest = saveGateway; this.configForTest = () => currentConfig; this.drainForTest = () => operationQueue;`, context);
 
 test("select-all uses Command on macOS and Control elsewhere", () => {
   assert.equal(context.selectAllModifierForTest("mac"), 4);
   assert.equal(context.selectAllModifierForTest("win"), 2);
   assert.equal(context.selectAllModifierForTest("linux"), 2);
+});
+
+test("gateway settings persist only a validated origin", async () => {
+  const saved = await context.saveGatewayForTest("https://gateway.example/");
+  assert.equal(saved, "https://gateway.example");
+  assert.equal(storedWrites.some((write) => write.gatewayURL === saved), true);
+  await assert.rejects(context.saveGatewayForTest("https://gateway.example/integrations/chrome"), /only the gateway origin/);
+  await assert.rejects(context.saveGatewayForTest("http://gateway.example"), /must use HTTPS/);
 });
 
 test("commands stay bound to their captured share and tab", async () => {

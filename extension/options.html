@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Amp MCP Gateway settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <div class="eyebrow">Amp MCP Gateway</div>
+    <h1>Extension settings</h1>
+    <p>Set the gateway used whenever you pair a tab. It is stored locally in this Chrome profile.</p>
+    <form id="settings">
+      <label for="gateway">Gateway URL</label>
+      <input id="gateway" name="gateway" type="url" placeholder="https://gateway.example.com" required>
+      <button type="submit">Save gateway</button>
+    </form>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <p class="footnote">Use only the gateway origin, without a path, query, credentials, or fragment. HTTPS is required except on loopback.</p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

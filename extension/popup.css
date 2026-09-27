@@ -13,9 +13,13 @@ h1 { font-size: 25px; letter-spacing: -.5px; margin: 4px 0 8px; }
 .status { background: #eaf0e8; border-radius: 7px; margin-bottom: 18px; padding: 10px 12px; }
 .status.connected { background: #dff3e5; color: #175e37; }
 .status.error { background: #fde9e5; color: #9c3724; }
+.gateway-row { align-items: center; display: grid; gap: 3px 10px; grid-template-columns: 1fr auto; }
+.gateway-row span { color: #586b62; font-size: 11px; font-weight: 650; text-transform: uppercase; }
+.gateway-row code { font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 label { display: block; font-size: 12px; font-weight: 650; margin: 12px 0 5px; }
 input { background: white; border: 1px solid #bccdc0; border-radius: 6px; color: inherit; font: inherit; padding: 10px; width: 100%; }
 button { background: #216442; border: 1px solid #216442; border-radius: 6px; color: white; cursor: pointer; font: inherit; font-weight: 650; margin-top: 16px; padding: 10px 14px; width: 100%; }
 button:disabled { cursor: wait; opacity: .65; }
 .secondary { background: white; color: #9f3535; border-color: #d9b7b7; }
+.text-button { background: transparent; border: 0; color: #216442; font-size: 12px; grid-column: 2; grid-row: 1 / 3; margin: 0; padding: 6px 0; text-decoration: underline; width: auto; }
 .footnote { color: #6d786d; font-size: 11px; margin: 16px 0 0; }
