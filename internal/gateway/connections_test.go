@@ -489,6 +489,7 @@ func TestConnectionDefaultExecution(t *testing.T) {
 	cfg.Tools[0].Policy = ""
 	cfg.ToolDefaults["notes"] = "allow"
 	cfg.PrivateConnections = map[string]bool{"notes": true}
+	cfg.AmpUserID = "user-owner"
 	next, err = New(cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
@@ -646,7 +647,7 @@ func TestDefaultPermissionRadios(t *testing.T) {
 	for _, policy := range []string{"deny", "require_approval", "allow"} {
 		t.Run(policy, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy, Private: true}, "Connection": map[string]any{"ID": "notes"}})
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Ticket": "review", "Draft": toolDraft{Default: policy, Private: true}, "WorkloadIdentity": true, "Connection": map[string]any{"ID": "notes"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -666,6 +667,7 @@ func TestDefaultPermissionRadios(t *testing.T) {
 
 func TestConnectionPrivacyCanBeSavedIndependently(t *testing.T) {
 	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
@@ -683,6 +685,29 @@ func TestConnectionPrivacyCanBeSavedIndependently(t *testing.T) {
 	var restored Config
 	if !g.cfg.privateConnection("notes") || LoadCatalogue(t.Context(), &restored, s) != nil || !restored.privateConnection("notes") || restored.Tools[0].Policy != "" {
 		t.Fatalf("connection privacy was not persisted independently: %+v", restored)
+	}
+}
+
+func TestConnectionPrivacyRequiresWorkloadIdentity(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
+	if w.Code != 200 || strings.Contains(w.Body.String(), `<input type="checkbox" name="private_connection"`) {
+		t.Fatal("private setting shown without workload identity")
+	}
+	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	values := url.Values{"ticket": {match[1]}, "private_connection": {"true"}, "default_policy": {"require_approval"}, "policy_0": {"inherit"}}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 400 || g.cfg.privateConnection("notes") {
+		t.Fatal("forged private setting accepted without workload identity")
+	}
+	cfg := g.cfg
+	cfg.PrivateConnections = map[string]bool{"notes": true}
+	if _, err := New(cfg, s, g.backend); err == nil {
+		t.Fatal("private startup configuration accepted without workload identity")
 	}
 }
 

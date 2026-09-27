@@ -40,8 +40,9 @@ Use exact saved tool IDs. Omitted settings stay unchanged; policies are `allow`,
 exception. A connection can independently be `private`; all of its tools are then
 discoverable and callable only when Amp's fresh per-call token verifies the owner's
 thread is private, multiplayer is inactive, and no non-owner can influence it. Its
-results are unavailable from shared or multiplayer contexts. No tool-name-based
-safety classification is performed.
+results are unavailable from shared or multiplayer contexts. This setting requires
+Amp Workload Identity and is unavailable with legacy bearer authentication. No
+tool-name-based safety classification is performed.
 The tool returns one `review_url` and `expires_at` for up to 32 connections.
 Only the signed-in owner can apply or discard the entire batch. The review shows
 defaults, exceptions, and effective permissions before and after, including

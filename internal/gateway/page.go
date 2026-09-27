@@ -58,7 +58,7 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
 <form id="refresh-tools" method="post" action="/connections/{{.Connection.ID}}/discover"></form>
 {{if .Ticket}}
 <form id="policies" method="post" action="/connections/{{.Connection.ID}}/tools"><input type="hidden" name="ticket" value="{{.Ticket}}">
-<fieldset class="connection-access"><legend>Thread access</legend><label><input type="checkbox" name="private_connection" value="true" {{if .Draft.Private}}checked{{end}}><span><strong>Private connection</strong><small>Only expose this connection in your private, non-multiplayer threads where no non-owner can influence the call.</small></span></label></fieldset>
+{{if .WorkloadIdentity}}<fieldset class="connection-access"><legend>Thread access</legend><label><input type="checkbox" name="private_connection" value="true" {{if .Draft.Private}}checked{{end}}><span><strong>Private connection</strong><small>Only expose this connection in your private, non-multiplayer threads where no non-owner can influence the call.</small></span></label></fieldset>{{end}}
 <fieldset class="permission-default"><legend>Default permission for tools</legend><p class="help">Applies to tools without an exception, including new tools when you save a refresh.</p>
 <div class="default-options"><label><input type="radio" name="default_policy" value="deny" {{if eq .Draft.Default "deny"}}checked{{end}}><span>Block</span></label><label><input type="radio" name="default_policy" value="require_approval" {{if eq .Draft.Default "require_approval"}}checked{{end}}><span>Require approval</span></label><label><input type="radio" name="default_policy" value="allow" {{if eq .Draft.Default "allow"}}checked{{end}}><span>Allow</span></label></div>
 <p id="default-warning" class="default-warning" {{if ne .Draft.Default "allow"}}hidden{{end}}>Allow permits calls without approval, including newly discovered tools after saving. Tool names and read-only hints are not a safety guarantee.</p>
@@ -141,7 +141,7 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
   edited(); status.textContent = selected.length + ' tools updated. Save changes to apply.';
  }));
  defaults.forEach(input => input.addEventListener('change', () => { document.getElementById('default-warning').hidden = input.value !== 'allow'; edited(); }));
- form.querySelector('input[name="private_connection"]').addEventListener('change', edited);
+ form.querySelector('input[name="private_connection"]')?.addEventListener('change', edited);
  form.addEventListener('submit', () => { dirty = false; });
  window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
  filter();

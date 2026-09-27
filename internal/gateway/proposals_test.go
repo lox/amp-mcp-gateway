@@ -12,6 +12,7 @@ import (
 
 func TestPolicyProposalBatch(t *testing.T) {
 	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "verified-user"
 	g.cfg.Connections = append(g.cfg.Connections, upstream.Connection{ID: "mail", URL: "http://localhost/mail", NoAuth: true})
 	g.cfg.ToolDefaults = map[string]string{"mail": "allow"}
 	for _, item := range []struct{ name, policy string }{{"read", ""}, {"send", ""}, {"blocked", "deny"}, {"exception", "require_approval"}} {
@@ -29,11 +30,12 @@ func TestPolicyProposalBatch(t *testing.T) {
 	h, cookie := adminUI(t, g, m)
 	before := digest(g.catalogue())
 	private := true
+	ctx := withAmpIdentity(t.Context(), ampIdentity{UserID: "verified-user", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"})
 	input := policyInput{Changes: []policyChange{
 		{Connection: "mail", Private: &private, Default: "require_approval", Tools: map[string]string{"mail.read": "allow"}},
 		{Connection: "notes", Default: "deny"},
 	}}
-	result, err := g.proposePolicies(t.Context(), input)
+	result, err := g.proposePolicies(ctx, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,11 +45,11 @@ func TestPolicyProposalBatch(t *testing.T) {
 	u, _ := url.Parse(result.ReviewURL)
 	// Ordinary page views and another proposal must not replace the review.
 	formRequest(h, cookie, "GET", "/connections/mail/tools", nil)
-	if _, err := g.proposePolicies(t.Context(), input); err != nil {
+	if _, err := g.proposePolicies(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	w := formRequest(h, cookie, "GET", u.Path, nil)
-	for _, want := range []string{"Any owner thread → Private solo threads only", "Allow → Require approval", "Allow → Allow", "Block → Block", "mail.exception", "No verified Amp user", "Apply proposed changes"} {
+	for _, want := range []string{"Any owner thread → Private solo threads only", "Allow → Require approval", "Allow → Allow", "Block → Block", "mail.exception", "Verified Amp user", "Apply proposed changes"} {
 		if w.Code != 200 || !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("missing %q: %d %s", want, w.Code, w.Body.String())
 		}

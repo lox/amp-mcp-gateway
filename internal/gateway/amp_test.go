@@ -216,6 +216,32 @@ func TestPrivateConnectionRequiresPrivateSoloAmpThread(t *testing.T) {
 	}
 }
 
+func TestMakingConnectionPrivateHidesEarlierResults(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	tool := g.tools["notes.write"]
+	tool.Policy = "allow"
+	g.tools[tool.ID] = tool
+	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
+	no := false
+	private := ampIdentity{UserID: "user-owner", ThreadID: thread, ThreadVisibility: "private", ThreadMultiplayer: &no, ThreadNonOwnerCanInfluence: &no}
+	o, err := g.submit(withAmpIdentity(t.Context(), private), input("before-private", "historical result"))
+	if err != nil || o.Private {
+		t.Fatalf("initial operation: %+v, %v", o, err)
+	}
+	runWorker(t, g)
+	await(t, s, o.ID, "succeeded")
+	g.cfg.PrivateConnections = map[string]bool{"notes": true}
+	shared := private
+	shared.ThreadVisibility = "thread_workspace_shared"
+	if _, err := g.getOperation(withAmpIdentity(t.Context(), shared), o.ID); err == nil {
+		t.Fatal("earlier result exposed after connection became private")
+	}
+	if got, err := g.getOperation(withAmpIdentity(t.Context(), private), o.ID); err != nil || len(got.Result) == 0 {
+		t.Fatalf("earlier result unavailable in private context: %+v, %v", got, err)
+	}
+}
+
 func TestAmpRetryAcceptsOperationFromBeforeExpandedIdentity(t *testing.T) {
 	g, s, _ := fixture(t)
 	g.cfg.AmpUserID = "user-owner"

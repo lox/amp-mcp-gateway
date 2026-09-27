@@ -166,7 +166,7 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	if err != nil {
 		return err
 	}
-	if err := g.store.SaveCatalogue(ctx, raw, events...); err != nil {
+	if err := g.store.SaveCatalogueProtecting(ctx, raw, c.PrivateConnections, events...); err != nil {
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
 	m.Install(manager)
@@ -188,8 +188,11 @@ type toolDraft struct {
 	Removed    []string
 }
 
-func (draft toolDraft) edit(values url.Values) (toolDraft, error) {
+func (draft toolDraft) edit(values url.Values, workloadIdentity bool) (toolDraft, error) {
 	draft.Default = values.Get("default_policy")
+	if values.Has("private_connection") && !workloadIdentity {
+		return draft, errors.New("Private connections require Amp workload identity.")
+	}
 	draft.Private = values.Has("private_connection")
 	if !validPolicy(draft.Default) {
 		return draft, errors.New("Choose a connection default.")
@@ -378,6 +381,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		}
 	}
 	draft := g.drafts[ticket]
+	workloadIdentity := g.cfg.AmpUserID != ""
 	g.mu.RUnlock()
 	if connection == nil {
 		http.NotFound(w, nil)
@@ -396,7 +400,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		schema, _ := json.Marshal(tool.InputSchema)
 		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID]})
 	}
-	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
+	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -437,7 +441,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 			return
 		}
 		var err error
-		previous, err = previous.edit(r.PostForm)
+		previous, err = previous.edit(r.PostForm, g.cfg.AmpUserID != "")
 		if err != nil {
 			g.mu.Unlock()
 			http.Error(w, err.Error(), 400)
@@ -541,7 +545,7 @@ func (g *Gateway) saveTools(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "Edit expired or configuration changed. Reopen saved permissions or fetch tools again.", 409)
 		return
 	}
-	draft, err := draft.edit(r.PostForm)
+	draft, err := draft.edit(r.PostForm, g.cfg.AmpUserID != "")
 	if err != nil {
 		g.mu.Unlock()
 		http.Error(w, err.Error(), 400)

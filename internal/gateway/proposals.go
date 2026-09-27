@@ -63,6 +63,9 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		if !found || (change.Default != "" && !validPolicy(change.Default)) || len(change.Tools) > 1000 {
 			return policyResult{}, errors.New("unknown connection or invalid policies")
 		}
+		if change.Private != nil && *change.Private && g.cfg.AmpUserID == "" {
+			return policyResult{}, errors.New("private connections require Amp workload identity")
+		}
 		d := toolDraft{Connection: change.Connection, Default: g.cfg.defaultPolicy(change.Connection), Private: g.cfg.privateConnection(change.Connection)}
 		if change.Private != nil {
 			changed = changed || d.Private != *change.Private

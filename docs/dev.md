@@ -233,7 +233,9 @@ enforces this on each discovery, submission and result lookup. A call already
 admitted before multiplayer is enabled may still finish; running calls are never
 automatically cancelled. The stored catalogue encodes private connections as safe
 denials for older binaries, so a rollback starts successfully with those tools
-blocked rather than weakening access.
+blocked rather than weakening access. Private results use a new stored field that
+older binaries do not return. The setting is hidden and rejected unless Amp Workload
+Identity is configured; legacy bearer calls have no thread claims to enforce it.
 
 Fetching alone changes no live policies. Refresh keeps the default and exceptions
 you are editing, including if the fetch fails; changed definitions still trigger

@@ -63,6 +63,13 @@ type Gateway struct {
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	if cfg.AmpUserID == "" {
+		for _, private := range cfg.PrivateConnections {
+			if private {
+				return nil, errors.New("private connections require Amp workload identity")
+			}
+		}
+	}
 	for _, policy := range cfg.ToolDefaults {
 		if !validPolicy(policy) {
 			return nil, errors.New("invalid connection default")
@@ -263,7 +270,10 @@ func (g *Gateway) getOperation(ctx context.Context, id string) (store.Operation,
 		return o, err
 	}
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
-	if o.Private && !identity.privateThread() {
+	g.mu.RLock()
+	private := o.Private || g.cfg.privateConnection(o.Connection)
+	g.mu.RUnlock()
+	if private && !identity.privateThread() {
 		return store.Operation{}, errors.New("private operation unavailable in this Amp thread")
 	}
 	return o, nil
