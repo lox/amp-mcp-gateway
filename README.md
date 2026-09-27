@@ -93,6 +93,39 @@ to the next pending request. **Audit** shows the latest 200 recorded events.
 
 ![Recent demo operations](docs/images/dashboard.png)
 
+## Review a call inside Amp
+
+The project plugin in [`.amp/plugins/gateway-review.ts`](.amp/plugins/gateway-review.ts)
+adds `gateway_review_operation`: a read-only preview with an **Open approval page**
+button. Reload plugins in Amp after checking out this branch. For personal use
+outside this project, publish the same file as `gateway-review.ts` in your personal
+plugins repository. A project copy takes precedence over a personal copy with the
+same name; keep them in sync when publishing updates.
+
+After `call_tools` returns a pending operation, Amp supplies its `operation_id`,
+`approval_url`, tool, connection, account label and submitted arguments to the
+widget. Use `Not available` for an absent account label. The preview is supplied
+by Amp, **not fetched from the gateway**: verify the stored request on the approval
+page. This first version pins links to `https://lox-mcp-gateway.fly.dev`; change
+`gatewayOrigin` and the test URLs together for another deployment. It does not
+support local demo or portal URLs unchanged.
+
+The plugin holds no credentials and cannot submit, approve, deny or poll operations.
+Cancel dismisses the preview without changing the request. After opening the page,
+Amp uses the existing MCP `get_operation` tool with the same ID, up to 60 times at
+five-second intervals. A timeout is not success; an unknown outcome must not be
+automatically retried.
+
+Browser launch is best effort and may target the orb rather than your browser.
+Use the inline **Open approval page** link when needed. In the live fake-data test
+below, the card rendered and confirmation returned, but automatic browser launch
+failed; no operation was submitted or approved. An end-to-end approval test remains
+to be done.
+
+![Live Amp approval preview using fake data](docs/images/amp-gateway-review.png)
+
+Run `mise run check-plugin` for the plugin tests (also run in Buildkite).
+
 ## Connect an MCP
 
 Sign in to the gateway and open **Connections → Add MCP**. Enter the server URL and choose
