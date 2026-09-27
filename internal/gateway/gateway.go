@@ -530,6 +530,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(assets))
+	mux.HandleFunc("GET /events", g.ledgerEvents)
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
@@ -619,13 +620,17 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if r.URL.Path == "/operations" {
+	if r.URL.Path == "/operations" || r.URL.Path == "/audit" {
 		w.Header().Set("Vary", "HX-Request")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Header.Get("HX-Request") == "true" {
+			name := "operations-list"
+			if r.URL.Path == "/audit" {
+				name = "audit-list"
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := page.ExecuteTemplate(w, "operations-list", data); err != nil {
-				slog.Error("render operations list", "error", err)
+			if err := page.ExecuteTemplate(w, name, data); err != nil {
+				slog.Error("render live list", "error", err)
 			}
 			return
 		}
