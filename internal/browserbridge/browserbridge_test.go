@@ -359,7 +359,7 @@ func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(body, `action="/integrations/chrome/pair"`) || !strings.Contains(body, `href="/integrations"`) || !strings.Contains(body, `data-browser-state="not-paired"`) {
 		t.Fatalf("Chrome integration page is missing its integration routes: status=%d body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(body, `location.assign("/integrations/chrome")`) || strings.Contains(body, "location.reload()") {
+	if !strings.Contains(body, `location.replace("/integrations/chrome")`) || strings.Contains(body, "location.reload()") || strings.Contains(body, "location.assign(") {
 		t.Fatalf("Chrome state polling may replay the pairing POST: %s", body)
 	}
 	w = httptest.NewRecorder()

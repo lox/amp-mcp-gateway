@@ -588,7 +588,7 @@ if (browserCards.size) setInterval(async () => {
     const response = await fetch("/integrations/chrome/status", {cache: "no-store"});
     if (!response.ok) return;
     const statuses = await response.json();
-    if (statuses.some(status => browserCards.get(status.id) !== status.state)) location.assign("/integrations/chrome");
+    if (statuses.some(status => browserCards.get(status.id) !== status.state)) location.replace("/integrations/chrome");
   } catch (_) {
     // A later poll will observe the connection state.
   }
