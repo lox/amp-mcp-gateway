@@ -84,7 +84,9 @@ normal Chrome profile without exposing a listener on your machine.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
    choose **Load unpacked**, and select this checkout's `extension` directory. After
-   updating an existing checkout, click **Reload** on the extension card.
+   updating an existing checkout, click **Reload** on the extension card. Version
+   0.1 users must configure the gateway once after this update because Chrome clears
+   extension session storage during reload.
 2. Open the extension's **Settings** and save the gateway origin once, for example
    `https://gateway.example.com`. The setting persists in this Chrome profile.
 3. Sign in to the gateway dashboard and open **Integrations → Chrome**. Click

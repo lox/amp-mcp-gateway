@@ -4,15 +4,10 @@ let gatewayConfigured = false;
 async function load() {
   [activeTab] = await chrome.tabs.query({active: true, currentWindow: true});
   document.querySelector("#tab").textContent = activeTab?.title || activeTab?.url || "No active tab";
-  const [local, session] = await Promise.all([
-    chrome.storage.local.get("gatewayURL"),
-    chrome.storage.session.get("bridgeConfig"),
-  ]);
-  const gatewayURL = local.gatewayURL || session.bridgeConfig?.gatewayURL;
-  if (gatewayURL) {
+  const stored = await chrome.storage.local.get("gatewayURL");
+  if (stored.gatewayURL) {
     gatewayConfigured = true;
-    document.querySelector("#gateway").textContent = gatewayURL;
-    if (!local.gatewayURL) await chrome.storage.local.set({gatewayURL});
+    document.querySelector("#gateway").textContent = stored.gatewayURL;
   }
   await refreshStatus();
 }
