@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -150,7 +151,7 @@ func (m *Manager) Install(next *Manager) {
 	m.connMu.Lock()
 	defer m.connMu.Unlock()
 	for id, c := range next.conns {
-		if old, ok := m.conns[id]; ok && tokenKey(old.config) == tokenKey(c.config) {
+		if old, ok := m.conns[id]; ok && reflect.DeepEqual(old.config, c.config) {
 			next.conns[id] = old
 		}
 	}
@@ -332,8 +333,24 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 }
 
 func tokenKey(c Connection) string {
-	// A configuration change must never forward an existing grant to a new endpoint.
-	raw, _ := json.Marshal(c)
+	// Only OAuth connections have stored grants. Keep this encoding independent of
+	// Connection and OAuthConfig so unrelated fields cannot invalidate credentials.
+	// Changing this binding requires reconnecting; old keys are not searched.
+	o := c.OAuth
+	binding := struct {
+		ID, URL, Account                             string
+		PublicOnly                                   bool
+		ClientID, ClientSecretEnv, AuthURL, TokenURL string
+		Scopes                                       []string
+		ClientSecret, Resource                       string
+		AuthStyle                                    oauth2.AuthStyle
+	}{
+		ID: c.ID, URL: c.URL, Account: c.Account, PublicOnly: c.PublicOnly,
+		ClientID: o.ClientID, ClientSecretEnv: o.ClientSecretEnv,
+		AuthURL: o.AuthURL, TokenURL: o.TokenURL, Scopes: o.Scopes,
+		ClientSecret: o.ClientSecret, Resource: o.Resource, AuthStyle: o.AuthStyle,
+	}
+	raw, _ := json.Marshal(binding)
 	hash := sha256.Sum256(raw)
 	return c.ID + ":" + hex.EncodeToString(hash[:])
 }
