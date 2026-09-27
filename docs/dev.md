@@ -76,6 +76,42 @@ storage; do not commit it or paste it into a chat. The demo helper reads it dire
 The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
 the final MCP URL when overriding `-url`.
 
+## Suggest approval policies with Jev
+
+`policy-config` generates an offline candidate config for owner review. Omit
+`Policy` (or set it to `""`) on tools to classify. Explicit policies, configured
+`ToolDefaults`, and native integration policies are preserved, including policy
+inheritance. The command does not import or modify the live database catalogue.
+
+Optionally supply `TYPESAFE_API_KEY` through your environment or secret manager:
+
+```sh
+mkdir -p .local
+mise exec -- go run ./cmd/policy-config -config gateway.json -out .local/gateway.candidate.json
+```
+
+Without the key, the command warns and writes the candidate without calling
+TypeSafe: tools without an explicit or configured inherited policy become
+`require_approval`. Existing choices remain unchanged. Missing or invalid API
+responses also fall back to requiring approval.
+
+With the key, eligible tool names, descriptions and input schemas are sent to
+TypeSafe. Connection settings, credentials and actual call arguments are not sent;
+inspect metadata first because descriptions and schema examples can contain private
+data. The summary includes probabilities and the returned model version.
+
+Jev answers separate questions about public reads, writes/deletion, communication,
+spending, permissions, sensitive data and general-purpose execution. An `allow`
+suggestion requires a public-read probability of at least 0.95 and every risk
+probability at most 0.05. These are review heuristics, not security guarantees.
+
+The output is a new mode-0600 file; existing files are never overwritten. Review
+every policy together, edit overrides, and explicitly use the accepted file with
+`mcp-gateway -config` when starting a new gateway. On existing installations,
+persisted catalogue policies take precedence over config: apply reviewed changes
+through the dashboard instead. Nothing changes in the running gateway. Jev is not
+called during execution, and changed definitions need fresh owner review.
+
 ## Share a Chrome tab
 
 The demo and example configuration include a reverse-connected `browser`
