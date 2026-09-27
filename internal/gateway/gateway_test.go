@@ -479,7 +479,7 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread."} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread for one hour, with any schema-valid arguments.", "Expiry or revocation stops queued calls"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
@@ -487,7 +487,7 @@ func TestApprovalScopePresentation(t *testing.T) {
 		if strings.Contains(body, "<span>This project</span>") != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
 		}
-		if strings.Contains(body, "Allow future calls to notes.write across threads in this project.") != tc.wantProject {
+		if strings.Contains(body, "Allow future calls to notes.write across threads in this project for one hour, with any schema-valid arguments.") != tc.wantProject {
 			t.Errorf("%s: project scope help visibility mismatch", tc.id)
 		}
 	}

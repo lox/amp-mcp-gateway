@@ -27,6 +27,11 @@ type ApprovalGrant struct {
 	Created        int64  `json:"created"`
 }
 
+// Expires bounds consent to one hour from creation, including pre-upgrade grants.
+func (g ApprovalGrant) Expires() time.Time {
+	return time.Unix(g.Created, 0).Add(time.Hour)
+}
+
 func approvalGrant(o Operation, scope string) (ApprovalGrant, error) {
 	g := ApprovalGrant{
 		Scope: scope, Tool: o.Tool, Connection: o.Connection, Binding: o.Binding,
@@ -74,6 +79,9 @@ func (s *Store) activeGrant(ctx context.Context, tx *sql.Tx, id string) (*Approv
 	if err != nil {
 		return nil, err
 	}
+	if !time.Now().Before(g.Expires()) {
+		return nil, nil
+	}
 	return &g, nil
 }
 
@@ -118,7 +126,7 @@ func (s *Store) decodeGrant(row scanner) (ApprovalGrant, error) {
 	return g, nil
 }
 
-// ApprovalGrants returns active standing approvals, newest first.
+// ApprovalGrants returns unexpired active standing approvals, newest first.
 func (s *Store) ApprovalGrants(ctx context.Context) ([]ApprovalGrant, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT id,payload FROM approval_grants WHERE active=1 ORDER BY created DESC,id")
 	if err != nil {
@@ -131,12 +139,15 @@ func (s *Store) ApprovalGrants(ctx context.Context) ([]ApprovalGrant, error) {
 		if err != nil {
 			return nil, err
 		}
-		grants = append(grants, g)
+		if time.Now().Before(g.Expires()) {
+			grants = append(grants, g)
+		}
 	}
 	return grants, rows.Err()
 }
 
-// RevokeApprovalGrant prevents the grant from authorizing future submissions.
+// RevokeApprovalGrant prevents future submissions and claims using this consent.
+// It cannot cancel operations already claimed or directly approved by the owner.
 func (s *Store) RevokeApprovalGrant(ctx context.Context, id, actor string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

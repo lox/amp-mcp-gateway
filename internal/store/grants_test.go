@@ -2,10 +2,13 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func ampOperation(id, thread, project, binding string) Operation {
@@ -182,5 +185,218 @@ func TestConfigurationAndOAuthChangesRevokeApprovalGrants(t *testing.T) {
 				t.Fatalf("grant survived %s change: %+v, %v", name, grants, err)
 			}
 		})
+	}
+}
+
+func TestApprovalGrantExpiresAtOneHour(t *testing.T) {
+	for _, scope := range []string{"thread", "project"} {
+		t.Run(scope, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, path, key := testStore(t)
+				source := submitWithGrants(t, s, ampOperation("source", "thread", "project", "binding"))
+				if err := s.Approve(t.Context(), source.ID, "owner", scope); err != nil {
+					t.Fatal(err)
+				}
+				claimed, err := s.Claim(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+					t.Fatal(err)
+				}
+
+				time.Sleep(59*time.Minute + 59*time.Second)
+				queued := submitWithGrants(t, s, ampOperation("queued", "thread", "project", "binding"))
+				if queued.Status != "ready" {
+					t.Fatalf("grant expired early: %s", queued.Status)
+				}
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+				s, err = Open(path, key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				grants, err := s.ApprovalGrants(t.Context())
+				if err != nil || len(grants) != 1 {
+					t.Fatalf("live grants: %v %v", grants, err)
+				}
+				time.Sleep(time.Second)
+				later := submitWithGrants(t, s, ampOperation("later", "thread", "project", "binding"))
+				if later.Status != "pending" {
+					t.Fatalf("expired grant authorized submission: %s", later.Status)
+				}
+				grants, err = s.ApprovalGrants(t.Context())
+				if err != nil || len(grants) != 0 {
+					t.Fatalf("expired grant listed: %v %v", grants, err)
+				}
+				if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("expired grant dispatched: %v", err)
+				}
+				got, err := s.Get(t.Context(), queued.ID)
+				if err != nil || got.Status != "denied" {
+					t.Fatalf("queued call not denied: %s %v", got.Status, err)
+				}
+				events, err := s.OperationEvents(t.Context(), queued.ID)
+				if err != nil || events[0].Kind != "denied" || events[0].Actor != "approval-grant-unavailable" {
+					t.Fatalf("missing denial audit: %v %v", events, err)
+				}
+			})
+		})
+	}
+}
+
+func TestLegacyGrantQueuedCallFailsClosed(t *testing.T) {
+	s, path, key := testStore(t)
+	source := submitWithGrants(t, s, ampOperation("source", "thread", "project", "binding"))
+	if err := s.Approve(t.Context(), source.ID, "owner", "thread"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+		t.Fatal(err)
+	}
+	queued := submitWithGrants(t, s, ampOperation("queued", "thread", "project", "binding"))
+	// The old writer persisted a grant ID but not its consent source.
+	queued.ApprovalGrantSource = ""
+	raw, err := encodeOperation(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("UPDATE operations SET payload=? WHERE id=?", s.seal("operation:"+queued.ID, raw), queued.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy call dispatched: %v", err)
+	}
+	got, err := s.Get(t.Context(), queued.ID)
+	if err != nil || got.Status != "denied" {
+		t.Fatalf("legacy call not denied: %v %v", got, err)
+	}
+	fresh := submitWithGrants(t, s, ampOperation("fresh", "thread", "project", "binding"))
+	if fresh.Status != "ready" || fresh.ApprovalGrantSource != source.ID {
+		t.Fatal("live legacy grant did not authorize new call")
+	}
+	if _, err := s.Claim(t.Context()); err != nil {
+		t.Fatalf("new call could not dispatch: %v", err)
+	}
+}
+
+func TestApprovalGrantRevocationAtClaim(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(map[bool]string{false: "revoked", true: "revoked then reapproved"}[replace], func(t *testing.T) {
+			s, _, _ := testStore(t)
+			// Two pending requests let a later human consent replace the same scope.
+			source := submitWithGrants(t, s, ampOperation("source", "thread", "project", "binding"))
+			renewal := submitWithGrants(t, s, ampOperation("renewal", "thread", "project", "binding"))
+			if err := s.Approve(t.Context(), source.ID, "owner", "thread"); err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := s.Claim(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+				t.Fatal(err)
+			}
+			queued := submitWithGrants(t, s, ampOperation("a-queued", "thread", "project", "binding"))
+			if queued.Status != "ready" {
+				t.Fatal("grant did not authorize queued call")
+			}
+			if err := s.RevokeApprovalGrant(t.Context(), queued.ApprovalGrant, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			if replace {
+				if err := s.Approve(t.Context(), renewal.ID, "owner", "thread"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("old consent dispatched: %v", err)
+			}
+			got, err := s.Get(t.Context(), queued.ID)
+			if err != nil || got.Status != "denied" {
+				t.Fatalf("queued call not denied: %v %v", got, err)
+			}
+			got = submitWithGrants(t, s, ampOperation(queued.ID, "thread", "project", "binding"))
+			if got.Status != "denied" {
+				t.Fatal("idempotent retry revived denied call")
+			}
+			if replace {
+				if _, err := s.Claim(t.Context()); err != nil {
+					t.Fatalf("direct approval blocked: %v", err)
+				}
+				fresh := submitWithGrants(t, s, ampOperation("fresh", "thread", "project", "binding"))
+				if fresh.Status != "ready" {
+					t.Fatal("new consent not usable")
+				}
+				if _, err := s.Claim(t.Context()); err != nil {
+					t.Fatalf("new consent failed claim: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestApprovalGrantRevocationDoesNotCancelDirectOrRunningCalls(t *testing.T) {
+	s, _, _ := testStore(t)
+	source := submitWithGrants(t, s, ampOperation("source", "thread", "project", "binding"))
+	if err := s.Approve(t.Context(), source.ID, "owner", "thread"); err != nil {
+		t.Fatal(err)
+	}
+	grants, err := s.ApprovalGrants(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeApprovalGrant(t.Context(), grants[0].ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(t.Context())
+	if err != nil || claimed.ID != source.ID {
+		t.Fatalf("revocation cancelled direct consent: %v %v", claimed, err)
+	}
+	if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+		t.Fatal(err)
+	}
+	renewal := submitWithGrants(t, s, ampOperation("renewal", "thread", "project", "binding"))
+	if err := s.Approve(t.Context(), renewal.ID, "owner", "thread"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+		t.Fatal(err)
+	}
+	running := submitWithGrants(t, s, ampOperation("running", "thread", "project", "binding"))
+	claimed, err = s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeApprovalGrant(t.Context(), running.ApprovalGrant, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(t.Context(), claimed, "unknown", nil); err != nil {
+		t.Fatal(err)
+	}
+	got := submitWithGrants(t, s, ampOperation("running", "thread", "project", "binding"))
+	if got.Status != "unknown" {
+		t.Fatal("running call outcome changed")
+	}
+	if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("unknown call retried")
 	}
 }
