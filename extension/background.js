@@ -32,6 +32,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     serialized(() => pair(message)).then(() => sendResponse({ok: true})).catch((error) => sendResponse({ok: false, error: error.message}));
     return true;
   }
+  if (message.type === "configureGateway") {
+    saveGateway(message.gatewayURL).then((gatewayURL) => sendResponse({ok: true, gatewayURL})).catch((error) => sendResponse({ok: false, error: error.message}));
+    return true;
+  }
   if (message.type === "disconnect") {
     serialized(() => disconnect("Disconnected.")).then(() => sendResponse({ok: true}));
     return true;
@@ -58,7 +62,8 @@ async function reconnectStored() {
 }
 
 async function pair(message) {
-  const gatewayURL = normalizeGatewayURL(message.gatewayURL);
+  const stored = await chrome.storage.local.get(["gatewayURL", "installID"]);
+  const gatewayURL = normalizeGatewayURL(message.gatewayURL || stored.gatewayURL);
   const tab = await chrome.tabs.get(message.tabId);
   if (!/^https?:/.test(tab.url || "")) throw new Error("Chrome can only share HTTP(S) tabs.");
   const pairingCode = typeof message.pairingCode === "string" ? message.pairingCode.trim() : "";
@@ -67,9 +72,8 @@ async function pair(message) {
     await detach(currentConfig.tabId);
   }
   await attach(tab.id);
-  const stored = await chrome.storage.local.get("installID");
   const installID = stored.installID || crypto.randomUUID();
-  await chrome.storage.local.set({installID});
+  await chrome.storage.local.set({gatewayURL, installID});
   currentConfig = {
     gatewayURL,
     pairingCode,
@@ -80,6 +84,12 @@ async function pair(message) {
   await chrome.storage.session.set({bridgeConfig: currentConfig});
   await setStatus("connecting", `Connecting ${tab.title || tab.url}`);
   connect();
+}
+
+async function saveGateway(raw) {
+  const gatewayURL = normalizeGatewayURL(raw);
+  await chrome.storage.local.set({gatewayURL});
+  return gatewayURL;
 }
 
 function normalizeGatewayURL(raw) {

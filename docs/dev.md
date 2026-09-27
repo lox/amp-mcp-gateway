@@ -83,12 +83,16 @@ connection. It lets an orb inspect and control one explicitly selected tab in a
 normal Chrome profile without exposing a listener on your machine.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
-   choose **Load unpacked**, and select this checkout's `extension` directory.
-2. Sign in to the gateway dashboard, open **Integrations → Chrome**, and create a
-   pairing code.
-3. Open the tab you want to share, open the extension, and paste the displayed
-   gateway URL and pairing code.
-4. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
+   choose **Load unpacked**, and select this checkout's `extension` directory. After
+   updating an existing checkout, click **Reload** on the extension card. Version
+   0.1 users must configure the gateway once after this update because Chrome clears
+   extension session storage during reload.
+2. Open the extension's **Settings** and save the gateway origin once, for example
+   `https://gateway.example.com`. The setting persists in this Chrome profile.
+3. Sign in to the gateway dashboard and open **Integrations → Chrome**. Click
+   **Enable Chrome** if this is the first setup, then create a pairing code.
+4. Open the tab you want to share, open the extension, and paste the pairing code.
+5. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
    accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,
    role, and accessible name to `browser.click` and `browser.type`; the extension
    rejects mutations if any target descriptor changed after the snapshot.
@@ -106,6 +110,9 @@ session storage, so restarting either side requires pairing again. The displayed
 one-time code is consumed on first use and exchanged for a reconnect credential
 bound to that extension install, share generation, and tab. Re-pairing, revocation,
 or selecting a new share generation invalidates queued approvals.
+Enabling Chrome persists its connection and governed tool definitions in the
+encrypted catalogue; production deployments do not need to add them to the startup
+configuration.
 Once a browser mutation is dispatched, a disconnect or extension-reported error
 marks its outcome unknown and is never replayed automatically.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
@@ -143,6 +150,19 @@ Use the Connect/Reconnect button to start authorization: initiation requires an
 owner-authenticated, same-origin POST. Direct GET links do not start a grant.
 The response opens the provider in a new navigation, preserving the gateway's
 `form-action 'self'` policy; a Continue link is available if JavaScript is disabled.
+
+OAuth grants use an explicit credential binding: connection ID, endpoint, account,
+network policy and OAuth client, authorization/token endpoints, secrets, scopes,
+resource and authentication style. Unrelated connection fields do not change it.
+The binding stores secret environment-variable names, not their resolved values.
+Changing a bound field requires reconnecting; configuration replacement separately
+compares the full connection so runtime settings still take effect.
+
+**Upgrade from whole-connection credential hashes:** reconnect each OAuth connection
+once after deploying the explicit binding. There is no migration or legacy-key
+fallback; old token records remain encrypted but are not used. Reconnecting revokes
+queued approvals. Test the connection afterwards, and do not retry operations with
+an unknown outcome automatically.
 
 The gateway checks OAuth grants every minute, refreshing tokens within two minutes
 of expiry even while idle. Expired tokens also refresh on use. Credentials, rotated
@@ -504,7 +524,9 @@ builds branches and pull requests; fork PRs are disabled. The pipeline uploads
 `.buildkite/pipeline.yml` from the checkout.
 
 Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
-run formatting checks, race tests, vet and build the gateway. A hosted
+run formatting checks, race tests, vet and build the gateway. A separate plugin-test
+job installs the pinned Bun version through mise and runs `mise run check-plugin`.
+It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
 fall back to normal downloads and compilation. The deploy job installs only
 `flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote

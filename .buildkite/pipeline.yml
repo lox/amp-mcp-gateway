@@ -12,9 +12,17 @@ steps:
     command: .buildkite/check
     timeout_in_minutes: 15
 
+  - label: ":bun: Test Amp plugin"
+    key: check-plugin
+    plugins:
+      - mise#v1.1.5:
+          install_args: bun
+    command: MISE_TASK_RUN_AUTO_INSTALL=false mise run check-plugin
+    timeout_in_minutes: 5
+
   - label: ":fly: Deploy main"
     key: deploy
-    depends_on: check
+    depends_on: [check, check-plugin]
     if: build.branch == "main" && build.pull_request.id == null
     plugins:
       - mise#v1.1.5:

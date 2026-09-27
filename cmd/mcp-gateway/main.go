@@ -142,7 +142,9 @@ func run() error {
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
 	mux.Handle("/browser/connect", browser.Socket())
-	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI()))
+	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI(func(ctx context.Context) error {
+		return g.EnableChrome(ctx, m)
+	})))
 	mux.Handle("/integrations/chrome", browserUI)
 	mux.Handle("/integrations/chrome/", browserUI)
 	mux.Handle("/", g.UI(auth, m))

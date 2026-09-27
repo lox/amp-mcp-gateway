@@ -262,13 +262,3 @@ func TestPublicDestinationBoundary(t *testing.T) {
 		}
 	}
 }
-
-func TestNewFieldsPreserveLegacyTokenKey(t *testing.T) {
-	c := Connection{ID: "legacy", URL: "https://mcp.example.com", OAuth: &OAuthConfig{ClientID: "client", AuthURL: "https://auth.example.com/authorize", TokenURL: "https://auth.example.com/token"}}
-	raw, _ := json.Marshal(c)
-	for _, field := range []string{"BearerToken", "PublicOnly", "NoAuth", "ClientSecret\"", "Resource", "AuthStyle"} {
-		if strings.Contains(string(raw), field) {
-			t.Fatalf("new empty field changes existing credential binding: %s", field)
-		}
-	}
-}
