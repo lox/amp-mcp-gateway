@@ -23,7 +23,7 @@ type suggestionTransport func(*http.Request) (*http.Response, error)
 func (f suggestionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
-	for _, mode := range []string{"suggest", "no-key", "opt-out", "failure", "stale"} {
+	for _, mode := range []string{"suggest", "no-key", "failure", "stale"} {
 		t.Run(mode, func(t *testing.T) {
 			g, s, _ := fixture(t)
 			remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
@@ -68,7 +68,7 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 					g.cfg.ToolDefaults["notes"] = "deny"
 				}
 				g.mu.Unlock()
-				body := `{"model":"jev-test","answers":{"safe":{"type":"noul","noul":0.99},"writes":{"type":"noul","noul":0.01},"communicates":{"type":"noul","noul":0},"spends":{"type":"noul","noul":0},"permissions":{"type":"noul","noul":0},"sensitive":{"type":"noul","noul":0},"execution":{"type":"noul","noul":0}}}`
+				body := `{"model":"jev-test","answers":{"safe":{"type":"noul","noul":0.99},"writes":{"type":"noul","noul":0.01},"deletes":{"type":"noul","noul":0},"communicates":{"type":"noul","noul":0},"spends":{"type":"noul","noul":0},"permissions":{"type":"noul","noul":0},"credentials":{"type":"noul","noul":0},"sensitive":{"type":"noul","noul":0},"execution":{"type":"noul","noul":0},"requests":{"type":"noul","noul":0}}}`
 				if in.State.Name == "write" {
 					body = strings.Replace(body, `"noul":0.01`, `"noul":0.9`, 1)
 				}
@@ -82,9 +82,6 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			}
 			h, cookie := adminUI(t, g, m)
 			values := url.Values{}
-			if mode != "opt-out" {
-				values.Set("suggest_policies", "on")
-			}
 			w := formRequest(h, cookie, "POST", "/connections/notes/discover", values)
 			if mode == "stale" {
 				if w.Code != 409 {
@@ -96,11 +93,20 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			if w.Code != 200 || len(match) != 2 {
 				t.Fatalf("review: %d %s", w.Code, w.Body.String())
 			}
-			if (mode == "no-key" || mode == "opt-out") && calls.Load() != 0 {
+			if mode == "no-key" && calls.Load() != 0 {
 				t.Fatal("unexpected classification request")
 			}
 			if mode == "no-key" && !strings.Contains(w.Body.String(), "TYPESAFE_API_KEY is not set") {
 				t.Fatal("no fallback explanation")
+			}
+			if strings.Contains(w.Body.String(), `name="suggest_policies"`) || strings.Contains(w.Body.String(), "Policy suggestions ·") {
+				t.Fatal("legacy suggestion controls still present")
+			}
+			if mode == "suggest" && (!strings.Contains(w.Body.String(), "Jev suggested Allow") || !strings.Contains(w.Body.String(), "May modify stored data")) {
+				t.Fatal("missing inline explanations")
+			}
+			if mode != "suggest" && (!strings.Contains(w.Body.String(), "Approval fallback") || strings.Contains(w.Body.String(), "Jev suggested")) {
+				t.Fatal("fallback incorrectly attributed to Jev")
 			}
 			if _, ok := g.tools["notes.read"]; ok {
 				t.Fatal("published before save")
@@ -123,6 +129,20 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 					want = "deny"
 				}
 				values.Set("policy_"+strconv.Itoa(i), want)
+			}
+			// Refreshing must retain both the override and its original explanation,
+			// without sending the already-reviewed metadata again.
+			if mode == "suggest" {
+				w = formRequest(h, cookie, "POST", "/connections/notes/discover", values)
+				match = regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+				if w.Code != 200 || len(match) != 2 || calls.Load() != 2 {
+					t.Fatalf("refresh repeated classification or failed: status=%d calls=%d", w.Code, calls.Load())
+				}
+				values.Set("ticket", match[1])
+				refreshed := g.drafts[match[1]]
+				if refreshed.Suggestions["notes.read"].Policy != "allow" || refreshed.Tools[1].Policy != "deny" {
+					t.Fatal("refresh lost explanation or owner override")
+				}
 			}
 			if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 {
 				t.Fatal(w.Body.String())
@@ -149,7 +169,7 @@ func TestSuggestionsPreserveBlockedDefaultsAndUnsavedInheritance(t *testing.T) {
 		if def == "allow" {
 			previous = []Tool{tool}
 		}
-		draft.suggestPolicies(t.Context(), true, client, previous)
+		draft.suggestPolicies(t.Context(), client, previous)
 		if draft.Tools[0].Policy != "" {
 			t.Fatal("overrode inheritance")
 		}

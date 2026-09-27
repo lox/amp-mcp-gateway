@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,21 +30,24 @@ type Suggestion struct {
 
 // Suggest fails closed on incomplete evaluations. The caller selects eligible tools.
 func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
-	fallback := Suggestion{Policy: "require_approval", Reason: "classification unavailable or invalid; review required"}
+	fallback := Suggestion{Policy: "require_approval", Reason: "Jev is unavailable or returned an incomplete assessment. Approval is required until you choose otherwise."}
 	if c.Key == "" {
 		return fallback
 	}
-	questions := map[string]any{}
-	for key, question := range map[string]string{
-		"safe":         "Does the tool only read public, non-sensitive information?",
-		"writes":       "Can the tool create, modify or delete stored data?",
-		"communicates": "Can the tool send messages or publish content to other people?",
-		"spends":       "Can the tool spend money or initiate financial transactions?",
-		"permissions":  "Can the tool change permissions or account security settings?",
-		"sensitive":    "Can the tool retrieve credentials or private personal or business data?",
-		"execution":    "Can the tool execute caller-supplied code, SQL, shell commands or arbitrary HTTP requests?",
-	} {
-		questions[key] = map[string]string{"type": "noul", "instructions": question}
+	risks := []struct{ key, question, effect string }{
+		{"writes", "Can the tool create or modify stored data?", "modify stored data"},
+		{"deletes", "Can the tool delete stored data?", "delete stored data"},
+		{"communicates", "Can the tool send messages or publish content to other people?", "send messages or publish content"},
+		{"spends", "Can the tool spend money or initiate financial transactions?", "spend money"},
+		{"permissions", "Can the tool change permissions or account security settings?", "change permissions or account security"},
+		{"credentials", "Can the tool retrieve credentials, tokens, keys or other secrets?", "access credentials or secrets"},
+		{"sensitive", "Can the tool read private personal or business data?", "read private personal or business data"},
+		{"execution", "Can the tool execute caller-supplied code, SQL or shell commands?", "execute caller-supplied code or queries"},
+		{"requests", "Can the tool make network requests to arbitrary caller-supplied destinations?", "make arbitrary network requests"},
+	}
+	questions := map[string]any{"safe": map[string]string{"type": "noul", "instructions": "Does the tool only read public, non-sensitive information?"}}
+	for _, risk := range risks {
+		questions[risk.key] = map[string]string{"type": "noul", "instructions": risk.question}
 	}
 	body, err := json.Marshal(map[string]any{
 		"model":     "jev-latest",
@@ -85,20 +88,33 @@ func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
 	if err != nil || len(b) > 64*1024 || json.Unmarshal(b, &result) != nil || result.Model == "" {
 		return fallback
 	}
-	risk := 0.0
 	for key := range questions {
 		a := result.Answers[key]
 		if a.Type != "noul" || a.Probability == nil || *a.Probability < 0 || *a.Probability > 1 {
 			return fallback
 		}
-		if key != "safe" {
-			risk = max(risk, *a.Probability)
-		}
 	}
 	safe := *result.Answers["safe"].Probability
-	suggestion := Suggestion{Policy: "require_approval", Model: result.Model, Reason: fmt.Sprintf("public-read=%.4f max-risk=%.4f; owner review required", safe, risk)}
-	if safe >= 0.95 && risk <= 0.05 {
+	var reasons []string
+	for _, risk := range risks {
+		probability := *result.Answers[risk.key].Probability
+		if probability > 0.05 {
+			prefix := "Cannot rule out the ability to "
+			if probability >= 0.5 {
+				prefix = "May "
+			}
+			reasons = append(reasons, prefix+risk.effect+".")
+		}
+	}
+	suggestion := Suggestion{Policy: "require_approval", Model: result.Model}
+	if len(reasons) == 0 && safe >= 0.95 {
 		suggestion.Policy = "allow"
+		suggestion.Reason = "Appears limited to public, non-sensitive reads with no identified side effects. Calls can run without approval."
+	} else {
+		if len(reasons) == 0 {
+			reasons = append(reasons, "Uncertain whether this tool only reads public, non-sensitive information.")
+		}
+		suggestion.Reason = strings.Join(reasons, " ") + " Approval recommended."
 	}
 	return suggestion
 }

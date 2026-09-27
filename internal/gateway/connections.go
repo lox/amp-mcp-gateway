@@ -210,16 +210,15 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 }
 
 type toolDraft struct {
-	Connection       string
-	Revision         string
-	Tools            []Tool
-	Expires          time.Time
-	Default          string
-	Private          bool
-	Changes          map[string]string // Non-nil for discovery reviews, even without changes.
-	Removed          []string
-	Suggestions      map[string]policy.Suggestion
-	SuggestionNotice string
+	Connection  string
+	Revision    string
+	Tools       []Tool
+	Expires     time.Time
+	Default     string
+	Private     bool
+	Changes     map[string]string // Non-nil for discovery reviews, even without changes.
+	Removed     []string
+	Suggestions map[string]policy.Suggestion
 }
 
 func (draft toolDraft) edit(values url.Values, workloadIdentity bool) (toolDraft, error) {
@@ -579,7 +578,17 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 	g.mu.Unlock()
 	// Classification is advisory and may be slow. Never hold the catalogue lock
 	// over a provider request, or publish its result without rechecking the snapshot.
-	draft.suggestPolicies(r.Context(), r.PostForm.Has("suggest_policies"), g.policyClient, previous.Tools)
+	draft.suggestPolicies(r.Context(), g.policyClient, previous.Tools)
+	// Keep explanations alongside preserved choices when refreshing an unsaved review.
+	for _, tool := range draft.Tools {
+		for _, old := range previous.Tools {
+			if tool.Name == old.Name && tool.Description == old.Description && digest(tool.InputSchema) == digest(old.InputSchema) {
+				if suggestion, ok := previous.Suggestions[old.ID]; ok {
+					draft.Suggestions[tool.ID] = suggestion
+				}
+			}
+		}
+	}
 	g.mu.Lock()
 	current, exists := g.drafts[previousTicket]
 	if revision != digest(g.catalogue()) || (previousTicket != "" && (!exists || time.Now().After(current.Expires) || digest(current) != digest(previous))) {

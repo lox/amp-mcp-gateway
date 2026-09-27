@@ -80,28 +80,33 @@ the final MCP URL when overriding `-url`.
 
 Supply `TYPESAFE_API_KEY` to the gateway process to enable dashboard suggestions.
 In **Connections → Add MCP**, add the server and connect OAuth if needed, then
-open **Tools & permissions**. Leave **Suggest permissions with Jev when refreshing
-tools** checked and click **Refresh tools**. Jev classifies newly discovered tools
-and preselects suggested permissions in the review. Override any choice and click
+open **Tools & permissions** and click **Refresh tools**. Jev automatically
+classifies newly discovered tools and preselects suggested permissions. Click the
+info icon beside a permission for its explanation. Override any choice and click
 **Save changes** to apply the batch to the live catalogue. No CLI or config-file
 editing is needed.
 
-The checkbox discloses that new tool names, descriptions and input schemas go to
-TypeSafe. Uncheck it to skip classification. Connection credentials and actual call
-arguments are not sent; metadata itself may contain private data. The review shows
-probabilities and the returned model version. Classification uses at most four
-concurrent requests and a thirty-second overall budget.
+The page discloses that new tool names, descriptions and input schemas go to
+TypeSafe. Connection credentials and actual call arguments are not sent; metadata
+itself may contain private data. Remove the key to disable classification. Each
+icon explains the original suggestion even if you override it, with the model
+version and a reminder that tool metadata is not a safety guarantee. Classification
+uses at most four concurrent requests and a thirty-second overall budget.
 
 Without a key, discovery still works and the page explains that Jev is unavailable.
-New tools require approval, even if the connection default allows calls. Skipped,
-failed, timed-out or uncertain classifications also require approval. Blocked
+New tools require approval, even if the connection default allows calls. Failed,
+timed-out or uncertain classifications also require approval. Blocked
 connection defaults remain blocked. Existing saved policies and unsaved review
 choices are preserved; changed definitions still require approval unless blocked.
 
-Jev answers separate questions about public reads, writes/deletion, communication,
-spending, permissions, sensitive data and general-purpose execution. An `allow`
+Jev answers ten separate questions about public reads, writes, deletion,
+communication, spending, permissions, credentials, private data, code/query
+execution and arbitrary network requests. An `allow`
 suggestion requires a public-read probability of at least 0.95 and every risk
 probability at most 0.05. These are review heuristics, not security guarantees.
+Explanations distinguish likely capabilities (scores at least 0.5) from risks that
+cannot be ruled out (above 0.05). Missing or invalid assessments are labelled as
+approval fallbacks, never model recommendations.
 
 Suggestions live only in the existing ten-minute, catalogue-bound review draft.
 Nothing becomes executable until the owner saves. Concurrent configuration changes
@@ -314,8 +319,9 @@ Existing saved permissions are preserved as explicit exceptions on upgrade.
 To adopt the default for them, select them in bulk and choose **Use default**
 once. Changing a connection default never overrides explicit choices.
 You can edit saved permissions without fetching the server, including when it is
-offline. **Allow** as the default also allows new tools without approval after
-you save a refresh; the form warns about this explicitly. **Private connection** is
+offline. **Allow** as the default allows tools using that default without approval.
+New tools receive explicit Jev suggestions or approval fallbacks unless the default
+is **Block**. **Private connection** is
 an independent connection-wide restriction: its tools retain their allow, approval,
 or block behavior, but are hidden and blocked unless Amp's token verifies a private,
 non-multiplayer thread where no non-owner can influence the call. A fresh token
@@ -331,7 +337,7 @@ Fetching alone changes no live policies. Refresh keeps the default and exception
 you are editing, including if the fetch fails; changed definitions still trigger
 the approval/block rules below. You must save to publish these choices.
 The preview marks new and changed tools
-and lists removals. New tools inherit the default. Unchanged schemas/descriptions
+and lists removals. Review new tools' suggested permissions before saving. Unchanged schemas/descriptions
 keep their exceptions; changed tools require approval unless previously blocked,
 in which case they remain blocked. This also applies to tools
 previously allowed through the default. Removed tools disappear on save; historical

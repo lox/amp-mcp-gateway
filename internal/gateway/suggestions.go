@@ -10,14 +10,8 @@ import (
 
 // suggestPolicies changes only newly discovered, unconfigured tools in this
 // unpublished draft. Existing choices and changed-tool restrictions win.
-func (draft *toolDraft) suggestPolicies(ctx context.Context, enabled bool, client policy.Client, previous []Tool) {
+func (draft *toolDraft) suggestPolicies(ctx context.Context, client policy.Client, previous []Tool) {
 	draft.Suggestions = make(map[string]policy.Suggestion)
-	draft.SuggestionNotice = "Jev suggestions skipped. New tools require approval; existing choices and blocked defaults are preserved."
-	if client.Key == "" {
-		draft.SuggestionNotice = "Jev is unavailable: TYPESAFE_API_KEY is not set. New tools require approval; existing choices and blocked defaults are preserved."
-	} else if enabled {
-		draft.SuggestionNotice = "Jev suggestions are ready for review. Existing choices are preserved. Unavailable or uncertain classifications require approval. Nothing changes until you save."
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	results := make([]policy.Suggestion, len(draft.Tools))
@@ -35,8 +29,9 @@ func (draft *toolDraft) suggestPolicies(ctx context.Context, enabled bool, clien
 			continue
 		}
 		// The connection default may allow calls, but new suggestions must fail closed.
-		results[i] = policy.Suggestion{Policy: "require_approval", Reason: "Classification skipped; owner review required"}
-		if !enabled || client.Key == "" {
+		results[i] = policy.Suggestion{Policy: "require_approval", Reason: "Jev did not complete an assessment. Approval is required until you choose otherwise."}
+		if client.Key == "" {
+			results[i].Reason = "Jev is not configured. Approval is required until you choose otherwise."
 			continue
 		}
 		group.Go(func() error {

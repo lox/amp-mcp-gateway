@@ -19,23 +19,27 @@ func TestSuggest(t *testing.T) {
 		name, key string
 		value     any
 		want      string
+		reason    string
 	}{
-		{"public read at threshold", "safe", 0.95, "allow"},
-		{"below threshold", "safe", 0.949, "require_approval"},
-		{"write at threshold", "writes", 0.05, "allow"},
-		{"write above threshold", "writes", 0.051, "require_approval"},
-		{"communication", "communicates", 0.8, "require_approval"},
-		{"spending", "spends", 0.6, "require_approval"},
-		{"permissions", "permissions", 0.3, "require_approval"},
-		{"sensitive reads", "sensitive", 0.7, "require_approval"},
-		{"arbitrary execution", "execution", 0.9, "require_approval"},
-		{"null risk", "writes", nil, "require_approval"},
-		{"out of range", "safe", 2, "require_approval"},
-		{"wrong type", "safe", "yes", "require_approval"},
+		{"public read at threshold", "safe", 0.95, "allow", "Appears limited to public"},
+		{"below threshold", "safe", 0.949, "require_approval", "Uncertain whether"},
+		{"write at threshold", "writes", 0.05, "allow", "Appears limited to public"},
+		{"write above threshold", "writes", 0.051, "require_approval", "Cannot rule out the ability to modify stored data"},
+		{"deletion", "deletes", 0.9, "require_approval", "May delete stored data"},
+		{"communication", "communicates", 0.8, "require_approval", "May send messages or publish content"},
+		{"spending", "spends", 0.6, "require_approval", "May spend money"},
+		{"permissions", "permissions", 0.3, "require_approval", "Cannot rule out the ability to change permissions"},
+		{"credentials", "credentials", 0.8, "require_approval", "May access credentials or secrets"},
+		{"sensitive reads", "sensitive", 0.7, "require_approval", "May read private personal or business data"},
+		{"arbitrary execution", "execution", 0.9, "require_approval", "May execute caller-supplied code or queries"},
+		{"network requests", "requests", 0.9, "require_approval", "May make arbitrary network requests"},
+		{"null risk", "writes", nil, "require_approval", "unavailable"},
+		{"out of range", "safe", 2, "require_approval", "unavailable"},
+		{"wrong type", "safe", "yes", "require_approval", "unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			answers := map[string]any{"safe": map[string]any{"type": "noul", "noul": 1}}
-			for _, key := range []string{"writes", "communicates", "spends", "permissions", "sensitive", "execution"} {
+			for _, key := range []string{"writes", "deletes", "communicates", "spends", "permissions", "credentials", "sensitive", "execution", "requests"} {
 				answers[key] = map[string]any{"type": "noul", "noul": 0}
 			}
 			answers[tc.key] = map[string]any{"type": "noul", "noul": tc.value}
@@ -56,6 +60,9 @@ func TestSuggest(t *testing.T) {
 			got := c.Suggest(context.Background(), Tool{Name: "lookup", InputSchema: map[string]any{"type": "object"}})
 			if got.Policy != tc.want {
 				t.Fatalf("got %s, want %s", got.Policy, tc.want)
+			}
+			if !strings.Contains(got.Reason, tc.reason) {
+				t.Fatalf("reason %q does not explain %q", got.Reason, tc.reason)
 			}
 		})
 	}
