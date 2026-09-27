@@ -29,14 +29,19 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 		hostedDomain string
 		claimDomain  string
 		claimSubject string
+		claimName    string
+		claimEmail   string
+		wantLabel    string
 		wantSuccess  bool
 		wantReason   string
 	}{
 		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
-		{name: "valid hosted domain", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "owner-123", wantSuccess: true},
+		{name: "valid hosted domain", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "owner-123", claimName: " Alex <Admin> ", claimEmail: "alex@example.com", wantLabel: "Alex <Admin>", wantSuccess: true},
+		{name: "email fallback", claimSubject: "owner-123", claimName: " \t ", claimEmail: " alex@example.com ", wantLabel: "alex@example.com", wantSuccess: true},
+		{name: "long Unicode name", claimSubject: "owner-123", claimName: strings.Repeat("&", 127) + "界" + strings.Repeat("名", 200), wantLabel: strings.Repeat("&", 127) + "界", wantSuccess: true},
 		{name: "missing hosted domain claim", hostedDomain: "example.com", claimSubject: "owner-123", wantReason: "hosted_domain"},
 		{name: "wrong hosted domain claim", hostedDomain: "example.com", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
-		{name: "same domain wrong owner", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", wantReason: "owner"},
+		{name: "same domain wrong owner", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", claimName: "Alex <Admin>", claimEmail: "alex@example.com", wantReason: "owner"},
 		{name: "wrong nonce", claimSubject: "owner-123", wantReason: "nonce"},
 		{name: "wrong audience", claimSubject: "owner-123", wantReason: "id_token_verification"},
 		{name: "expired", claimSubject: "owner-123", wantReason: "id_token_verification"},
@@ -78,6 +83,12 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 					return
 				}
 				claims := map[string]any{"iss": issuer, "sub": tt.claimSubject, "aud": "gateway", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
+				if tt.claimName != "" {
+					claims["name"] = tt.claimName
+				}
+				if tt.claimEmail != "" {
+					claims["email"] = tt.claimEmail
+				}
 				if tt.claimDomain != "" {
 					claims["hd"] = tt.claimDomain
 				}
@@ -117,8 +128,11 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			app := http.NewServeMux()
 			a.Register(app)
+			app.Handle("GET /private", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, Subject(r.Context())+"|"+DisplayName(r.Context()))
+			})))
 			login := httptest.NewRecorder()
-			app.ServeHTTP(login, httptest.NewRequest("GET", "/login", nil))
+			app.ServeHTTP(login, httptest.NewRequest("GET", "/auth/login", nil))
 			location, err := url.Parse(login.Header().Get("Location"))
 			if err != nil {
 				t.Fatal(err)
@@ -131,10 +145,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			if got := location.Query().Get("hd"); got != tt.hostedDomain {
 				t.Fatalf("hosted domain hint = %q, want %q", got, tt.hostedDomain)
 			}
-			wantScope := "openid"
-			if tt.hostedDomain != "" {
-				wantScope = "openid email"
-			}
+			wantScope := "openid profile email"
 			if got := location.Query().Get("scope"); got != wantScope {
 				t.Fatalf("scope = %q, want %q", got, wantScope)
 			}
@@ -148,7 +159,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			if tt.name == "generic OIDC without domain" {
 				for i := 1; i < 128; i++ {
 					w := httptest.NewRecorder()
-					r := httptest.NewRequest("GET", "/login", nil)
+					r := httptest.NewRequest("GET", "/auth/login", nil)
 					r.RemoteAddr = fmt.Sprintf("192.0.3.%d:1234", i)
 					app.ServeHTTP(w, r)
 					if w.Code != http.StatusSeeOther {
@@ -156,7 +167,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 					}
 				}
 				excess := httptest.NewRecorder()
-				app.ServeHTTP(excess, httptest.NewRequest("GET", "/login", nil))
+				app.ServeHTTP(excess, httptest.NewRequest("GET", "/auth/login", nil))
 				if excess.Code != http.StatusServiceUnavailable {
 					t.Fatalf("full login capacity: status=%d", excess.Code)
 				}
@@ -181,6 +192,13 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			for _, c := range res.Result().Cookies() {
 				if c.Name == sessionCookie && c.MaxAge > 0 {
 					session = true
+					r := httptest.NewRequest("GET", "/private", nil)
+					r.AddCookie(c)
+					private := httptest.NewRecorder()
+					app.ServeHTTP(private, r)
+					if private.Code != 200 || private.Body.String() != "owner-123|"+tt.wantLabel {
+						t.Fatalf("session lost subject or profile: status=%d", private.Code)
+					}
 				}
 			}
 			if session != tt.wantSuccess {
@@ -188,7 +206,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			if tt.name == "generic OIDC without domain" {
 				fresh := httptest.NewRecorder()
-				app.ServeHTTP(fresh, httptest.NewRequest("GET", "/login", nil))
+				app.ServeHTTP(fresh, httptest.NewRequest("GET", "/auth/login", nil))
 				if fresh.Code != http.StatusSeeOther {
 					t.Fatalf("callback did not release login capacity: status=%d", fresh.Code)
 				}

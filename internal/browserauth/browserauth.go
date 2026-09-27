@@ -35,6 +35,7 @@ const (
 )
 
 type subjectKey struct{}
+type displayNameKey struct{}
 
 // Config configures owner authentication. Demo mode is deliberately separate
 // from OIDC mode and requires both Demo and DemoPassword.
@@ -82,9 +83,10 @@ type pendingState struct {
 }
 
 type cookieValue struct {
-	Subject string `json:"s"`
-	State   string `json:"t,omitempty"`
-	Expires int64  `json:"e"`
+	Subject     string `json:"s"`
+	DisplayName string `json:"n,omitempty"`
+	State       string `json:"t,omitempty"`
+	Expires     int64  `json:"e"`
 }
 
 // New validates c and initializes OIDC discovery in production mode.
@@ -144,11 +146,7 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		ClientSecret: c.ClientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  a.endpoint("auth/callback"),
-		Scopes:       []string{oidc.ScopeOpenID},
-	}
-	if c.HostedDomain != "" {
-		// Google requires email or profile alongside openid. Request no profile data.
-		a.oauth.Scopes = append(a.oauth.Scopes, "email")
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 	}
 	a.verifier = provider.Verifier(&oidc.Config{ClientID: c.ClientID})
 	return a, nil
@@ -169,6 +167,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 		return
 	}
 	mux.Handle("/login", cop.Handler(http.HandlerFunc(a.login)))
+	mux.Handle("/auth/login", cop.Handler(http.HandlerFunc(a.startOIDC)))
 	mux.Handle("/auth/callback", http.HandlerFunc(a.callback))
 	mux.Handle("/logout", cop.Handler(http.HandlerFunc(a.logout)))
 }
@@ -185,8 +184,8 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, a.owner)))
 			return
 		}
-		sub, ok := a.sessionSubject(r)
-		if !ok || sub != a.owner {
+		session, ok := a.readSignedCookie(r, sessionCookie)
+		if !ok || session.Subject == "" || session.Subject != a.owner || session.State != "" {
 			if r.Header.Get("HX-Request") == "true" {
 				// Navigate the whole document, never swap login/OIDC into a fragment.
 				w.Header().Set("HX-Redirect", "/login")
@@ -197,7 +196,9 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, sub)))
+		ctx := context.WithValue(r.Context(), subjectKey{}, session.Subject)
+		ctx = context.WithValue(ctx, displayNameKey{}, session.DisplayName)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -228,17 +229,29 @@ func Subject(ctx context.Context) string {
 	return s
 }
 
-func (a *Auth) sessionSubject(r *http.Request) (string, bool) {
-	value, ok := a.readSignedCookie(r, sessionCookie)
-	if !ok || value.Subject == "" || value.State != "" {
-		return "", false
-	}
-	return value.Subject, true
+// DisplayName returns a display-only profile label, if available.
+// Authorization must use Subject, never a name or email address.
+func DisplayName(ctx context.Context) string {
+	name, _ := ctx.Value(displayNameKey{}).(string)
+	return name
 }
 
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 	if a.demo {
 		a.demoLogin(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = loginPage.Execute(w, loginData{})
+}
+
+func (a *Auth) startOIDC(w http.ResponseWriter, r *http.Request) {
+	if a.demo {
+		http.NotFound(w, r)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -333,16 +346,16 @@ func (a *Auth) demoLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = loginPage.Execute(w, nil)
+		_ = loginPage.Execute(w, loginData{Demo: true})
 	case http.MethodPost:
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		if err := r.ParseForm(); err != nil || subtle.ConstantTimeCompare([]byte(r.Form.Get("password")), []byte(a.password)) != 1 {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
-			_ = loginPage.Execute(w, "Incorrect password")
+			_ = loginPage.Execute(w, loginData{Demo: true, Error: "Incorrect password"})
 			return
 		}
-		a.setSignedCookie(w, sessionCookie, cookieValue{Subject: a.owner, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
+		a.setSignedCookie(w, sessionCookie, cookieValue{Subject: a.owner, DisplayName: "Demo owner", Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	default:
 		methodNotAllowed(w, http.MethodGet+", "+http.MethodPost)
@@ -413,7 +426,21 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: idToken.Subject, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
+	var profile struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	var displayName string
+	if err := idToken.Claims(&profile); err == nil {
+		displayName = strings.TrimSpace(profile.Name)
+		if displayName == "" {
+			displayName = strings.TrimSpace(profile.Email)
+		}
+	}
+	// Bound optional profile data so a large name cannot overflow the cookie.
+	label := []rune(displayName)
+	displayName = string(label[:min(len(label), 128)])
+	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: idToken.Subject, DisplayName: displayName, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -422,7 +449,13 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
+	if pending, ok := a.readSignedCookie(r, stateCookie); ok {
+		a.mu.Lock()
+		delete(a.states, pending.State)
+		a.mu.Unlock()
+	}
 	a.clearCookie(w, sessionCookie)
+	a.clearCookie(w, stateCookie)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -443,7 +476,7 @@ func (a *Auth) setSignedCookie(w http.ResponseWriter, name string, value cookieV
 
 func (a *Auth) readSignedCookie(r *http.Request, name string) (cookieValue, bool) {
 	cookie, err := r.Cookie(name)
-	if err != nil || len(cookie.Value) > 1024 {
+	if err != nil || len(cookie.Value) > 2048 {
 		return cookieValue{}, false
 	}
 	parts := strings.Split(cookie.Value, ".")
@@ -487,6 +520,11 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
+type loginData struct {
+	Demo  bool
+	Error string
+}
+
 var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Gateway sign in</title><style>
@@ -494,4 +532,4 @@ body{margin:0;background:#f4f1ea;color:#20231f;font:16px system-ui,sans-serif;di
 main{background:white;padding:2.5rem;border-radius:16px;box-shadow:0 12px 40px #0002;width:min(22rem,calc(100% - 4rem))}
 h1{margin:.2rem 0}.badge{color:#735c0f;background:#fff1b8;padding:.25rem .55rem;border-radius:99px;font-size:.75rem;font-weight:700}
 label,input,button{display:block;width:100%;box-sizing:border-box}label{margin-top:1.5rem;font-weight:600}input{margin:.45rem 0 1rem;padding:.75rem;border:1px solid #aaa;border-radius:8px}button{padding:.8rem;border:0;border-radius:8px;background:#22543d;color:white;font-weight:700}.error{color:#a11}
-</style></head><body><main><span class="badge">DEMO MODE</span><h1>Owner sign in</h1><p>This demo uses a local password.</p>{{if .}}<p class="error">{{.}}</p>{{end}}<form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`))
+</style></head><body><main>{{if .Demo}}<span class="badge">DEMO MODE</span>{{end}}<h1>Gateway sign in</h1>{{if .Demo}}<p>This demo uses a local password.</p>{{if .Error}}<p class="error">{{.Error}}</p>{{end}}<form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" required autofocus><button type="submit">Sign in</button></form>{{else}}<p>Sign in with your identity provider to continue.</p><form method="get" action="/auth/login"><button type="submit">Sign in</button></form><p>Signing out of the gateway does not sign you out of your identity provider.</p>{{end}}</main></body></html>`))

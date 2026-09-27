@@ -446,8 +446,12 @@ persistent volume. It does not run demo mode or fake providers. Before relying o
 a deployment, verify health, authenticated Amp discovery, unauthenticated rejection
 and a complete browser login against its configured identity provider.
 
-Hosted-domain login requests `openid email`, as required by Google's OIDC flow;
-authorization still uses the verified subject and `hd` claim, not the email address.
+Browser login requests `openid profile email`. The header displays the verified ID
+token's name, falling back to email, with a bounded display-only label stored in the
+signed session cookie. Authorization still uses the verified subject and configured
+`hd` claim, never the name or email address. Existing sessions show **Signed in**
+until you sign out and back in to fetch profile claims; providers that omit both
+claims use the same fallback.
 If the browser reports `authentication failed`, check Fly logs for
 `browser authentication failed` and its `reason`: `token_exchange`,
 `missing_id_token`, `id_token_verification`, `nonce`, `owner` or `hosted_domain`.
@@ -719,7 +723,10 @@ the previous unbounded-grant behavior for stored active grants.
 In legacy mode, rotate the bearer token to revoke access. Rotate the session key
 when changing OIDC configuration or revoking browser sessions. Sign-out clears the
 browser cookie but cannot revoke a copied session cookie; sessions otherwise last
-12 hours.
+12 hours. Logout cancels the browser's pending OIDC flow and returns to a gateway
+sign-in page. OIDC starts only after clicking **Sign in**, so an existing provider
+session cannot immediately sign you back in after logout. Your identity-provider
+session remains active; sign out there separately on a shared device.
 
 ## Verification and limits
 

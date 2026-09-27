@@ -21,6 +21,7 @@ func TestFocusedPages(t *testing.T) {
 		{"/integrations", "Fly.io", "Nothing needs your approval"},
 		{"/integrations/fly", "Connect Fly.io", "Nothing needs your approval"},
 		{"/connections", "Add MCP", "Nothing needs your approval"},
+		{"/connections/new", "Add server", "Nothing needs your approval"},
 		{"/integrations", "Set up Chrome", "Add MCP"},
 		{"/connections/notes/settings", "Connection settings", "Default permission for tools"},
 		{"/connections/notes/tools", "Default permission for tools", "Connection settings"},
@@ -35,6 +36,9 @@ func TestFocusedPages(t *testing.T) {
 			body := w.Body.String()
 			if w.Code != 200 || !strings.Contains(body, tc.want) || strings.Contains(body, tc.absent) || !strings.HasSuffix(body, "</body></html>") {
 				t.Fatalf("incorrect page: status=%d, want=%q, absent=%q", w.Code, tc.want, tc.absent)
+			}
+			if !strings.Contains(body, `<small class="owner">Demo owner</small>`) {
+				t.Fatal("page lost the session profile label")
 			}
 		})
 	}
@@ -70,5 +74,24 @@ func TestFocusedPages(t *testing.T) {
 	}
 	if strings.Count(review, "<td>pending</td>") != 1 {
 		t.Fatal("request history included another operation")
+	}
+}
+
+func TestHeaderProfileLabel(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"Alex <Admin>", "Alex &lt;Admin&gt;"},
+		{"alex@example.com", "alex@example.com"},
+		{"", "Signed in"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var html strings.Builder
+			if err := page.Execute(&html, map[string]any{"Owner": tc.name, "Section": "operations"}); err != nil {
+				t.Fatal(err)
+			}
+			header, _, _ := strings.Cut(html.String(), "</header>")
+			if !strings.Contains(header, ">"+tc.want+"</small>") || strings.Contains(header, "<Admin>") {
+				t.Fatal("missing or unescaped profile label")
+			}
+		})
 	}
 }
