@@ -25,8 +25,10 @@ import (
 )
 
 const (
-	maxMessageSize = 8 << 20
-	pairingTTL     = 10 * time.Minute
+	maxHelloSize              = 32 << 10
+	maxMessageSize            = 8 << 20
+	maxUnauthenticatedSockets = 32
+	pairingTTL                = 10 * time.Minute
 )
 
 type backend interface {
@@ -39,11 +41,12 @@ type Manager struct {
 	fallback backend
 	baseURL  string
 
-	mu          sync.Mutex
-	connections map[string]upstream.Connection
-	pairings    map[string]pairing
-	clients     map[string]*client
-	now         func() time.Time
+	mu              sync.Mutex
+	connections     map[string]upstream.Connection
+	pairings        map[string]pairing
+	clients         map[string]*client
+	unauthenticated chan struct{}
+	now             func() time.Time
 }
 
 type pairing struct {
@@ -98,12 +101,13 @@ func (e *beforeDispatchError) Error() string { return e.message }
 // to fallback.
 func New(baseURL string, connections []upstream.Connection, fallback backend) (*Manager, error) {
 	m := &Manager{
-		fallback:    fallback,
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		connections: make(map[string]upstream.Connection),
-		pairings:    make(map[string]pairing),
-		clients:     make(map[string]*client),
-		now:         time.Now,
+		fallback:        fallback,
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		connections:     make(map[string]upstream.Connection),
+		pairings:        make(map[string]pairing),
+		clients:         make(map[string]*client),
+		unauthenticated: make(chan struct{}, maxUnauthenticatedSockets),
+		now:             time.Now,
 	}
 	for _, c := range connections {
 		if !c.Browser {
@@ -217,25 +221,41 @@ func (m *Manager) Socket() http.Handler {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case m.unauthenticated <- struct{}{}:
+		default:
+			http.Error(w, "browser pairing busy", http.StatusServiceUnavailable)
+			return
+		}
+		pendingAuthentication := true
+		release := func() {
+			if pendingAuthentication {
+				<-m.unauthenticated
+				pendingAuthentication = false
+			}
+		}
+		defer release()
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		ws.SetReadLimit(maxMessageSize)
+		ws.SetReadLimit(maxHelloSize)
 		_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
 		var hello wireMessage
-		if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.PairingCode == "" || hello.InstallID == "" || len(hello.InstallID) > 200 || hello.ShareID == "" || len(hello.ShareID) > 200 || hello.TabID <= 0 {
+		if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.PairingCode == "" || len(hello.PairingCode) > 200 || hello.InstallID == "" || len(hello.InstallID) > 200 || hello.ShareID == "" || len(hello.ShareID) > 200 || hello.TabID <= 0 || len(hello.TabTitle) > 200 || len(hello.TabURL) > 2000 {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "invalid hello"), time.Now().Add(time.Second))
 			ws.Close()
 			return
 		}
-		_ = ws.SetReadDeadline(time.Time{})
 		connection, binding, reconnect, ok := m.accept(hello)
 		if !ok {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing rejected"), time.Now().Add(time.Second))
 			ws.Close()
 			return
 		}
+		ws.SetReadLimit(maxMessageSize)
+		_ = ws.SetReadDeadline(time.Time{})
+		release()
 		c := &client{manager: m, connection: connection, binding: binding, ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
 		m.install(c)
 		if err := c.write(wireMessage{Type: "paired", Reconnect: reconnect}); err != nil {
@@ -248,7 +268,8 @@ func (m *Manager) Socket() http.Handler {
 
 func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 	hash := sha256.Sum256([]byte(hello.PairingCode))
-	target := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", hello.InstallID, hello.ShareID, hello.TabID))))
+	targetIdentity, _ := json.Marshal([]any{hello.InstallID, hello.ShareID, hello.TabID})
+	target := fmt.Sprintf("%x", sha256.Sum256(targetIdentity))
 	now := m.now()
 	m.mu.Lock()
 	defer m.mu.Unlock()

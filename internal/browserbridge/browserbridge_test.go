@@ -196,6 +196,19 @@ func TestUsedPairingCodeCannotReplaceTarget(t *testing.T) {
 	}
 }
 
+func TestReconnectTargetUsesUnambiguousIdentityEncoding(t *testing.T) {
+	m, _ := browserManager(t)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	_, _, reconnect, ok := m.accept(wireMessage{PairingCode: "pairing-secret", InstallID: "install:one", ShareID: "share", TabID: 42})
+	if !ok {
+		t.Fatal("initial pairing rejected")
+	}
+	if _, _, _, ok := m.accept(wireMessage{PairingCode: reconnect, InstallID: "install", ShareID: "one:share", TabID: 42}); ok {
+		t.Fatal("distinct install and share IDs produced the same reconnect target")
+	}
+}
+
 func TestReceivedResultWinsOverImmediateClose(t *testing.T) {
 	c := &client{closed: make(chan struct{})}
 	result := make(chan response, 1)
@@ -270,6 +283,45 @@ func TestSocketRejectsWebPageOrigins(t *testing.T) {
 	}
 	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
 		t.Fatalf("web page origin accepted: response %#v, error %v", response, err)
+	}
+}
+
+func TestSocketBoundsUnauthenticatedConnections(t *testing.T) {
+	m, _ := browserManager(t)
+	for range maxUnauthenticatedSockets {
+		m.unauthenticated <- struct{}{}
+	}
+	w := httptest.NewRecorder()
+	m.Socket().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/browser/connect", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("saturated unauthenticated socket pool returned %d", w.Code)
+	}
+}
+
+func TestSocketRejectsOversizedHello(t *testing.T) {
+	m, _ := browserManager(t)
+	hash := sha256.Sum256([]byte("pairing-secret"))
+	m.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	server := httptest.NewServer(m.Socket())
+	defer server.Close()
+	header := http.Header{"Origin": []string{"chrome-extension://extension-id"}}
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	err = ws.WriteJSON(wireMessage{Type: "hello", PairingCode: "pairing-secret", InstallID: "install", ShareID: "share", TabID: 42, TabTitle: strings.Repeat("x", maxHelloSize)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ws.ReadMessage(); err == nil {
+		t.Fatal("oversized hello was accepted")
+	}
+	m.mu.Lock()
+	paired := m.pairings["browser"].paired
+	m.mu.Unlock()
+	if paired {
+		t.Fatal("oversized hello consumed pairing authority")
 	}
 }
 

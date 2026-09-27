@@ -16,7 +16,7 @@
       <label for="gateway">Gateway URL</label>
       <input id="gateway" name="gateway" type="url" placeholder="https://gateway.example.com" required>
       <label for="code">Pairing code</label>
-      <input id="code" name="code" autocomplete="off" spellcheck="false" required>
+      <input id="code" name="code" autocomplete="off" spellcheck="false" maxlength="200" required>
       <button type="submit">Pair and share</button>
     </form>
     <button id="disconnect" class="secondary" type="button" hidden>Stop sharing</button>

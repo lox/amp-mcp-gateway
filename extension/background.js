@@ -61,7 +61,8 @@ async function pair(message) {
   const gatewayURL = normalizeGatewayURL(message.gatewayURL);
   const tab = await chrome.tabs.get(message.tabId);
   if (!/^https?:/.test(tab.url || "")) throw new Error("Chrome can only share HTTP(S) tabs.");
-  if (!message.pairingCode) throw new Error("Enter the pairing code from the gateway.");
+  const pairingCode = typeof message.pairingCode === "string" ? message.pairingCode.trim() : "";
+  if (!pairingCode || pairingCode.length > 200) throw new Error("Enter the pairing code from the gateway.");
   if (currentConfig?.tabId && currentConfig.tabId !== tab.id) {
     await detach(currentConfig.tabId);
   }
@@ -71,7 +72,7 @@ async function pair(message) {
   await chrome.storage.local.set({installID});
   currentConfig = {
     gatewayURL,
-    pairingCode: message.pairingCode.trim(),
+    pairingCode,
     installID,
     shareID: crypto.randomUUID(),
     tabId: tab.id,
@@ -134,8 +135,8 @@ function connect() {
       install_id: config.installID,
       share_id: config.shareID,
       tab_id: config.tabId,
-      tab_title: tab.title || "",
-      tab_url: tab.url || "",
+      tab_title: (tab.title || "").slice(0, 200),
+      tab_url: (tab.url || "").slice(0, 2000),
     }, connectedSocket);
     clearInterval(heartbeat);
     heartbeat = setInterval(() => send({type: "ping"}, connectedSocket), 20000);
