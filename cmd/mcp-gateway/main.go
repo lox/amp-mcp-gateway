@@ -100,7 +100,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
+	browser, err := browserbridge.New(ctx, cfg.BaseURL, cfg.Connections, m, s)
 	if err != nil {
 		return err
 	}

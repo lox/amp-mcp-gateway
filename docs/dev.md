@@ -108,11 +108,14 @@ JPEG, PNG, or WebP only to the signed-in gateway owner. The response is not publ
 and is marked `private, no-store`.
 
 The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
-connect to `/mcp`. Pairing credentials live only in gateway memory and Chrome
-session storage, so restarting either side requires pairing again. The displayed
-one-time code is consumed on first use and exchanged for a reconnect credential
-bound to that extension install, share generation, and tab. Re-pairing, revocation,
-or selecting a new share generation invalidates queued approvals.
+connect to `/mcp`. Reconnect authority is encrypted in the gateway database and
+kept in Chrome session storage, so a gateway deploy reconnects automatically.
+Restarting Chrome or reloading the extension still requires pairing again. The
+displayed one-time code is consumed on first use and exchanged for a reconnect
+credential bound to that extension install, share generation, and tab. Re-pairing,
+revocation, or selecting a new share generation invalidates queued approvals.
+After upgrading from a version that kept pairings only in memory, pair once more
+to establish the persisted reconnect authority.
 Enabling Chrome persists its connection and governed tool definitions in the
 encrypted catalogue; production deployments do not need to add them to the startup
 configuration.
