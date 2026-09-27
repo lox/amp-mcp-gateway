@@ -106,6 +106,7 @@ func Open(path, key string) (*Store, error) {
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL);
@@ -118,7 +119,7 @@ CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, o
 	// Reject a wrong key before recovery mutates an existing ledger.
 	var id string
 	var payload []byte
-	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
+	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'browser-pairing:'||id,payload FROM browser_pairings UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
 	}
