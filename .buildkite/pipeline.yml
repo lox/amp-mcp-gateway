@@ -9,6 +9,8 @@ steps:
     key: check
     plugins:
       - setup-go#v0.1.0: ~
+      - mise#v1.1.5:
+          install_args: node
     command: .buildkite/check
     timeout_in_minutes: 15
 

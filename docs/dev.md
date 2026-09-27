@@ -1,8 +1,25 @@
 # Development
 
 The gateway uses Go, the official MCP Go SDK, server-rendered HTML and SQLite.
-There is no frontend build. Run one process against one persistent disk; the file
-lock prevents competing workers.
+Tailwind CSS is compiled at build time and embedded in the Go binary; there is no
+CDN or browser-side Tailwind runtime. Run one process against one persistent disk;
+the file lock prevents competing workers.
+
+## Edit UI styles
+
+Edit `internal/webui/ui.css`, then run `mise run css`. The pinned Tailwind CLI and
+its dependencies are locked in `package-lock.json`. Commit the generated
+`internal/webui/assets/ui.css` with source changes; CI checks it is current.
+`mise run dev`, `build`, `check`, the orb demo and the Docker build regenerate it.
+Plain `go build` uses the committed CSS and needs no Node installation.
+
+The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates.
+Shared colour tokens live in `@theme`; component rules use `@apply` and preserve
+the existing selectors, breakpoints and browser defaults (Preflight is omitted).
+Document scopes keep sign-in and Chrome styling independent. Status classes such
+as `pending`, `succeeded`, `failed`, `denied` and `unknown` have explicit component
+rules, so dynamic Go status values cannot cause Tailwind to omit their styling.
+New utility variants must be written as complete class names, not concatenated.
 
 This is a single-owner prototype. Tests use fake services, not real accounts.
 See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
@@ -10,7 +27,7 @@ See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
 ## Run the demo
 
 Prerequisites: Linux or macOS, Git and curl. Setup installs mise if absent and the
-pinned Go toolchain. Run commands from the repository root.
+pinned Go and Node toolchains. Run commands from the repository root.
 
 Clone the repository with `gh repo clone lox/amp-mcp-gateway` and enter the
 checkout. Then:

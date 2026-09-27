@@ -26,6 +26,39 @@ func demoAuth(t *testing.T) *Auth {
 	return a
 }
 
+func TestPublicStylesheetDoesNotExposeAuthenticatedRoutes(t *testing.T) {
+	a := demoAuth(t)
+	mux := http.NewServeMux()
+	a.Register(mux)
+	mux.Handle("/", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unauthenticated request reached protected handler")
+	})))
+	for _, path := range []string{"/assets/ui.css", "/assets/live.js", "/assets/htmx-2.0.8.min.js", "/events", "/operations", "/integrations/chrome/status"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if path != "/assets/ui.css" {
+				if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/login" {
+					t.Fatalf("protected route: %d %v", response.Code, response.Header())
+				}
+				return
+			}
+			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/css") || response.Header().Get("Cache-Control") != "no-cache" {
+				t.Fatalf("stylesheet: %d %v", response.Code, response.Header())
+			}
+			css := response.Body.String()
+			for _, selector := range []string{".dashboard", ".login", ".chrome", ".pending", ".succeeded", ".failed", ".denied", ".unknown", ".connected"} {
+				if !strings.Contains(css, selector) {
+					t.Errorf("compiled stylesheet missing %s", selector)
+				}
+			}
+			if strings.Contains(css, "@apply") || strings.Contains(css, "@import") {
+				t.Error("stylesheet contains uncompiled Tailwind directives")
+			}
+		})
+	}
+}
+
 func TestDemoLoginRequireTamperAndLogout(t *testing.T) {
 	a := demoAuth(t)
 	mux := http.NewServeMux()
