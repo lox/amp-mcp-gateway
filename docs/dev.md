@@ -84,8 +84,8 @@ normal Chrome profile without exposing a listener on your machine.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
    choose **Load unpacked**, and select this checkout's `extension` directory.
-2. Sign in to the gateway dashboard, open **Integrations → Chrome**, and create a
-   pairing code.
+2. Sign in to the gateway dashboard and open **Integrations → Chrome**. Click
+   **Enable Chrome** if this is the first setup, then create a pairing code.
 3. Open the tab you want to share, open the extension, and paste the displayed
    gateway URL and pairing code.
 4. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
@@ -106,6 +106,9 @@ session storage, so restarting either side requires pairing again. The displayed
 one-time code is consumed on first use and exchanged for a reconnect credential
 bound to that extension install, share generation, and tab. Re-pairing, revocation,
 or selecting a new share generation invalidates queued approvals.
+Enabling Chrome persists its connection and governed tool definitions in the
+encrypted catalogue; production deployments do not need to add them to the startup
+configuration.
 Once a browser mutation is dispatched, a disconnect or extension-reported error
 marks its outcome unknown and is never replayed automatically.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
