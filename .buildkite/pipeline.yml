@@ -17,7 +17,7 @@ steps:
     plugins:
       - mise#v1.1.5:
           install_args: bun
-    command: mise run check-plugin
+    command: MISE_TASK_RUN_AUTO_INSTALL=false mise run check-plugin
     timeout_in_minutes: 5
 
   - label: ":fly: Deploy main"
