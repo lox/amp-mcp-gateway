@@ -7,20 +7,27 @@ import (
 	"errors"
 )
 
-// OperationSummary contains only the metadata shown on the dashboard.
+// OperationSummary contains list and audit metadata, never arguments or results.
 type OperationSummary struct {
-	ID      string `json:"-"`
-	Status  string `json:"-"`
-	Tool    string `json:"tool"`
-	Account string `json:"account"`
+	ID            string `json:"-"`
+	Status        string `json:"-"`
+	Created       int64  `json:"-"`
+	Version       int    `json:"summary_version"`
+	Tool          string `json:"tool"`
+	Account       string `json:"account"`
+	Connection    string `json:"connection"`
+	Subject       string `json:"subject"`
+	AmpUserID     string `json:"amp_user_id,omitempty"`
+	ApprovalScope string `json:"approval_scope,omitempty"`
 }
 
 func (s *Store) saveSummary(ctx context.Context, tx *sql.Tx, o OperationSummary) error {
+	o.Version = 1
 	b, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO operation_summaries VALUES (?,?)", o.ID, s.seal("operation-summary:"+o.ID, b))
+	_, err = tx.ExecContext(ctx, "INSERT INTO operation_summaries VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", o.ID, s.seal("operation-summary:"+o.ID, b))
 	return err
 }
 
@@ -37,9 +44,9 @@ func (s *Store) backfillSummaries() error {
 	for {
 		var id string
 		var b []byte
-		query := `SELECT o.id,o.payload FROM operations o
+		query := `SELECT o.id,s.payload FROM operations o
 LEFT JOIN operation_summaries s ON s.id=o.id
-WHERE s.id IS NULL`
+WHERE 1=1`
 		var args []any
 		if after != nil {
 			query += " AND o.id>?"
@@ -50,6 +57,23 @@ WHERE s.id IS NULL`
 			return tx.Commit()
 		}
 		if err != nil {
+			return err
+		}
+		after = id
+		if b != nil {
+			raw, err := s.open("operation-summary:"+id, b)
+			if err != nil {
+				return err
+			}
+			var summary OperationSummary
+			if err := json.Unmarshal(raw, &summary); err != nil {
+				return err
+			}
+			if summary.Version >= 1 {
+				continue
+			}
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT payload FROM operations WHERE id=?", id).Scan(&b); err != nil {
 			return err
 		}
 		raw, err := s.open("operation:"+id, b)
@@ -64,7 +88,6 @@ WHERE s.id IS NULL`
 		if err := s.saveSummary(ctx, tx, summary); err != nil {
 			return err
 		}
-		after = id
 	}
 }
 

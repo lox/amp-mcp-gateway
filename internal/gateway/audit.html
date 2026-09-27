@@ -1,0 +1,44 @@
+{{define "audit-history"}}
+<section class="audit">
+  <div class="heading"><div><h1>Audit</h1><p class="sub">What ran, who authorised it, and what happened.</p></div><a href="/audit?view=events">Raw events →</a></div>
+  <form method="get" action="/audit" aria-label="Filter request history">
+    <div class="filters">
+      <label class="search">Search requests<input type="search" name="q" value="{{.Filter.Query}}" placeholder="Tool name or request ID" maxlength="256"></label>
+      <label>Requested within<select name="period"><option value="24h" {{if eq .Period "24h"}}selected{{end}}>Last 24 hours</option><option value="7d" {{if eq .Period "7d"}}selected{{end}}>Last 7 days</option><option value="all" {{if eq .Period "all"}}selected{{end}}>All time</option></select></label>
+      <label>Connection<input name="connection" list="audit-connections" value="{{.Filter.Connection}}" placeholder="All connections" maxlength="256"><datalist id="audit-connections">{{range .Connections}}<option value="{{.ID}}">{{.Account}}</option>{{end}}</datalist></label>
+      <label>Outcome<select name="outcome"><option value="">All outcomes</option>{{range $value := .Outcomes}}<option value="{{$value}}" {{if eq $.Filter.Outcome $value}}selected{{end}}>{{if eq $value "investigate"}}Needs investigation{{else}}{{status $value}}{{end}}</option>{{end}}</select></label>
+      <label>Timezone<select name="zone"><option value="Australia/Melbourne" {{if eq .Zone "Australia/Melbourne"}}selected{{end}}>Melbourne</option><option value="UTC" {{if eq .Zone "UTC"}}selected{{end}}>UTC</option></select></label>
+      <button class="primary">Apply filters</button>
+    </div>
+    <div class="filter-footer"><div class="chips" aria-label="Quick outcome filters"><button name="preset" value="all" aria-pressed="{{eq .Filter.Outcome ""}}">All</button><button name="preset" value="investigate" aria-pressed="{{eq .Filter.Outcome "investigate"}}">Needs investigation</button><button name="preset" value="denied" aria-pressed="{{eq .Filter.Outcome "denied"}}">Denied</button></div><a href="/audit">Clear filters</a></div>
+  </form>
+  <div id="audit-live" data-live hx-get="{{.Current}}" hx-trigger="live-update from:body queue:last">{{template "audit-requests" .}}</div>
+  <p class="help live-error" role="alert" hidden></p>
+  <p class="help">Amp identities identify the verified caller; owner token identities do not identify the actual holder. Account names are configured labels. Arguments and results remain in request details.</p>
+</section>
+{{end}}
+{{define "audit-requests"}}
+  <div class="list-meta"><span>{{len .Requests}} requests on this page · newest requested first</span><span>{{.Zone}} · through <time datetime="{{iso .Filter.Until}}">{{stamp .Filter.Until .Zone}}</time></span></div>
+  <section class="requests" aria-label="Request history">
+    <div class="columns" aria-hidden="true"><span></span><span>Requested</span><span>Tool / request</span><span>Connection / account</span><span class="requester">Requested by</span><span>Outcome</span></div>
+    {{range .Requests}}{{$op := .Operation}}
+    <details class="audit-entry" data-request-id="{{$op.ID}}">
+      <summary>
+        <span class="when"><time datetime="{{iso $op.Created}}">{{stamp $op.Created $.Zone}}</time></span>
+        <span class="request-tool tool">{{$op.Tool}}<span class="secondary request-id" title="{{$op.ID}}">{{$op.ID}}</span></span>
+        <span class="request-connection">{{$op.Connection}}<span class="secondary">{{$op.Account}}</span></span>
+        <span class="requester">{{if $op.AmpUserID}}Amp caller<span class="secondary">Verified user</span>{{else}}{{actor $op.Subject $.Owner}}<span class="secondary">Token identity</span>{{end}}</span>
+        <span class="outcome"><span class="badge {{$op.Status}}">{{status $op.Status}}</span></span>
+      </summary>
+      <div class="detail">
+        <h2>Request timeline <span class="help">· oldest first</span></h2>
+        <ol class="timeline">{{$request := .}}{{range $i, $e := .Events}}<li><time datetime="{{iso $e.Time}}">{{stamp $e.Time $.Zone}}</time><strong>{{event $request $i}}</strong><small>{{actor $e.Actor $.Owner}}</small><small class="identity">{{$e.Actor}} · event #{{$e.Sequence}} · {{$e.Kind}}</small></li>{{else}}<li>No recorded transitions.</li>{{end}}</ol>
+        {{if eq $op.Status "unknown"}}<p class="notice"><strong>Execution may already have happened.</strong> The upstream outcome is unconfirmed. Inspect the upstream before deciding what to do; this request will not be retried automatically.</p>{{end}}
+        {{if eq $op.Status "failed"}}<p class="notice failure"><strong>The upstream reported an error.</strong> Open request details to inspect the result. A failed result does not guarantee that no side effects occurred.</p>{{end}}
+        <div class="detail-bottom"><span><span class="help">Request ID</span><br><span class="full-id">{{$op.ID}}</span><small class="secondary">Requested by <span class="identity">{{if $op.AmpUserID}}amp:{{$op.AmpUserID}}{{else}}{{$op.Subject}}{{end}}</span></small></span><a href="{{requestURL $op.ID}}">View request details →</a></div>
+      </div>
+    </details>
+    {{else}}<div class="empty"><h2>No matching requests</h2><p>Try a wider time range or clear your filters. Only persisted requests appear here.</p><a href="/audit?period=all">View all request history</a></div>{{end}}
+  </section>
+  <div class="pagination"><a href="{{.Latest}}">Latest requests / refresh</a>{{if .Older}}<a href="{{.Older}}">Older matching requests →</a>{{else}}<span class="help">End of matching history</span>{{end}}</div>
+{{end}}

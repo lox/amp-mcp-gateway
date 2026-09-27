@@ -538,7 +538,8 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/operations", http.StatusSeeOther) })
-	for _, path := range []string{"/operations", "/connections", "/integrations", "/approval-grants", "/audit"} {
+	mux.HandleFunc("GET /audit", g.audit)
+	for _, path := range []string{"/operations", "/connections", "/integrations", "/approval-grants"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
 	}
 	mux.HandleFunc("GET /connections/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -597,8 +598,6 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		data["Operations"], err = g.store.ListStatus(r.Context(), status)
 	case "/approval-grants":
 		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
-	case "/audit":
-		data["Events"], err = g.store.Events(r.Context())
 	case "/connections":
 		g.mu.RLock()
 		connections := make([]map[string]any, 0, len(g.cfg.Connections))
@@ -623,16 +622,12 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if r.URL.Path == "/operations" || r.URL.Path == "/audit" {
+	if r.URL.Path == "/operations" {
 		w.Header().Set("Vary", "HX-Request")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Header.Get("HX-Request") == "true" {
-			name := "operations-list"
-			if r.URL.Path == "/audit" {
-				name = "audit-list"
-			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := page.ExecuteTemplate(w, name, data); err != nil {
+			if err := page.ExecuteTemplate(w, "operations-list", data); err != nil {
 				slog.Error("render live list", "error", err)
 			}
 			return

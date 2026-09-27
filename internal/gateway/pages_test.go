@@ -24,7 +24,8 @@ func TestFocusedPages(t *testing.T) {
 		{"/integrations", "Set up Chrome", "Add MCP"},
 		{"/connections/notes/settings", "Connection settings", "Default permission for tools"},
 		{"/connections/notes/tools", "Default permission for tools", "Connection settings"},
-		{"/audit", "No events yet", "Add MCP"},
+		{"/audit", "No matching requests", "Add MCP"},
+		{"/audit?view=events", "No events yet", "Add MCP"},
 		{"/approval-grants", "No standing approvals", "Nothing needs your approval"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {

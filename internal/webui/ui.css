@@ -4,6 +4,7 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities) source(none);
 @source "../gateway/page.go";
+@source "../gateway/audit.html";
 @source "../browserauth/browserauth.go";
 @source "../browserbridge/browserbridge.go";
 @theme {
@@ -1408,5 +1409,90 @@
     :where(html.chrome) h1 {
       @apply text-[28px];
     }
+  }
+}
+
+@layer components {
+  /* Request history shares the dashboard theme and native form controls. */
+  .audit .filters {
+    @apply grid gap-3 items-end mt-6;
+    grid-template-columns: minmax(180px, 2fr) minmax(150px, 1fr) minmax(140px, 1.2fr) minmax(180px, 1.3fr) minmax(140px, 1fr) auto;
+  }
+  .audit .filters label { @apply grid gap-2 text-[12px] text-muted min-w-0; }
+  .audit .filters input,
+  .audit .filters select,
+  .audit .filters > button { @apply h-11 min-w-0 text-[14px] py-2 px-3; }
+  .audit .filters input,
+  .audit .filters select { @apply w-full; }
+  .audit .filter-footer,
+  .audit .list-meta,
+  .audit .pagination { @apply flex items-center justify-between gap-4 flex-wrap; }
+  .audit .filter-footer { @apply mt-4 mb-6; }
+  .audit .chips { @apply flex gap-2 flex-wrap; }
+  .audit .chips button { @apply min-h-9 py-2 px-3 text-[13px]; }
+  .audit .chips [aria-pressed=true] { @apply bg-selected; border-color: #d6b44a; }
+  .audit .list-meta { @apply mb-3 text-[12px] text-muted; }
+  .audit .requests { @apply rounded bg-surface overflow-hidden; border: 1px solid var(--color-divider); }
+  .audit .columns,
+  .audit-entry > summary {
+    @apply grid gap-4 items-center p-4;
+    grid-template-columns: 18px 1.2fr 1.8fr 1.2fr 1fr 1.2fr;
+  }
+  .audit .columns { @apply bg-inset text-muted uppercase text-[11px] tracking-[.03em]; }
+  .audit-entry + .audit-entry { border-top: 1px solid var(--color-divider); }
+  .audit-entry > summary { @apply list-none min-h-22; }
+  .audit-entry > summary::-webkit-details-marker { @apply hidden; }
+  .audit-entry > summary::before { content: "›"; @apply text-[22px] text-muted; }
+  .audit-entry[open] > summary::before { content: "⌄"; }
+  .audit-entry > summary:hover,
+  .audit-entry[open] > summary { background: #f2f6fc; }
+  .audit-entry > summary > span { @apply min-w-0; overflow-wrap: anywhere; }
+  .audit .tool { @apply font-semibold; }
+  .audit .secondary { @apply block text-[12px] font-normal text-muted mt-1; }
+  .audit .request-id { @apply truncate; }
+  .audit .badge { @apply font-sans font-semibold text-[12px] whitespace-normal py-2 px-2; }
+  .audit .badge.unknown { @apply bg-selected; color: #765000; border: 1px solid #d6b44a; }
+  .audit .detail { @apply py-6 pr-7 pl-12; background: #f8faff; border-top: 1px solid #e1e7f0; }
+  .audit .detail h2 { @apply text-[15px] mt-0 mb-4; }
+  .audit .timeline { @apply flex list-none p-0 mt-0 mb-5 gap-6 flex-wrap; }
+  .audit .timeline li { flex: 1 1 150px; border-top: 2px solid #b8c7dc; @apply pt-3 text-[13px]; overflow-wrap: anywhere; }
+  .audit .timeline time { @apply block text-muted text-[12px] mb-2; }
+  .audit .timeline strong { @apply block; }
+  .audit .timeline small { @apply block text-muted mt-2; }
+  .audit .identity { @apply font-mono text-[11px]; overflow-wrap: anywhere; }
+  .audit .notice { @apply py-3 px-4 leading-[1.6] mt-0 mb-5; border-left: 3px solid #d6a327; background: #fff5d7; }
+  .audit .failure { @apply bg-negative; border-color: #b54839; }
+  .audit .detail-bottom { @apply flex justify-between items-center gap-5 flex-wrap; }
+  .audit .full-id { @apply font-mono select-all; overflow-wrap: anywhere; }
+  .audit .empty { @apply py-14 px-6; }
+  .audit .empty p { @apply mb-4; }
+  .audit .pagination { @apply mt-5; }
+  .audit .pagination a { @apply py-2; }
+  @media (max-width: 1400px) {
+    .audit .filters { @apply grid-cols-3; }
+  }
+  @media (max-width: 1200px) {
+    .audit .columns,
+    .audit-entry > summary { grid-template-columns: 18px 1.3fr 1.8fr 1.2fr 1.2fr; @apply gap-3; }
+    .audit .requester { @apply hidden; }
+    .audit .detail { @apply pl-8; }
+  }
+  @media (max-width: 650px) {
+    .audit .filters { @apply grid-cols-2; }
+    .audit .search { @apply col-span-full; }
+    .audit .columns { @apply hidden; }
+    .audit-entry > summary { grid-template-columns: 14px minmax(0, 1fr) auto; @apply p-4 gap-3; }
+    .audit-entry > summary .when { grid-column: 2 / -1; @apply text-[12px] text-muted; }
+    .audit-entry > summary::before { grid-row: 1 / 4; }
+    .audit .request-tool { grid-column: 2; }
+    .audit .request-connection { grid-column: 2; @apply text-[12px]; }
+    .audit .outcome { grid-column: 3; grid-row: 2 / 4; @apply max-w-28; }
+    .audit .detail { @apply p-5; }
+    .audit .timeline { @apply block; }
+    .audit .timeline li { border-top: 0; border-left: 2px solid #b8c7dc; @apply pt-0 pr-0 pb-5 pl-4; }
+    .audit .filter-footer { @apply items-start; }
+  }
+  @media (max-width: 380px) {
+    .audit .filters { @apply grid-cols-1; }
   }
 }

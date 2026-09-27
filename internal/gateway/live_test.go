@@ -107,7 +107,7 @@ func TestLiveAuditList(t *testing.T) {
 	if err := s.Decide(t.Context(), "audit-request", "<script>actor</script>", false); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("GET", "/audit", nil)
+	r := httptest.NewRequest("GET", "/audit?view=events", nil)
 	r.Header.Set("HX-Request", "true")
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()

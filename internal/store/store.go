@@ -110,7 +110,9 @@ CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS credential_leases (id TEXT PRIMARY KEY, expires INTEGER NOT NULL, payload BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);`)
+CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS operations_history ON operations(created DESC,id DESC);
+CREATE INDEX IF NOT EXISTS events_operation ON events(operation,sequence);`)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -389,7 +391,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
-	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account}); err != nil {
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, Subject: o.Subject, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope}); err != nil {
 		return o, err
 	}
 	return o, tx.Commit()

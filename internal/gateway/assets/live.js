@@ -87,6 +87,13 @@ document.addEventListener('htmx:beforeSwap', event => {
   if ((target.id === 'audit-live' || target.id === 'operations-live') && event.detail.shouldSwap) {
     const fragment = document.createElement('template');
     fragment.innerHTML = event.detail.serverResponse;
+    if (target.id === 'audit-live') {
+      const expanded = new Set([...target.querySelectorAll('.audit-entry[open]')].map(entry => entry.dataset.requestId));
+      for (const entry of fragment.content.querySelectorAll('.audit-entry')) {
+        if (expanded.has(entry.dataset.requestId)) entry.open = true;
+      }
+      event.detail.serverResponse = fragment.innerHTML;
+    }
     if (fragment.innerHTML === target.innerHTML) event.detail.shouldSwap = false;
   }
   if (target.matches('.connection-health')) {
