@@ -103,6 +103,9 @@ viewing and scrolling directly while requiring approval for click, type, and
 navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
 tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
 uploads, and the desktop remain inaccessible.
+Completed screenshot operations include an `artifact_url` that serves the stored
+JPEG, PNG, or WebP only to the signed-in gateway owner. The response is not public
+and is marked `private, no-store`.
 
 The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
 connect to `/mcp`. Pairing credentials live only in gateway memory and Chrome
