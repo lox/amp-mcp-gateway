@@ -595,6 +595,17 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if r.URL.Path == "/operations" {
+		w.Header().Set("Vary", "HX-Request")
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := page.ExecuteTemplate(w, "operations-list", data); err != nil {
+				slog.Error("render operations list", "error", err)
+			}
+			return
+		}
+	}
 	g.render(w, data)
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {

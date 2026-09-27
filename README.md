@@ -92,6 +92,15 @@ Finished calls show the result first, with JSON formatted for reading. Expand
 recent outcomes. Each request includes its history and, after a decision, a link
 to the next pending request. **Audit** shows the latest 200 recorded events.
 
+Operation lists refresh every five seconds; active execution status and results
+refresh every two seconds until the call finishes. Polling pauses in hidden tabs,
+and list updates wait while a request link is focused or hovered. Connection tests
+update diagnostics in place. These enhancements use locally served htmx 2.0.8
+(vendored from `https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js`, BSD-0-Clause).
+Native forms and page refresh still work without JavaScript. Approval, OAuth and
+Chrome pairing remain full-page flows; live updates never resubmit those actions.
+No page content is stored in htmx's browser history cache.
+
 ![Recent demo operations](docs/images/dashboard.png)
 
 ## Review a call inside Amp

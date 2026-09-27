@@ -13,6 +13,11 @@ document.addEventListener('htmx:beforeRequest', event => {
 
 document.addEventListener('htmx:beforeSwap', event => {
   const { target } = event.detail;
+  // Don't remove a queue link under keyboard focus or the pointer.
+  if (target.id === 'operations-live' &&
+      (target.contains(document.activeElement) || target.querySelector('a:hover'))) {
+    event.detail.shouldSwap = false;
+  }
   if (target.matches('.connection-health')) {
     target.dataset.expanded = String(!!target.querySelector('details')?.open);
   }

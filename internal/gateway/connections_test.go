@@ -576,15 +576,18 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 	for _, tc := range []struct {
 		cookie *http.Cookie
 		origin string
+		htmx   string
 		want   int
 	}{
-		{nil, "", 303}, {cookie, "https://attacker.example", 403},
+		{nil, "", "", 303}, {cookie, "https://attacker.example", "", 403},
+		{nil, "", "true", 401}, {cookie, "https://attacker.example", "true", 403},
 	} {
 		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
 		if tc.cookie != nil {
 			r.AddCookie(tc.cookie)
 		}
 		r.Header.Set("Origin", tc.origin)
+		r.Header.Set("HX-Request", tc.htmx)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != tc.want || requests.Load() != 0 {
@@ -597,6 +600,7 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 		r := httptest.NewRequest("POST", "/connections/notes/test", nil)
 		r.AddCookie(cookie)
 		r.Header.Set("Accept", "text/vnd.gateway.health+html")
+		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		want := "Healthy"
