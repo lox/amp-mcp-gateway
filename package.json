@@ -1,0 +1,11 @@
+{
+  "name": "amp-mcp-gateway-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i internal/webui/ui.css -o internal/webui/assets/ui.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.1.13",
+    "tailwindcss": "4.1.13"
+  }
+}

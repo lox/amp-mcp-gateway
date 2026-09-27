@@ -1,4 +1,70 @@
-// Keep transport in htmx; these hooks preserve local UI state and report errors.
+// SSE carries only invalidations; authenticated htmx GETs render current state.
+let ledgerSource = null;
+let livePending = false;
+
+function deferLiveSwap(target) {
+  const selection = window.getSelection();
+  const selected = selection && !selection.isCollapsed && selection.rangeCount > 0 &&
+    selection.getRangeAt(0).intersectsNode(target);
+  return selected || (target.id !== 'operation-live' &&
+    (target.contains(document.activeElement) || target.querySelector('a:hover')));
+}
+
+function refreshLive() {
+  const target = document.querySelector('[data-live]');
+  if (!livePending || !target || document.hidden || deferLiveSwap(target)) return;
+  livePending = false;
+  htmx.trigger(document.body, 'live-update');
+}
+
+function stopLive() {
+  ledgerSource?.close();
+  ledgerSource = null;
+}
+
+function syncLive() {
+  if (document.hidden || !document.querySelector('[data-live]')) {
+    stopLive();
+    return;
+  }
+  if (ledgerSource) return;
+  const source = new EventSource('/events');
+  ledgerSource = source;
+  source.addEventListener('ledger', () => {
+    if (source !== ledgerSource) return;
+    livePending = true;
+    refreshLive();
+  });
+  source.onerror = () => {
+    if (source !== ledgerSource) return;
+    const error = document.querySelector('.live-error');
+    if (error) {
+      error.hidden = false;
+      error.textContent = 'Live updates disconnected. Reconnecting; you can also refresh the page.';
+    }
+    if (source.readyState === EventSource.CLOSED) {
+      // A rejected stream (e.g. expired login) cannot reconnect automatically.
+      // A normal htmx GET will apply the existing full-page login redirect.
+      htmx.trigger(document.body, 'live-update');
+      setTimeout(() => {
+        if (source === ledgerSource) {
+          stopLive();
+          syncLive();
+        }
+      }, 1000);
+    }
+  };
+}
+
+document.addEventListener('visibilitychange', syncLive);
+window.addEventListener('pagehide', stopLive);
+window.addEventListener('pageshow', syncLive);
+for (const name of ['focusout', 'mouseout', 'selectionchange']) {
+  document.addEventListener(name, () => queueMicrotask(refreshLive));
+}
+syncLive();
+
+// Preserve local UI state and report errors for all enhanced requests.
 document.addEventListener('htmx:beforeRequest', event => {
   const { elt } = event.detail;
   if (elt.hasAttribute('hx-get') && document.hidden) {
@@ -13,10 +79,15 @@ document.addEventListener('htmx:beforeRequest', event => {
 
 document.addEventListener('htmx:beforeSwap', event => {
   const { target } = event.detail;
-  // Don't remove a queue link under keyboard focus or the pointer.
-  if (target.id === 'operations-live' &&
-      (target.contains(document.activeElement) || target.querySelector('a:hover'))) {
+  // A user may start interacting while the fragment GET is in flight.
+  if (target.hasAttribute('data-live') && deferLiveSwap(target)) {
     event.detail.shouldSwap = false;
+    livePending = true;
+  }
+  if ((target.id === 'audit-live' || target.id === 'operations-live') && event.detail.shouldSwap) {
+    const fragment = document.createElement('template');
+    fragment.innerHTML = event.detail.serverResponse;
+    if (fragment.innerHTML === target.innerHTML) event.detail.shouldSwap = false;
   }
   if (target.matches('.connection-health')) {
     target.dataset.expanded = String(!!target.querySelector('details')?.open);
@@ -36,15 +107,22 @@ document.addEventListener('htmx:afterSwap', event => {
     const details = target.querySelector('details');
     if (details) details.open = true;
   }
+  syncLive();
 });
 
 document.addEventListener('htmx:afterRequest', event => {
   const { elt, successful } = event.detail;
+  if (!successful && elt.hasAttribute('data-live')) {
+    // A failed GET consumed its invalidation. Reconnect for a fresh one instead
+    // of waiting for another ledger change or the stream's minute-long lease.
+    stopLive();
+    setTimeout(syncLive, 1000);
+  }
   const health = elt.closest('.connection-status');
   if (health) elt.textContent = 'Test connection';
   const error = health?.querySelector('.test-error') || document.querySelector('.live-error');
   if (!error) return;
-  error.hidden = !!successful;
+  error.hidden = !!successful && (!document.querySelector('[data-live]') || ledgerSource?.readyState === EventSource.OPEN);
   error.textContent = health
     ? 'Could not complete the test. Check your session and try again. Your tool permissions are unchanged.'
     : 'Live updates are unavailable. Refresh the page to check the latest status.';

@@ -31,6 +31,36 @@ func operation(id, status string) Operation {
 	return Operation{ID: id, Tool: "notes.create", Subject: "owner", Digest: "digest", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{"text": "sensitive-request-value"}}
 }
 
+func TestEventSequenceIgnoresRollbackAndIdleClaims(t *testing.T) {
+	s, _, _ := testStore(t)
+	check := func(want int64) {
+		t.Helper()
+		if got, err := s.EventSequence(t.Context()); err != nil || got != want {
+			t.Fatalf("sequence = %d, %v; want %d", got, err, want)
+		}
+	}
+	check(0)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := event(t.Context(), tx, "rolled-back", "pending", "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	check(0)
+	if err := s.RecordEvent(t.Context(), Event{Kind: "policy-proposed", Actor: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	check(1)
+	if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
+	}
+	check(1)
+}
+
 func TestPrivateResultIsHiddenFromOlderOperationSchema(t *testing.T) {
 	s, _, _ := testStore(t)
 	o := operation("private-result", "ready")

@@ -526,6 +526,14 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 	return tx.Commit()
 }
 
+// EventSequence returns the latest committed audit sequence, or zero for an empty ledger.
+// The primary-key maximum is an indexed lookup, without reading event payloads.
+func (s *Store) EventSequence(ctx context.Context) (int64, error) {
+	var sequence int64
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(sequence),0) FROM events").Scan(&sequence)
+	return sequence, err
+}
+
 // Events returns the most recent payload-free audit events.
 func (s *Store) Events(ctx context.Context) ([]Event, error) {
 	return s.OperationEvents(ctx, "")
