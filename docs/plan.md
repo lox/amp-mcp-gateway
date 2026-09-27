@@ -18,9 +18,10 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`,
   and `propose_policy_changes` for human-only application of policy batches.
 - Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
-- Single owner, one process, one SQLite disk. Persist intent before dispatch.
+- One owner per isolated account, one process, one SQLite disk. Each account has
+  its own HTTPS origin and database. Persist intent before dispatch.
 - Google Workspace OIDC for the browser; Amp Workload Identity for remote MCP calls.
-  Match one Google subject and one Amp user. Keep the signed thread link; neither
+  Match one Google subject and one Amp user per account. Keep the signed thread link; neither
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once or create a revocable standing approval
@@ -34,6 +35,20 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   and its data-handling requirements are acceptable.
 
 ## Delivery slices
+
+### Independent accounts — implemented locally
+
+Configure additional accounts on distinct origins in the existing process and
+volume. Reuse the complete owner-scoped application per account, rather than add
+tenant filters to individual handlers. Each account owns its catalogue, credentials,
+Chrome pairing, Fly leases, approvals and history. The existing primary account
+retains its database and keys. Additional identities get separate derived keys and
+databases; reassigning a hostname cannot transfer another identity's stored state.
+
+Validation covers signed OIDC and Amp authentication, cross-account cookie/token
+rejection, resource isolation and restart persistence. Fly hostname/certificate and
+OIDC callback provisioning remain rollout prerequisites. Shared connections,
+self-service signup and multiple replicas are separate work.
 
 ### 1. Local vertical slice — complete
 

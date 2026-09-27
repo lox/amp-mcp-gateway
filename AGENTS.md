@@ -1,6 +1,6 @@
 # Amp MCP Gateway
 
-Single-owner Go MCP gateway for Amp. Use mise: `.agents/setup`, then `mise run check`.
+Go MCP gateway for Amp with isolated owner accounts. Use mise: `.agents/setup`, then `mise run check`.
 Keep dependencies deliberate; use the official MCP SDK rather than handwritten JSON-RPC.
 
 ## Invariants
@@ -11,6 +11,8 @@ Keep dependencies deliberate; use the official MCP SDK rather than handwritten J
 - No tokens in logs, source, screenshots or tool results. `.local/` is disposable demo state.
 - Production UI uses OIDC; demo password login is explicitly opt-in and only for fake data.
 - One process/SQLite volume only. Do not remove the file lock or add replicas.
+- Accounts have distinct origins, identity-bound databases and keys. Never share a
+  catalogue, credential manager, browser pairing manager or worker between accounts.
 
 ## Preview
 

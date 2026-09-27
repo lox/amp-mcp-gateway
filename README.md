@@ -5,9 +5,10 @@ them behind one connection, keeps their credentials in one place, and lets you
 require approval before Amp calls particular tools. It remains compatible with
 any client that supports Streamable HTTP MCP.
 
-It's self-hosted, written in Go, and still a prototype. The demo works end to end
-with fake services. DeepWiki discovery and Buildkite OAuth/discovery have been
-tested; real provider execution still needs validation.
+It's self-hosted, written in Go, and supports independent user accounts in one
+deployment. Each account has its own origin, credentials, approvals and history.
+The local demo uses fake services; production uses OIDC and signed Amp identities.
+It remains a prototype, not a production security certification.
 
 ## How it works
 
@@ -239,7 +240,10 @@ credential integration prototype.
 
 A few limits worth knowing:
 
-- One owner and one call per request. Search is keyword-based.
+- One owner per account and one call per request. Search is keyword-based.
+- Configure additional accounts with distinct HTTPS origins, OIDC subjects and
+  Amp user IDs. Accounts are isolated, not a shared team catalogue. See
+  [multiple accounts on Fly](docs/dev.md#multiple-accounts-on-fly).
 - Amp remote MCP definitions can authenticate with Amp Workload Identity; requests
   retain their verified workspace, project and thread context. Browser approvals
   use a separate OIDC login.
@@ -248,7 +252,7 @@ A few limits worth knowing:
   local demo uses a shared fixture token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
-- New work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB
+- Per account, new work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB
   of operation payload and audit field bytes. At most 16 operations can remain
   pending, ready or running. Existing work can still finish; history is retained.
 - A timed-out call may have run upstream. We mark it `unknown` and don't retry it.

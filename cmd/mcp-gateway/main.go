@@ -1,4 +1,4 @@
-// Command mcp-gateway runs the single-owner MCP gateway.
+// Command mcp-gateway runs isolated owner accounts on one MCP gateway process.
 package main
 
 import (
@@ -43,6 +43,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var cfg gateway.Config
+	var deployment deploymentConfig
 	var consent http.Handler
 	secrets := demo.Secrets{EncryptionKey: os.Getenv("GATEWAY_ENCRYPTION_KEY"), SessionKey: os.Getenv("GATEWAY_SESSION_KEY"), GatewayToken: os.Getenv("GATEWAY_TOKEN")}
 	if *demoMode {
@@ -66,9 +67,10 @@ func run() error {
 		defer f.Close()
 		d := json.NewDecoder(f)
 		d.DisallowUnknownFields()
-		if err := d.Decode(&cfg); err != nil {
+		if err := d.Decode(&deployment); err != nil {
 			return err
 		}
+		cfg = deployment.Config
 		if cfg.OwnerSubject == "" || cfg.BaseURL == "" || cfg.Database == "" {
 			return errors.New("OwnerSubject, BaseURL and Database are required")
 		}
@@ -84,29 +86,12 @@ func run() error {
 		*listen = cfg.Listen
 	}
 	if *portalAuth {
+		if len(deployment.Accounts) != 0 {
+			return errors.New("multiple accounts require production OIDC, not orb portal authentication")
+		}
 		if err := validatePortalAuth(cfg, *listen, *demoMode); err != nil {
 			return err
 		}
-	}
-	s, err := store.Open(cfg.Database, secrets.EncryptionKey)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
-		return fmt.Errorf("load saved catalogue: %w", err)
-	}
-	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
-	if err != nil {
-		return err
-	}
-	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
-	if err != nil {
-		return err
-	}
-	g, err := gateway.New(cfg, s, browser)
-	if err != nil {
-		return err
 	}
 	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	if !*demoMode {
@@ -123,9 +108,94 @@ func run() error {
 	if *demoMode {
 		authCfg.DemoPassword = "demo-only"
 	}
-	auth, err := browserauth.New(ctx, authCfg)
+	deployment.Config = cfg
+	configs, err := deployment.accounts(secrets)
 	if err != nil {
 		return err
+	}
+	var accounts []*accountRuntime
+	hosts := map[string]http.Handler{}
+	routeByHost := !*demoMode && !*portalAuth
+	for _, config := range configs {
+		account, err := newAccount(ctx, config, authCfg, consent)
+		if err != nil {
+			return err
+		}
+		defer account.store.Close()
+		accounts = append(accounts, account)
+		if routeByHost {
+			host, err := accountHost(config.Config.BaseURL)
+			if err != nil {
+				return err
+			}
+			hosts[host] = account.handler
+		}
+	}
+	handler := accounts[0].handler
+	if routeByHost {
+		handler = accountRouter(hosts)
+	}
+	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	group, ctx := errgroup.WithContext(ctx)
+	for _, account := range accounts {
+		group.Go(func() error { return account.gateway.Run(ctx) })
+		group.Go(func() error { return account.upstream.RunRefresh(ctx) })
+	}
+	group.Go(func() error {
+		slog.Info("gateway listening", "address", *listen, "demo", *demoMode, "accounts", len(accounts))
+		err := server.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	})
+	group.Go(func() error {
+		<-ctx.Done()
+		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		return server.Shutdown(shutdown)
+	})
+	return group.Wait()
+}
+
+type accountRuntime struct {
+	handler  http.Handler
+	store    *store.Store
+	gateway  *gateway.Gateway
+	upstream *upstream.Manager
+}
+
+func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.Config, consent http.Handler) (_ *accountRuntime, err error) {
+	cfg := config.Config
+	secrets := config.Secrets
+	s, err := store.Open(cfg.Database, secrets.EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			s.Close()
+		}
+	}()
+	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
+		return nil, fmt.Errorf("load saved catalogue: %w", err)
+	}
+	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		return nil, err
+	}
+	browser, err := browserbridge.New(cfg.BaseURL, cfg.Connections, m)
+	if err != nil {
+		return nil, err
+	}
+	g, err := gateway.New(cfg, s, browser)
+	if err != nil {
+		return nil, err
+	}
+	authCfg.BaseURL, authCfg.OwnerSubject, authCfg.SessionKey = cfg.BaseURL, cfg.OwnerSubject, secrets.SessionKey
+	auth, err := browserauth.New(ctx, authCfg)
+	if err != nil {
+		return nil, err
 	}
 	mux := http.NewServeMux()
 	auth.Register(mux)
@@ -133,7 +203,7 @@ func run() error {
 	if cfg.AmpUserID != "" {
 		mcpHandler, leaseHandler, err = g.AmpHandlers(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		mcpHandler = g.MCP(secrets.GatewayToken)
@@ -160,25 +230,7 @@ func run() error {
 		w.Header().Set("X-Frame-Options", "DENY")
 		mux.ServeHTTP(w, r)
 	})
-	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
-	group, ctx := errgroup.WithContext(ctx)
-	group.Go(func() error { return g.Run(ctx) })
-	group.Go(func() error { return m.RunRefresh(ctx) })
-	group.Go(func() error {
-		slog.Info("gateway listening", "address", *listen, "demo", *demoMode)
-		err := server.ListenAndServe()
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	})
-	group.Go(func() error {
-		<-ctx.Done()
-		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
-		defer done()
-		return server.Shutdown(shutdown)
-	})
-	return group.Wait()
+	return &accountRuntime{handler: handler, store: s, gateway: g, upstream: m}, nil
 }
 
 func validatePortalAuth(cfg gateway.Config, listen string, demo bool) error {

@@ -24,7 +24,8 @@ as `pending`, `succeeded`, `failed`, `denied` and `unknown` have explicit compon
 rules, so dynamic Go status values cannot cause Tailwind to omit their styling.
 New utility variants must be written as complete class names, not concatenated.
 
-This is a single-owner prototype. Tests use fake services, not real accounts.
+Each account has one owner; one process can serve multiple isolated accounts.
+Tests use fake services, not real accounts.
 See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
 
 ## Run the demo
@@ -801,9 +802,74 @@ when changing OIDC configuration or revoking browser sessions. Sign-out clears t
 browser cookie but cannot revoke a copied session cookie; sessions otherwise last
 12 hours.
 
+## Multiple accounts on Fly
+
+Keep the existing top-level configuration for the original owner. Add `Accounts`
+to the same JSON configuration for additional users:
+
+```json
+"Accounts": [
+  {
+    "BaseURL": "https://bob-gateway.example.com",
+    "OwnerSubject": "BOBS_GOOGLE_SUB",
+    "AmpUserID": "user_BOB"
+  }
+]
+```
+
+This is an independent-account deployment, not shared team access. Every account
+has a separate origin, browser session keys, encrypted SQLite database, catalogue,
+OAuth state, worker, Chrome pairing manager, Fly leases, approvals and audit history.
+There is no cross-account admin UI. All accounts share the process, disk and trusted
+operator; this is not a sandbox against a compromised process or host.
+
+Additional accounts inherit only the OIDC issuer, client ID and hosted-domain
+restriction, not the original owner's connections, tools, credentials or policies.
+They require OIDC and Amp workload authentication; demo passwords, orb portal
+authentication and shared bearer tokens cannot enable multi-account mode. Origins,
+OIDC subjects and Amp user IDs must be distinct. Unknown hosts return 404, except
+the public `/healthz` probe. The ingress must preserve the original Host header;
+`X-Forwarded-Host` does not select an account.
+
+Before enabling an account in a deployed configuration:
+
+1. Point its hostname at the existing Fly app and provision a TLS certificate.
+   These are deployment actions, not performed by starting the gateway.
+2. Register `https://ACCOUNT-ORIGIN/auth/callback` on the existing OIDC client.
+   Each account checks its exact OIDC subject, not just the hosted domain.
+3. Add its entry to `GATEWAY_CONFIG`, back up the volume, and restart/deploy the
+   single Machine using the normal deployment procedure. Never add replicas.
+4. Have the user log into their own origin and add their own providers. Upstream
+   OAuth callbacks must use that account's origin. Configure their Amp MCP endpoint
+   as `https://ACCOUNT-ORIGIN/mcp` with Amp workload identity, and set the Chrome
+   extension's gateway origin accordingly. The optional Amp review plugin currently
+   pins one origin; update its `gatewayOrigin` for that user's deployment.
+
+Existing single-account configurations need no migration. The original database
+and keys remain unchanged. Additional databases live under `Database + ".accounts"`
+(for example `/data/gateway.db.accounts/`) on the same persistent volume. Their
+filenames and derived keys bind the OIDC issuer, subject and Amp user ID, not their
+position in the config or their hostname. Back up this entire directory with the
+primary database and retain both master keys. Key rotation is still unsupported.
+
+Remove an entry and restart to revoke that account's endpoints and stop its workers
+and refresh jobs. Its data remains on disk; it is not silently deleted. Re-adding
+the same identity restores its data and may resume queued work. Deny queued work
+and revoke standing approvals before planned offboarding if later restoration
+must not resume it. Changing the subject, issuer or Amp user ID of an additional
+account creates fresh isolated state; it never transfers the old user's credentials.
+Do not reassign the original top-level account's database to a different person.
+Changing an account's hostname preserves its database but requires updating OAuth,
+Amp and extension configuration. Drain or deny queued work before moving an origin;
+the origin alone is not part of every stored approval's configuration binding.
+
+Resource admission limits apply separately to each account; CPU, memory and total
+disk space are shared. Monitor capacity as accounts are added. Shared connections,
+self-service signup, invitations and multi-replica hosting remain out of scope.
+
 ## Verification and limits
 
-New operation and agent policy-proposal admission is bounded by 10,000 retained
+Per-account operation and agent policy-proposal admission is bounded by 10,000 retained
 operations, 50,000 audit events, and 64 MiB of encrypted operation payload plus
 audit text-field bytes. There is also a limit of 16 pending, ready or running
 operations. Requests beyond these limits return an MCP tool error and persist
@@ -829,8 +895,8 @@ runs `go vet`. Tests cover the MCP protocol, argument substitution, stale approv
 concurrent approval/claim, unknown outcomes, restart recovery, ciphertext integrity,
 OIDC claim rejection/PKCE/state replay, OAuth refresh rotation and CSRF.
 
-Deferred: multiple users, per-agent identities and delegation chains, verified model
+Deferred: shared team connections, per-agent identities and delegation chains, verified model
 attestation, semantic/Jev discovery, batch calls, stdio/legacy-SSE upstreams,
 provider-specific account introspection, signed audit exports, retention and key
-rotation, policy expressions and production deployment hardening. Keep usage
+rotation, policy expressions and production deployment hardening. Keep each account
 owner-only and low-volume; public ingress is not a claim of production certification.

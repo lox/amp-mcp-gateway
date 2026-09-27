@@ -69,7 +69,7 @@ func (g *Gateway) AmpHandlers(ctx context.Context) (http.Handler, http.Handler, 
 	if g.cfg.AmpUserID == "" {
 		return nil, nil, errors.New("AmpUserID is required for workload authentication")
 	}
-	audience, err := ampAudience(g.cfg.BaseURL)
+	audience, err := CanonicalOrigin(g.cfg.BaseURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,7 +82,8 @@ func (g *Gateway) AmpHandlers(ctx context.Context) (http.Handler, http.Handler, 
 	return g.ampAuthenticated(verifier, g.mcpHandler(), false), g.ampAuthenticated(verifier, http.HandlerFunc(g.redeemLease), true), nil
 }
 
-func ampAudience(raw string) (string, error) {
+// CanonicalOrigin returns the HTTPS origin used for Amp audiences and account routing.
+func CanonicalOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("Amp workload identity requires an HTTPS origin BaseURL")

@@ -1,4 +1,4 @@
-# Single-owner gateway. Configure Google login and Amp identity before deployment.
+# One gateway process; each account needs its own origin, Google subject and Amp identity.
 app = "lox-mcp-gateway"
 primary_region = "syd"
 kill_signal = "SIGTERM"
