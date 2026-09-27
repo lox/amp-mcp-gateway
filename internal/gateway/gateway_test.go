@@ -23,6 +23,7 @@ type fixtureBackend struct {
 	calls   atomic.Int32
 	fail    bool
 	callErr error
+	browser atomic.Bool
 }
 
 func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
@@ -36,6 +37,9 @@ func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, a
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool + ":" + args["text"].(string)}}}, nil
 }
 func (b *fixtureBackend) Binding(string) string { return "" }
+func (b *fixtureBackend) InstallBrowser(connection upstream.Connection) {
+	b.browser.Store(connection.ID == chromeConnectionID && connection.Browser)
+}
 
 type bindingBackend struct {
 	fixtureBackend

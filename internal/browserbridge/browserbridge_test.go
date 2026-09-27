@@ -346,7 +346,7 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 
 func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	m, _ := browserManager(t)
-	h := m.UI()
+	h := m.UI(nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/integrations/chrome/pair"`) || !strings.Contains(w.Body.String(), `href="/integrations"`) {
@@ -356,5 +356,34 @@ func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/browser", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("legacy browser UI route returned %d, want 404", w.Code)
+	}
+}
+
+func TestUIEnablesChromeBeforePairing(t *testing.T) {
+	fallback := &fallbackBackend{}
+	m, err := New("https://gateway.example", nil, fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := 0
+	h := m.UI(func(context.Context) error {
+		enabled++
+		m.InstallBrowser(upstream.Connection{ID: "browser", Account: "Selected tab", Browser: true})
+		return nil
+	})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/integrations/chrome/enable"`) {
+		t.Fatalf("unconfigured page did not offer enable: status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/integrations/chrome/enable", nil))
+	if w.Code != http.StatusSeeOther || enabled != 1 {
+		t.Fatalf("enable returned status=%d calls=%d", w.Code, enabled)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
+	if !strings.Contains(w.Body.String(), `action="/integrations/chrome/pair"`) || strings.Contains(w.Body.String(), `action="/integrations/chrome/enable"`) {
+		t.Fatalf("enabled page did not offer pairing: %s", w.Body.String())
 	}
 }
