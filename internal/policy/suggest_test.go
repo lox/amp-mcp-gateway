@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 )
 
 type transport func(*http.Request) (*http.Response, error)
@@ -55,20 +53,11 @@ func TestSuggest(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 			})}}
-			got := c.Suggest(context.Background(), gateway.Tool{Name: "lookup", Connection: "private-connection", InputSchema: map[string]any{"type": "object"}})
+			got := c.Suggest(context.Background(), Tool{Name: "lookup", InputSchema: map[string]any{"type": "object"}})
 			if got.Policy != tc.want {
 				t.Fatalf("got %s, want %s", got.Policy, tc.want)
 			}
 		})
-	}
-}
-
-func TestExplicitPolicyNeverCallsProvider(t *testing.T) {
-	for _, p := range []string{"allow", "require_approval", "deny"} {
-		got := (Client{}).Suggest(t.Context(), gateway.Tool{Policy: p})
-		if got.Policy != p || got.Reason != "explicit policy preserved" {
-			t.Fatalf("%+v", got)
-		}
 	}
 }
 
@@ -77,7 +66,7 @@ func TestMissingKeyNeverCallsProvider(t *testing.T) {
 		t.Fatal("missing key must not make a network request")
 		return nil, errors.New("unexpected request")
 	})}}
-	if got := c.Suggest(t.Context(), gateway.Tool{}); got.Policy != "require_approval" {
+	if got := c.Suggest(t.Context(), Tool{}); got.Policy != "require_approval" {
 		t.Fatalf("missing key: %+v", got)
 	}
 }
@@ -86,7 +75,7 @@ func TestProviderFailureIsSanitized(t *testing.T) {
 	c := Client{Key: "secret", HTTP: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader("secret provider detail"))}, nil
 	})}}
-	got := c.Suggest(t.Context(), gateway.Tool{})
+	got := c.Suggest(t.Context(), Tool{})
 	if got.Policy != "require_approval" || strings.Contains(got.Reason, "secret") {
 		t.Fatalf("%+v", got)
 	}
@@ -102,7 +91,7 @@ func TestInvalidResponsesFailClosed(t *testing.T) {
 		c := Client{Key: "test", HTTP: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}}
-		if got := c.Suggest(t.Context(), gateway.Tool{}); got.Policy != "require_approval" {
+		if got := c.Suggest(t.Context(), Tool{}); got.Policy != "require_approval" {
 			t.Fatalf("invalid response allowed: %+v", got)
 		}
 	}
@@ -118,7 +107,7 @@ func TestTransportFailureAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, ctx := range []context.Context{t.Context(), ctx} {
-		got := c.Suggest(ctx, gateway.Tool{})
+		got := c.Suggest(ctx, Tool{})
 		if got.Policy != "require_approval" || strings.Contains(got.Reason, "private") {
 			t.Fatalf("%+v", got)
 		}

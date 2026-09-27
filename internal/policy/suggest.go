@@ -1,4 +1,4 @@
-// Package policy proposes offline policies; it never authorizes execution.
+// Package policy proposes tool policies for owner review; it never authorizes execution.
 package policy
 
 import (
@@ -9,9 +9,13 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 )
+
+// Tool contains only the metadata needed for classification.
+type Tool struct {
+	Name, Description string
+	InputSchema       map[string]any
+}
 
 // Client sends tool metadata, never connection settings or call arguments, to Jev.
 type Client struct {
@@ -24,11 +28,8 @@ type Suggestion struct {
 	Policy, Model, Reason string
 }
 
-// Suggest preserves explicit policies and fails closed on incomplete evaluations.
-func (c Client) Suggest(ctx context.Context, tool gateway.Tool) Suggestion {
-	if tool.Policy != "" {
-		return Suggestion{Policy: tool.Policy, Reason: "explicit policy preserved"}
-	}
+// Suggest fails closed on incomplete evaluations. The caller selects eligible tools.
+func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
 	fallback := Suggestion{Policy: "require_approval", Reason: "classification unavailable or invalid; review required"}
 	if c.Key == "" {
 		return fallback

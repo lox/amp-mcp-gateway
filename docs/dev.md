@@ -78,39 +78,35 @@ the final MCP URL when overriding `-url`.
 
 ## Suggest approval policies with Jev
 
-`policy-config` generates an offline candidate config for owner review. Omit
-`Policy` (or set it to `""`) on tools to classify. Explicit policies, configured
-`ToolDefaults`, and native integration policies are preserved, including policy
-inheritance. The command does not import or modify the live database catalogue.
+Supply `TYPESAFE_API_KEY` to the gateway process to enable dashboard suggestions.
+In **Connections → Add MCP**, add the server and connect OAuth if needed, then
+open **Tools & permissions**. Leave **Suggest permissions with Jev when refreshing
+tools** checked and click **Refresh tools**. Jev classifies newly discovered tools
+and preselects suggested permissions in the review. Override any choice and click
+**Save changes** to apply the batch to the live catalogue. No CLI or config-file
+editing is needed.
 
-Optionally supply `TYPESAFE_API_KEY` through your environment or secret manager:
+The checkbox discloses that new tool names, descriptions and input schemas go to
+TypeSafe. Uncheck it to skip classification. Connection credentials and actual call
+arguments are not sent; metadata itself may contain private data. The review shows
+probabilities and the returned model version. Classification uses at most four
+concurrent requests and a thirty-second overall budget.
 
-```sh
-mkdir -p .local
-mise exec -- go run ./cmd/policy-config -config gateway.json -out .local/gateway.candidate.json
-```
-
-Without the key, the command warns and writes the candidate without calling
-TypeSafe: tools without an explicit or configured inherited policy become
-`require_approval`. Existing choices remain unchanged. Missing or invalid API
-responses also fall back to requiring approval.
-
-With the key, eligible tool names, descriptions and input schemas are sent to
-TypeSafe. Connection settings, credentials and actual call arguments are not sent;
-inspect metadata first because descriptions and schema examples can contain private
-data. The summary includes probabilities and the returned model version.
+Without a key, discovery still works and the page explains that Jev is unavailable.
+New tools require approval, even if the connection default allows calls. Skipped,
+failed, timed-out or uncertain classifications also require approval. Blocked
+connection defaults remain blocked. Existing saved policies and unsaved review
+choices are preserved; changed definitions still require approval unless blocked.
 
 Jev answers separate questions about public reads, writes/deletion, communication,
 spending, permissions, sensitive data and general-purpose execution. An `allow`
 suggestion requires a public-read probability of at least 0.95 and every risk
 probability at most 0.05. These are review heuristics, not security guarantees.
 
-The output is a new mode-0600 file; existing files are never overwritten. Review
-every policy together, edit overrides, and explicitly use the accepted file with
-`mcp-gateway -config` when starting a new gateway. On existing installations,
-persisted catalogue policies take precedence over config: apply reviewed changes
-through the dashboard instead. Nothing changes in the running gateway. Jev is not
-called during execution, and changed definitions need fresh owner review.
+Suggestions live only in the existing ten-minute, catalogue-bound review draft.
+Nothing becomes executable until the owner saves. Concurrent configuration changes
+invalidate the review; saving uses the existing atomic catalogue update and queued
+operation invalidation. Jev is never called during tool execution.
 
 ## Share a Chrome tab
 

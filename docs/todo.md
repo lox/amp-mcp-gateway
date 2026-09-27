@@ -14,7 +14,7 @@ separate copies of this matrix in each document.
 | --- | --- | --- |
 | One MCP endpoint | Implemented | Streamable HTTP with `find_tools`, `call_tools`, `get_operation`, `propose_policy_changes`. |
 | Agent policy proposals | Implemented | Immutable multi-provider batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
-| Jev policy suggestions | Partial | Offline `policy-config` command writes an owner-reviewed candidate; preserves explicit/inherited policies and requires approval when no API key is set. Not integrated with the live catalogue. |
+| Jev policy suggestions | Implemented | Dashboard discovery suggests policies for new tools in the owner-reviewed batch. Missing key, opt-out or classification failure requires approval; saved choices and blocked defaults are preserved. |
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
