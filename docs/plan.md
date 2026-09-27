@@ -67,6 +67,20 @@ maximum 15-minute lifetime. This proves native integration routing and controlle
 credential leasing; it does not yet prove a real Fly token, per-command Fly auditing,
 or generalize provider-specific configuration beyond Fly.
 
+The first general integration-plugin slice is also implemented. Startup-loaded
+manifests synthesize governed tools backed by JavaScript/TypeScript compiled with
+the Extism PDK to Wasm. Each operation gets a fresh wazero instance, bounded memory,
+context cancellation and no filesystem, environment, stdout/stderr or network capability.
+The immutable operation binding includes the exact manifest and artifact digest.
+A checked-in JavaScript fixture proves successful dispatch, schema validation,
+approval/audit routing, network denial and runaway-code cancellation.
+
+The next plugin slice is a gateway-owned HTTP host function. It must restrict
+destinations, inject credentials outside guest memory where possible, bound request
+and response data, and retain authority over ambiguous mutation outcomes. The guest
+must not be able to catch an uncertain write and relabel it safe. Browser installation,
+hot reload and a marketplace are explicitly later than this capability boundary.
+
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
 behavior before adding more onboarding features. Endpoint/credential editing,

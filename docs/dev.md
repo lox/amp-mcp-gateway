@@ -312,6 +312,56 @@ refresh or drift detection; upstream behavior can still change between calls.
 Editing endpoints, rotating pasted tokens, and removing connections in the UI
 are follow-up work.
 
+## JavaScript integration plugins
+
+Plugins are an initial startup-configured extension point for providers that do
+not expose MCP. The host uses Extism Go SDK 1.7.1 on wazero. JavaScript or
+TypeScript is bundled to CommonJS and compiled with the Extism JavaScript PDK;
+the checked-in fixture pins compiler v1.7.0 and retains its source beside the
+generated Wasm.
+
+A plugin manifest declares one integration ID and its complete tool catalogue.
+Each tool name must match an exported Extism function. The function reads its
+JSON arguments with `Host.inputString()` and returns a normal MCP tool result:
+
+```js
+function lookup() {
+  const input = JSON.parse(Host.inputString())
+  Host.outputString(JSON.stringify({
+    content: [{type: "text", text: `record:${input.id}`}]
+  }))
+}
+
+module.exports = {lookup}
+```
+
+Declare exports in `plugin.d.ts`, then compile with the pinned `extism-js`
+release and Binaryen available on `PATH`:
+
+```sh
+extism-js plugin.js -i plugin.d.ts -o plugin.wasm
+```
+
+For TypeScript and npm packages, use esbuild with CommonJS output and an ES2020
+target before this step. Pure-JavaScript dependencies work; Node and browser APIs
+do not exist in the guest.
+
+At startup the gateway limits manifests and plugin input/output to 1 MiB and Wasm
+artifacts to 32 MiB. It compiles the artifact once, then creates a fresh instance
+for every operation with a 64 MiB linear-memory limit and cancellable execution.
+WASI is enabled because the JavaScript PDK requires it, but the module receives no
+mounted filesystem, environment, stdout/stderr or allowed HTTP hosts. Extism's
+generic HTTP import is therefore denied. Manifests may reference only a sibling
+`.wasm` file. Startup rejects `EXTISM_ENABLE_WASI_OUTPUT` when plugins are configured
+because that SDK override would expose stdout and stderr.
+
+The manifest and Wasm digest is part of the operation's configuration binding.
+Changing either invalidates queued approvals after restart. Plugins are not yet
+editable in the browser or encrypted catalogue; update the startup JSON and restart
+the single process. The next capability should be a gateway-owned HTTP host function
+that validates destinations, injects credentials, bounds bodies and owns ambiguous
+mutation outcomes. Do not enable Extism's generic HTTP path as a substitute.
+
 ## Fly.io integration
 
 Open **Integrations → Fly.io**. Create the narrowest parent token that supports the

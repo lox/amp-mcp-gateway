@@ -1,0 +1,28 @@
+{
+  "ID": "fixture",
+  "Name": "JavaScript fixture",
+  "Version": "1.0.0",
+  "Wasm": "fixture.wasm",
+  "Tools": [
+    {
+      "Name": "echo",
+      "Description": "Echo text through the JavaScript integration fixture.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "Name": "network",
+      "Description": "Attempt a network request for sandbox verification.",
+      "input_schema": {"type": "object", "additionalProperties": false}
+    },
+    {
+      "Name": "spin",
+      "Description": "Run until cancelled for sandbox verification.",
+      "input_schema": {"type": "object", "additionalProperties": false}
+    }
+  ]
+}
