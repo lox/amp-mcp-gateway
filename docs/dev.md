@@ -532,6 +532,12 @@ fall back to normal downloads and compilation. The deploy job installs only
 `flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote
 Docker builder still builds the production image from source.
 
+The Dockerfile uses BuildKit cache mounts for Go modules and compiled packages,
+so source changes can reuse dependencies even when the build layer is invalidated.
+These caches live on the Docker builder, independently of Buildkite's hosted
+volume. An empty or replaced builder still downloads and compiles normally;
+cache mounts do not reduce builder startup or deployment health-check time.
+
 Fly config validation runs in the authenticated deploy job. Only non-PR `main`
 builds deploy after checks pass. Deploys
 share one concurrency slot, skip superseded main commits, use Fly's rolling
