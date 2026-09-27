@@ -345,7 +345,13 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	m.Register(mux)
 	g.registerConnections(mux, m)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/operations", http.StatusSeeOther) })
+	for _, path := range []string{"/operations", "/connections", "/approval-grants", "/audit"} {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
+	}
+	mux.HandleFunc("GET /connections/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
+		g.connectionSettings(w, r, m)
+	})
 	mux.HandleFunc("GET /operations/{id}", g.operation)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
 		decision := r.PathValue("decision")
@@ -380,37 +386,43 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 			http.Error(w, "Approval unavailable or already revoked.", 409)
 			return
 		}
-		http.Redirect(w, r, "/", 303)
+		http.Redirect(w, r, "/approval-grants", 303)
 	})
 	return auth.Require(http.NewCrossOriginProtection().Handler(mux))
 }
 
 func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
-	ops, err := g.store.List(r.Context())
+	data := map[string]any{"Owner": g.cfg.OwnerSubject, "Section": strings.TrimPrefix(r.URL.Path, "/")}
+	var err error
+	switch r.URL.Path {
+	case "/operations":
+		status := "pending"
+		if r.URL.Query().Get("view") == "all" {
+			status = ""
+		}
+		data["AllOperations"] = status == ""
+		data["Operations"], err = g.store.ListStatus(r.Context(), status)
+	case "/approval-grants":
+		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
+	case "/audit":
+		data["Events"], err = g.store.Events(r.Context())
+	case "/connections":
+		g.mu.RLock()
+		connections := make([]map[string]any, 0, len(g.cfg.Connections))
+		for _, c := range g.cfg.Connections {
+			connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
+		}
+		g.mu.RUnlock()
+		for _, c := range connections {
+			c["Health"] = m.Health(r.Context(), c["ID"].(string))
+		}
+		data["Connections"] = connections
+	}
 	if err != nil {
-		http.Error(w, "ledger unavailable", 503)
+		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	events, err := g.store.Events(r.Context())
-	if err != nil {
-		http.Error(w, "audit unavailable", 503)
-		return
-	}
-	grants, err := g.store.ApprovalGrants(r.Context())
-	if err != nil {
-		http.Error(w, "approvals unavailable", 503)
-		return
-	}
-	g.mu.RLock()
-	connections := make([]map[string]any, 0, len(g.cfg.Connections))
-	for _, c := range g.cfg.Connections {
-		connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
-	}
-	g.mu.RUnlock()
-	for _, c := range connections {
-		c["Health"] = m.Health(r.Context(), c["ID"].(string))
-	}
-	g.render(w, map[string]any{"Operations": ops, "Events": events, "ApprovalGrants": grants, "Connections": connections, "Owner": g.cfg.OwnerSubject})
+	g.render(w, data)
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	o, err := g.store.Get(r.Context(), r.PathValue("id"))
@@ -449,7 +461,23 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimPrefix(o.Tool, o.Connection+".")
 	name = strings.ReplaceAll(name, "_", " ")
-	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Owner": g.cfg.OwnerSubject})
+	events, err := g.store.OperationEvents(r.Context(), o.ID)
+	if err != nil {
+		http.Error(w, "audit unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	next := ""
+	if o.Status != "pending" {
+		pending, err := g.store.ListStatus(r.Context(), "pending")
+		if err != nil {
+			http.Error(w, "ledger unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if len(pending) > 0 {
+			next = pending[0].ID
+		}
+	}
+	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) render(w http.ResponseWriter, data any) {

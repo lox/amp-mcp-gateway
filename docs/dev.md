@@ -78,7 +78,7 @@ the final MCP URL when overriding `-url`.
 
 ## Connect a remote MCP
 
-After signing in, click **Add MCP**. As a public read-only example:
+After signing in, open **Connections → Add MCP**. As a public read-only example:
 
 - Connection name: `public-docs`
 - MCP server URL: `https://mcp.deepwiki.com/mcp`
@@ -585,7 +585,7 @@ the encryption key separately. Losing the key loses the encrypted data. Changing
 the key is not a supported rotation procedure. Changing `AmpUserID` revokes the old
 user on restart and invalidates queued operations. Changing identity configuration
 also invalidates queued approvals; drain work before updating it. Standing thread
-and project approvals can be revoked from the activity page, but there is no Amp
+and project approvals can be revoked under **Operations → Standing approvals**, but there is no Amp
 token introspection or way to stop a thread from submitting new pending requests.
 In legacy mode, rotate the bearer token to revoke access. Rotate the session key
 when changing OIDC configuration or revoking browser sessions. Sign-out clears the

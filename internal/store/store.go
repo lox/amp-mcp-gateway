@@ -502,7 +502,12 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 
 // Events returns the most recent payload-free audit events.
 func (s *Store) Events(ctx context.Context) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT sequence,operation,kind,actor,time FROM events ORDER BY sequence DESC LIMIT 200")
+	return s.OperationEvents(ctx, "")
+}
+
+// OperationEvents returns recent events for a request, or all events when id is empty.
+func (s *Store) OperationEvents(ctx context.Context, id string) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT sequence,operation,kind,actor,time FROM events WHERE (?='' OR operation=?) ORDER BY sequence DESC LIMIT 200", id, id)
 	if err != nil {
 		return nil, err
 	}

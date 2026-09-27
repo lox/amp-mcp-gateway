@@ -77,7 +77,7 @@ For example, after finding `notes.create`, the agent calls `call_tools` with:
 That demo tool requires approval. You review the account and exact arguments in
 the browser, then approve or deny. Amp-authenticated requests can be approved once,
 for the current thread, or across the current project. Standing thread and project
-approvals are listed on the activity page and can be revoked. The request and its
+approvals are listed under **Operations → Standing approvals** and can be revoked. The request and its
 outcome are saved, so the agent can check back later without keeping the connection
 open.
 
@@ -87,13 +87,15 @@ Finished calls show the result first, with JSON formatted for reading. Expand
 
 ![Reviewing a demo request before approving it](docs/images/approval.png)
 
-The activity page shows what ran, what was denied, and who approved it.
+**Operations** opens to **Needs approval**. Switch to **All operations** to see
+recent outcomes. Each request includes its history and, after a decision, a link
+to the next pending request. **Audit** shows the latest 200 recorded events.
 
-![Demo operations and their audit history](docs/images/dashboard.png)
+![Recent demo operations](docs/images/dashboard.png)
 
 ## Connect an MCP
 
-Sign in to the gateway and click **Add MCP**. Enter the server URL and choose
+Sign in to the gateway and open **Connections → Add MCP**. Enter the server URL and choose
 OAuth, a bearer token, or no authentication for a public server. For OAuth, review
 the authorization server and scopes, then sign in with the provider.
 
@@ -106,7 +108,7 @@ for retry and provider limits.
 
 ![Connection tests and automatic OAuth refresh in the disposable demo](docs/images/connection-health.png)
 
-Click **Refresh tools**, set a connection default—usually **Require approval**—and
+Open a connection's **Tools & permissions** page, click **Refresh tools**, set a connection default—usually **Require approval**—and
 **Save changes**. Search finds tools across the connection, including those using
 the default. Each result shows its permission; **Default: Require approval**, for
 example, means it inherits the connection setting. Select multiple results to
@@ -115,7 +117,9 @@ connection private to restrict every tool independently of those permissions.
 Nothing changes until you save. Refreshes keep unchanged permissions; changed
 blocked tools remain blocked, while other changed tools go back to approval.
 
-![Reviewing DeepWiki tool permissions in the demo](docs/images/tool-review.png)
+The connection's **Settings** page shows its endpoint, account label and OAuth settings.
+
+![Reviewing tool permissions in the demo](docs/images/tool-review.png)
 
 This supports remote Streamable HTTP servers on public HTTPS, not local commands.
 See the [connection guide](docs/dev.md#connect-a-remote-mcp) for an example and
