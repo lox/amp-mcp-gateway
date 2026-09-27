@@ -92,10 +92,22 @@ Finished calls show the result first, with JSON formatted for reading. Expand
 recent outcomes. Each request includes its history and, after a decision, a link
 to the next pending request. **Audit** shows the latest 200 recorded events.
 
-Operation lists refresh every five seconds; active execution status and results
-refresh every two seconds until the call finishes. Polling pauses in hidden tabs,
-and list updates wait while a request link is focused or hovered. Connection tests
-update diagnostics in place. These enhancements use locally served htmx 2.0.8
+Operations and Audit update through an owner-authenticated SSE connection. The
+server checks the committed audit sequence every 250 ms and sends a payload-free
+notification when it changes; htmx then fetches the current HTML. Active execution
+pages stop listening when the call finishes. Hidden tabs disconnect and refresh
+on return. Updates wait while text is selected or a list link is focused/hovered,
+then resume without needing another ledger event. Unchanged lists are not swapped.
+
+SSE streams send keepalives and end after a minute; reconnecting rechecks
+authentication. Every HTML request also checks the session. Reconnecting refreshes
+current state, so missed notifications need no replay. Reverse proxies must allow
+streaming `/events` responses without buffering (the response sets
+`X-Accel-Buffering: no`). This is a per-visible-tab indexed SQLite check, not an
+in-memory event bus or a change to durable dispatch.
+
+Connection tests update diagnostics in place. These enhancements use locally
+served htmx 2.0.8
 (vendored from `https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js`, BSD-0-Clause).
 Native forms and page refresh still work without JavaScript. Approval, OAuth and
 Chrome pairing remain full-page flows; live updates never resubmit those actions.

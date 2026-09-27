@@ -45,8 +45,8 @@ func TestLiveOperationStatus(t *testing.T) {
 				if w.Code != 200 || !strings.Contains(body, ">"+status+"</span>") || strings.Contains(body, "<html") || strings.Contains(body, "private-arguments") || strings.Contains(body, "<form") {
 					t.Fatalf("incorrect status fragment: %d %s", w.Code, body)
 				}
-				if strings.Contains(body, `hx-trigger="every 2s"`) != (status == "ready" || status == "running") {
-					t.Fatal("only active execution should poll")
+				if strings.Contains(body, `data-live`) != (status == "ready" || status == "running") {
+					t.Fatal("only active execution should subscribe to live updates")
 				}
 				if len(o.Result) > 0 && (!strings.Contains(body, "&lt;script&gt;unsafe-result&lt;/script&gt;") || strings.Contains(body, "<script>")) {
 					t.Fatal("fragment must show the result as escaped text")
@@ -91,5 +91,34 @@ func TestLiveOperationsList(t *testing.T) {
 		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Vary") != "HX-Request" {
 			t.Fatal("list fragment must not be cached")
 		}
+	}
+}
+
+func TestLiveAuditList(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	if _, err := g.submit(t.Context(), input("audit-request", "private-argument")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), "audit-request", "<script>actor</script>", false); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/audit", nil)
+	r.Header.Set("HX-Request", "true")
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	body := w.Body.String()
+	for _, want := range []string{"audit-request", "<td>denied</td>", "<td>pending</td>", "&lt;script&gt;actor&lt;/script&gt;"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if w.Code != 200 || strings.Contains(body, "<html") || strings.Contains(body, "<script>") || strings.Contains(body, "private-argument") || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Vary") != "HX-Request" {
+		t.Fatalf("unsafe audit fragment: %d %s", w.Code, body)
 	}
 }
