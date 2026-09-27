@@ -597,7 +597,12 @@ before contacting the upstream, then records its outcome and audit event togethe
   binding in its Amp thread, or for that tool and binding across its Amp project.
   Project approval is unavailable when Amp supplies no project claim.
 - The pending operation expires ten minutes after submission, including time spent
-  queued. Standing approvals are durable until revoked.
+  queued. Standing approvals last one hour from browser consent, with any
+  schema-valid arguments for the same tool. Restarting does not extend consent.
+- A queued grant-authorized call is checked again in the atomic claim transaction.
+  Expiry, revocation or replacement of its original consent denies the call with
+  audit actor `approval-grant-unavailable`. New consent cannot revive old queued
+  calls. Revocation cannot cancel directly approved requests or calls already claimed.
 - Repeated or concurrent approvals cannot dispatch the same operation twice.
 - Changes to the pinned tool, policy, connection, owner, issuer or static upstream
   credential invalidate queued requests when checked at execution.
@@ -703,6 +708,11 @@ user on restart and invalidates queued operations. Changing identity configurati
 also invalidates queued approvals; drain work before updating it. Standing thread
 and project approvals can be revoked under **Operations → Standing approvals**, but there is no Amp
 token introspection or way to stop a thread from submitting new pending requests.
+Existing standing approvals expire one hour after their original creation, without
+an upgrade grace period. Pre-upgrade queued grant-authorized calls lack the exact
+consent source and are denied at claim; submit a new request ID for fresh review.
+Do not roll back to a version without grant expiry/claim checks: it would restore
+the previous unbounded-grant behavior for stored active grants.
 In legacy mode, rotate the bearer token to revoke access. Rotate the session key
 when changing OIDC configuration or revoking browser sessions. Sign-out clears the
 browser cookie but cannot revoke a copied session cookie; sessions otherwise last

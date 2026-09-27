@@ -30,7 +30,7 @@ separate copies of this matrix in each document.
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. Connections can independently require an Amp-attested private, owner-only, non-multiplayer context on every discovery, call and result lookup. New tools inherit defaults after save; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, once/thread/project approve scopes, deny, ten-minute pending expiry, revocation and status polling. |
 | Effect previews | Planned | Exact payload only; no before/after effect or resource-state-aware approval. |
-| Bounded mandates | Partial | Durable thread/project standing grants bind verified Amp identity, tool and configuration. No resource scope, call budgets, expiry or subagent delegation. |
+| Bounded mandates | Partial | One-hour thread/project standing grants bind verified Amp identity, tool and configuration; expiry and revocation are checked at submission and atomic claim. No resource scope, call budgets or subagent delegation. |
 | Duplicate / restart safety | Implemented | Idempotency keys, atomic claims and persisted approvals; ambiguous outcomes are not retried. |
 | Revocation | Partial | Token/key rotation, configuration/reconnect invalidation and explicit standing-grant revocation; no per-run stop control or Amp token introspection. |
 | Tool-definition review | Partial | Refresh shows additions, changes and removals. Unchanged exceptions persist; changed allowed tools require approval and blocks persist. No automatic refresh or drift detection. |

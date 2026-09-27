@@ -24,7 +24,8 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once or create a revocable standing approval
-  for the same tool/configuration binding in its verified Amp thread or project.
+  lasting one hour for the same tool/configuration binding in its verified Amp
+  thread or project. Check the original consent again at atomic claim.
   Never automatically retry an ambiguous dispatch.
 - Permit tools from private connections only when each fresh Amp token attests a
   private, non-multiplayer thread where no non-owner can influence the call.
@@ -92,8 +93,10 @@ Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience,
 `token_use=mcp` and one allowed user ID. The signed subject and thread ID plus
 optional workspace/project IDs are stored and shown during review. Pending requests
 can be approved once, for the thread, or across the project. Standing approvals are
-encrypted, durable, bound to the exact identity/tool/configuration context, listed
-for the owner, and revocable. Amp-hosted remote MCP definitions send the short-lived
+encrypted, bound to the exact identity/tool/configuration context, listed for the
+owner, revocable, and expire one hour after creation. Expiry, revocation or replaced
+consent denies queued grant-authorized calls at atomic claim; directly approved
+and already claimed calls are unaffected. Amp-hosted remote MCP definitions send the short-lived
 token directly, without a local bridge or stored gateway credential. Native credential
 redemption also accepts an orb-minted `token_use=exchanged` token with the same audience
 and exact thread identity because the automatic MCP token is not exposed to the shell.

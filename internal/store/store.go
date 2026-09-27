@@ -49,6 +49,7 @@ type Operation struct {
 	Binding                       string          `json:"binding"`
 	ApprovalScope                 string          `json:"approval_scope,omitempty"`
 	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
+	ApprovalGrantSource           string          `json:"approval_grant_source,omitempty"`
 	Private                       bool            `json:"private,omitempty"`
 	ProtectedResult               json.RawMessage `json:"private_result,omitempty"`
 	Status                        string          `json:"status"`
@@ -360,6 +361,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 			}
 			if grant != nil {
 				o.ApprovalScope, o.ApprovalGrant = grant.Scope, grant.ID
+				o.ApprovalGrantSource = grant.OperationID
 				o.Status = "ready"
 				break
 			}
@@ -465,6 +467,26 @@ func (s *Store) Claim(ctx context.Context) (Operation, error) {
 	}
 	if err != nil {
 		return o, err
+	}
+	if o.ApprovalGrant != "" {
+		grant, err := s.activeGrant(ctx, tx, o.ApprovalGrant)
+		if err != nil {
+			return o, err
+		}
+		// Grant IDs are reused on renewal; only the original consent may dispatch
+		// this call. Legacy queued calls without a source fail closed on upgrade.
+		if grant == nil || o.ApprovalGrantSource == "" || grant.OperationID != o.ApprovalGrantSource {
+			if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE id=?", o.ID); err != nil {
+				return o, err
+			}
+			if err := event(ctx, tx, o.ID, "denied", "approval-grant-unavailable"); err != nil {
+				return o, err
+			}
+			if err := tx.Commit(); err != nil {
+				return o, err
+			}
+			return Operation{}, sql.ErrNoRows
+		}
 	}
 	if err = event(ctx, tx, o.ID, "running", "gateway"); err != nil {
 		return o, err

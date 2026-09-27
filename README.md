@@ -77,9 +77,10 @@ For example, after finding `notes.create`, the agent calls `call_tools` with:
 That demo tool requires approval. You review the account and exact arguments in
 the browser, then approve or deny. Amp-authenticated requests can be approved once,
 for the current thread, or across the current project. Standing thread and project
-approvals are listed under **Operations → Standing approvals** and can be revoked. The request and its
-outcome are saved, so the agent can check back later without keeping the connection
-open.
+approvals last one hour and can be revoked under **Operations → Standing approvals**.
+Expiry or revocation stops queued grant-authorized calls, not directly approved or
+already running calls. The request and its outcome are saved, so the agent can
+check back later without keeping the connection open.
 
 Finished calls show the result first, with JSON formatted for reading. Expand
 **Raw MCP response** for the full response, or **Request details** and
