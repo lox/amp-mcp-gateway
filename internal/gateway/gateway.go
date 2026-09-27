@@ -506,6 +506,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 // UI returns the owner-authenticated server-rendered review and audit interface.
 func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
@@ -649,7 +650,17 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			next = pending[0].ID
 		}
 	}
-	g.render(w, map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject})
+	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
+	w.Header().Set("Vary", "HX-Request")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := page.ExecuteTemplate(w, "operation-status", data); err != nil {
+			slog.Error("render operation status", "error", err)
+		}
+		return
+	}
+	g.render(w, data)
 }
 
 func (g *Gateway) render(w http.ResponseWriter, data any) {

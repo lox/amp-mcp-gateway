@@ -187,6 +187,13 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 		}
 		sub, ok := a.sessionSubject(r)
 		if !ok || sub != a.owner {
+			if r.Header.Get("HX-Request") == "true" {
+				// Navigate the whole document, never swap login/OIDC into a fragment.
+				w.Header().Set("HX-Redirect", "/login")
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
