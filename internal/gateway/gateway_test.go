@@ -489,6 +489,14 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "This thread") || strings.Contains(body, "This project") {
 				t.Fatal("standing scope offered without verified Amp identity")
 			}
+			for _, want := range []string{`<span class="connection">notes</span>`, `<span>list_items</span>`, "Exact arguments &amp; telemetry", "Request history &amp; audit", "No verified Amp project or thread context was supplied."} {
+				if !strings.Contains(body, want) {
+					t.Errorf("missing %q", want)
+				}
+			}
+			if strings.Count(body, "test account") != 1 || strings.Contains(body, "list items</h1>") {
+				t.Fatal("duplicate account or humanized tool heading")
+			}
 			if len(o.Result) > 0 {
 				if strings.Count(body, "<pre>{\n  &#34;count&#34;: 2\n}</pre>") != 1 {
 					t.Fatal("identical structured and text content should be shown once")
@@ -504,11 +512,38 @@ func TestOperationPresentation(t *testing.T) {
 				if strings.Contains(body, "<script>alert") {
 					t.Fatal("unescaped upstream output")
 				}
-				if strings.Index(body, "9007199254740993") > strings.Index(body, "Request details") {
+				if strings.Index(body, "9007199254740993") > strings.Index(body, "Call arguments</h2>") {
 					t.Fatal("result should come first")
 				}
 			}
 		})
+	}
+}
+
+func TestArgumentFieldsPreserveJSONTypes(t *testing.T) {
+	g, s, _ := fixture(t)
+	o := store.Operation{ID: "argument-display", Tool: "notes.write", Connection: "notes", Status: "pending", Arguments: map[string]any{
+		"number": 113, "string": "120", "null": nil, "nested": map[string]any{"enabled": false, "items": []any{1, "two"}}, "<script>": "</script>",
+	}}
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/operations/"+o.ID, nil)
+	r.SetPathValue("id", o.ID)
+	w := httptest.NewRecorder()
+	g.operation(w, r)
+	_, fields, ok := strings.Cut(w.Body.String(), `<dl class="argument-list"`)
+	if !ok {
+		t.Fatal("missing argument fields")
+	}
+	fields, _, _ = strings.Cut(fields, "</dl>")
+	for _, want := range []string{`<code>113</code>`, `<code>&#34;120&#34;</code>`, `<code>null</code>`, `<code>{&#34;enabled&#34;:false,&#34;items&#34;:[1,&#34;two&#34;]}</code>`, `&lt;script&gt;`} {
+		if !strings.Contains(fields, want) {
+			t.Errorf("missing %q in compact arguments", want)
+		}
+	}
+	if strings.Contains(fields, "<script>") || strings.Contains(fields, "</script>") {
+		t.Fatal("unescaped argument content")
 	}
 }
 
@@ -530,6 +565,21 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
+		_, context, ok := strings.Cut(body, `<section class="amp-context"`)
+		if !ok {
+			t.Fatal("missing prominent Amp context")
+		}
+		context, _, _ = strings.Cut(context, "</section>")
+		if !strings.Contains(context, "Thread ID: "+o.AmpThreadID) || strings.Contains(context, "review") {
+			t.Fatal("missing thread fallback or context inferred from arguments")
+		}
+		projectLabel := "Not provided by Amp"
+		if tc.project != "" {
+			projectLabel = "Project ID: " + tc.project
+		}
+		if !strings.Contains(context, projectLabel) || strings.Index(body, context) > strings.Index(body, "Call arguments</h2>") {
+			t.Fatal("project context must precede arguments")
+		}
 		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread for one hour, with any schema-valid arguments.", "Expiry or revocation stops queued calls"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)

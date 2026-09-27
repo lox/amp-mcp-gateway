@@ -676,7 +676,11 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		blocks = append(blocks, prettyJSON(o.Result))
 	}
 	name := strings.TrimPrefix(o.Tool, o.Connection+".")
-	name = strings.ReplaceAll(name, "_", " ")
+	fields := make(map[string]string, len(o.Arguments))
+	for key, value := range o.Arguments {
+		raw, _ := json.Marshal(value)
+		fields[key] = string(raw)
+	}
 	events, err := g.store.OperationEvents(r.Context(), o.ID)
 	if err != nil {
 		http.Error(w, "audit unavailable", http.StatusServiceUnavailable)
@@ -693,7 +697,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			next = pending[0].ID
 		}
 	}
-	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
+	data := map[string]any{"Operation": o, "Title": name, "ArgumentFields": fields, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Header.Get("HX-Request") == "true" {

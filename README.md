@@ -83,10 +83,13 @@ already running calls. The request and its outcome are saved, so the agent can
 check back later without keeping the connection open.
 
 Finished calls show the result first, with JSON formatted for reading. Expand
-**Raw MCP response** for the full response, or **Request details** and
-**Identity & audit** for the arguments and attribution.
+**Raw MCP response** for the full response, **Exact arguments & telemetry** for
+the stored arguments and model label, or **Request history & audit** for attribution
+and state transitions. Amp project and thread context appears above tool arguments.
+The gateway currently receives IDs, not project names or thread titles, so it labels
+those ID fallbacks explicitly rather than inferring names from the call.
 
-![Reviewing a demo request before approving it](docs/images/approval.png)
+![Reviewing a local fixture with Amp ID fallbacks before approving it](docs/images/approval.png)
 
 **Operations** opens to **Needs approval**. Switch to **All operations** to see
 recent outcomes. Each request includes its history and, after a decision, a link
