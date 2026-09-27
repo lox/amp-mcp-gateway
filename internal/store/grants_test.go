@@ -311,7 +311,10 @@ func TestApprovalGrantRevocationAtClaim(t *testing.T) {
 			if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
 				t.Fatal(err)
 			}
-			queued := submitWithGrants(t, s, ampOperation("a-queued", "thread", "project", "binding"))
+			queuedInput := ampOperation("a-queued", "thread", "project", "binding")
+			// Exercise setup crossing a second: creation time takes precedence over ID.
+			queuedInput.Created = renewal.Created + 1
+			queued := submitWithGrants(t, s, queuedInput)
 			if queued.Status != "ready" {
 				t.Fatal("grant did not authorize queued call")
 			}
@@ -321,6 +324,9 @@ func TestApprovalGrantRevocationAtClaim(t *testing.T) {
 			if replace {
 				if err := s.Approve(t.Context(), renewal.ID, "owner", "thread"); err != nil {
 					t.Fatal(err)
+				}
+				if claimed, err := s.Claim(t.Context()); err != nil || claimed.ID != renewal.ID {
+					t.Fatalf("expected directly approved renewal, got %s: %v", claimed.ID, err)
 				}
 			}
 			if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
@@ -335,9 +341,6 @@ func TestApprovalGrantRevocationAtClaim(t *testing.T) {
 				t.Fatal("idempotent retry revived denied call")
 			}
 			if replace {
-				if _, err := s.Claim(t.Context()); err != nil {
-					t.Fatalf("direct approval blocked: %v", err)
-				}
 				fresh := submitWithGrants(t, s, ampOperation("fresh", "thread", "project", "binding"))
 				if fresh.Status != "ready" {
 					t.Fatal("new consent not usable")
