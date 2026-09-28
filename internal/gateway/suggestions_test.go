@@ -23,8 +23,9 @@ type suggestionTransport func(*http.Request) (*http.Response, error)
 func (f suggestionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
-	for _, mode := range []string{"suggest", "skip", "no-key", "failure", "stale"} {
+	for _, mode := range []string{"suggest", "skip", "no-key", "failure", "stale", "blocked", "blocked-refresh"} {
 		t.Run(mode, func(t *testing.T) {
+			blocked := strings.HasPrefix(mode, "blocked")
 			g, s, _ := fixture(t)
 			remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
 			schema := map[string]any{"type": "object"}
@@ -40,6 +41,9 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			cfg.Connections = []upstream.Connection{{ID: "notes", URL: server.URL, NoAuth: true}}
 			cfg.Tools = []Tool{{ID: "notes.existing", Connection: "notes", Name: "existing", InputSchema: schema, Policy: "deny"}}
 			cfg.ToolDefaults = map[string]string{"notes": "allow"}
+			if blocked {
+				cfg.ToolDefaults["notes"] = "deny"
+			}
 			m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 			if err != nil {
 				t.Fatal(err)
@@ -96,7 +100,7 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			if w.Code != 200 || len(match) != 2 {
 				t.Fatalf("review: %d %s", w.Code, w.Body.String())
 			}
-			if (mode == "no-key" || mode == "skip") && calls.Load() != 0 {
+			if (mode == "no-key" || mode == "skip" || blocked) && calls.Load() != 0 {
 				t.Fatal("unexpected classification request")
 			}
 			if mode == "skip" && !strings.Contains(w.Body.String(), "No tool metadata was sent to TypeSafe") {
@@ -111,7 +115,7 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			if mode == "suggest" && (!strings.Contains(w.Body.String(), "Jev suggested Allow") || !strings.Contains(w.Body.String(), "May modify stored data")) {
 				t.Fatal("missing inline explanations")
 			}
-			if mode != "suggest" && (!strings.Contains(w.Body.String(), "Approval fallback") || strings.Contains(w.Body.String(), "Jev suggested")) {
+			if mode != "suggest" && !blocked && (!strings.Contains(w.Body.String(), "Approval fallback") || strings.Contains(w.Body.String(), "Jev suggested")) {
 				t.Fatal("fallback incorrectly attributed to Jev")
 			}
 			if _, ok := g.tools["notes.read"]; ok {
@@ -121,7 +125,7 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			values = url.Values{"ticket": {match[1]}, "default_policy": {"allow"}}
 			for i, tool := range draft.Tools {
 				want := "require_approval"
-				if tool.Name == "existing" {
+				if tool.Name == "existing" || blocked {
 					want = "deny"
 				}
 				if tool.Name == "read" && mode == "suggest" {
@@ -138,22 +142,30 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			}
 			// Refreshing must retain both the override and its original explanation,
 			// without sending the already-reviewed metadata again.
-			if mode == "suggest" {
+			if mode == "suggest" || mode == "blocked-refresh" {
+				wantCalls := int32(2)
+				if blocked {
+					wantCalls = 0
+				}
 				w = formRequest(h, cookie, "POST", "/connections/notes/discover", values)
 				match = regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
-				if w.Code != 200 || len(match) != 2 || calls.Load() != 2 {
+				if w.Code != 200 || len(match) != 2 || calls.Load() != wantCalls {
 					t.Fatalf("refresh repeated classification or failed: status=%d calls=%d", w.Code, calls.Load())
 				}
 				values.Set("ticket", match[1])
 				refreshed := g.drafts[match[1]]
-				if refreshed.Suggestions["notes.read"].Policy != "allow" || refreshed.Tools[1].Policy != "deny" {
+				if (mode == "suggest" && refreshed.Suggestions["notes.read"].Policy != "allow") || refreshed.Tools[1].Policy != "deny" {
 					t.Fatal("refresh lost explanation or owner override")
 				}
 			}
 			if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 {
 				t.Fatal(w.Body.String())
 			}
-			if g.tools["notes.read"].Policy != "deny" || g.tools["notes.write"].Policy != "require_approval" {
+			wantWrite := "require_approval"
+			if blocked {
+				wantWrite = "deny"
+			}
+			if g.tools["notes.read"].Policy != "deny" || g.tools["notes.write"].Policy != wantWrite {
 				t.Fatal("owner choices not applied")
 			}
 			if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 409 {
@@ -176,8 +188,12 @@ func TestSuggestionsPreserveBlockedDefaultsAndUnsavedInheritance(t *testing.T) {
 			previous = []Tool{tool}
 		}
 		draft.suggestPolicies(t.Context(), true, client, previous)
-		if draft.Tools[0].Policy != "" {
-			t.Fatal("overrode inheritance")
+		want := ""
+		if def == "deny" {
+			want = "deny"
+		}
+		if draft.Tools[0].Policy != want {
+			t.Fatalf("policy = %q, want %q", draft.Tools[0].Policy, want)
 		}
 	}
 }

@@ -26,6 +26,8 @@ func (draft *toolDraft) suggestPolicies(ctx context.Context, enabled bool, clien
 			continue
 		}
 		if draft.Default == "deny" {
+			// Pin the block so changing the draft default cannot enable an unassessed tool.
+			draft.Tools[i].Policy = "deny"
 			continue
 		}
 		// The connection default may allow calls, but new suggestions must fail closed.

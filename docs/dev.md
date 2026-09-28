@@ -116,7 +116,8 @@ uses at most four concurrent requests and a thirty-second overall budget.
 Without a key, discovery still works and the page explains that Jev is unavailable.
 New tools require approval, even if the connection default allows calls. Skipped, failed,
 timed-out or uncertain classifications also require approval. Blocked
-connection defaults remain blocked. Existing saved policies and unsaved review
+connection defaults give new tools explicit Block permissions, so changing the
+draft default later cannot enable unassessed tools. Existing saved policies and unsaved review
 choices are preserved; changed definitions still require approval unless blocked.
 
 Jev answers ten separate questions about public reads, writes, deletion,
@@ -186,9 +187,9 @@ After signing in, open **Connections → Add MCP**. As a public read-only exampl
 - MCP server URL: `https://mcp.deepwiki.com/mcp`
 - Authentication: **None — public server**
 
-Add the server and click **Refresh tools**. For this example set the connection
-default to **Block**, choose **All tools**, and set `read_wiki_structure` to
-**Allow**. Other tools inherit Block. Save, then check discovery:
+Add the server, set the connection default to **Block**, then click **Refresh tools**.
+Choose **All tools**, and set `read_wiki_structure` to
+**Allow**. Other tools remain explicitly blocked. Save, then check discovery:
 
 ```sh
 mise exec -- go run ./cmd/demo-client -args '{"query":"public-docs"}'
