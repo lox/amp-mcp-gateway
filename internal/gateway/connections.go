@@ -590,6 +590,10 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 		}
 	}
 	g.mu.Lock()
+	if r.Context().Err() != nil {
+		g.mu.Unlock()
+		return // Keep the existing review; a disconnected owner cannot receive a new ticket.
+	}
 	current, exists := g.drafts[previousTicket]
 	if revision != digest(g.catalogue()) || (previousTicket != "" && (!exists || time.Now().After(current.Expires) || digest(current) != digest(previous))) {
 		g.mu.Unlock()

@@ -23,8 +23,10 @@ type suggestionTransport func(*http.Request) (*http.Response, error)
 func (f suggestionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
-	for _, mode := range []string{"suggest", "skip", "no-key", "failure", "stale", "blocked", "blocked-refresh"} {
+	for _, mode := range []string{"suggest", "skip", "no-key", "failure", "stale", "blocked", "blocked-refresh", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			blocked := strings.HasPrefix(mode, "blocked")
 			g, s, _ := fixture(t)
 			remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
@@ -55,6 +57,10 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			var calls atomic.Int32
 			g.policyClient = policy.Client{Key: "test-key", HTTP: &http.Client{Transport: suggestionTransport(func(r *http.Request) (*http.Response, error) {
 				calls.Add(1)
+				if mode == "cancelled" {
+					cancel()
+					return nil, ctx.Err()
+				}
 				var in struct {
 					State struct {
 						Name string `json:"name"`
@@ -89,7 +95,25 @@ func TestDiscoverySuggestionsReviewAndSave(t *testing.T) {
 			if mode == "skip" {
 				values.Set("skip_jev", "true")
 			}
-			w := formRequest(h, cookie, "POST", "/connections/notes/discover", values)
+			if mode == "cancelled" {
+				ticket, err := g.newDraft(toolDraft{Connection: "notes", Default: "allow", Tools: cfg.Tools})
+				if err != nil {
+					t.Fatal(err)
+				}
+				values = url.Values{"ticket": {ticket}, "default_policy": {"allow"}, "policy_0": {"allow"}}
+			}
+			requestHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r.WithContext(ctx)) })
+			w := formRequest(requestHandler, cookie, "POST", "/connections/notes/discover", values)
+			if mode == "cancelled" {
+				draft, ok := g.drafts[values.Get("ticket")]
+				if calls.Load() == 0 || !ok || len(g.drafts) != 1 || draft.Tools[0].Policy != "allow" {
+					t.Fatal("cancelled classification replaced the draft or lost pending edits")
+				}
+				if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 || g.tools["notes.existing"].Policy != "allow" {
+					t.Fatal("original review no longer usable after cancellation")
+				}
+				return
+			}
 			if mode == "stale" {
 				if w.Code != 409 {
 					t.Fatalf("stale suggestions accepted: %d", w.Code)
