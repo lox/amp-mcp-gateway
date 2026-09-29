@@ -105,8 +105,8 @@ info icon beside a permission for its explanation. Override any choice and click
 **Save changes** to apply the batch to the live catalogue. No CLI or config-file
 editing is needed.
 
-The page discloses that new tool names, descriptions and input schemas go to
-TypeSafe. Connection credentials and actual call arguments are not sent; metadata
+New tool names, descriptions and input schemas go to TypeSafe.
+Connection credentials and actual call arguments are not sent; metadata
 itself may contain private data. Use **⋯ → Refresh without Jev** to skip sending
 metadata for a refresh, or remove the key to disable classification entirely. Each
 icon explains the original suggestion even if you override it, with the model
