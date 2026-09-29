@@ -49,6 +49,9 @@ func TestAuditHistoryRenderingAndFilters(t *testing.T) {
 		if w.Code != 200 || strings.Count(body, `<details class="audit-entry"`) != tc.count || !strings.HasSuffix(strings.TrimSpace(body), "</body></html>") {
 			t.Fatalf("%s: incomplete/wrong result %d", tc.query, w.Code)
 		}
+		if strings.Contains(body, "<style") || !strings.Contains(body, `href="/assets/ui.css"`) {
+			t.Fatal("audit must use the shared compiled stylesheet")
+		}
 		if w.Header().Get("Cache-Control") != "no-store" || strings.Contains(body, "private-result") || strings.Contains(body, "notes.<unsafe>") {
 			t.Fatal("sensitive payload, unsafe HTML or cacheable response")
 		}

@@ -13,7 +13,8 @@ its dependencies are locked in `package-lock.json`. Commit the generated
 `mise run dev`, `build`, `check`, the orb demo and the Docker build regenerate it.
 Plain `go build` uses the committed CSS and needs no Node installation.
 
-The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates.
+The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates
+and the Audit HTML template.
 Shared colour tokens and a four-pixel spacing scale live in `@theme` (for example,
 `p-6` is 24px on both the 14px dashboard and 16px sign-in page). Prefer these
 spacing utilities when adjusting layouts. Component rules use `@apply` and preserve
