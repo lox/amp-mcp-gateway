@@ -583,11 +583,14 @@ func TestApprovalScopePresentation(t *testing.T) {
 		if strings.Contains(context, "Amp identity") || strings.Contains(context, "Names are not provided") || strings.Contains(body, "Approve only if") {
 			t.Fatal("explanatory copy should not clutter the main review")
 		}
-		_, audit, ok := strings.Cut(body, `<details class="audit-details">`)
+		_, audit, ok := strings.Cut(body, `<details id="operation-history" class="audit-details">`)
 		if !ok || !strings.Contains(audit, "Amp identity verified") || !strings.Contains(audit, "configured label, not a verified provider identity") {
 			t.Fatal("identity caveats must remain in audit details")
 		}
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Only this exact request.", "Any arguments to this tool in this thread, for one hour.", "<summary>Scope details</summary>", "Manage standing approvals", "Expiry or revocation stops queued calls"} {
+		if strings.Contains(body, "Scope details") || strings.Contains(body, "Only this exact request") {
+			t.Fatal("redundant scope explanations should be removed")
+		}
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Any arguments to this tool in this thread, for one hour.", "Manage standing approvals", "Expiry or revocation stops queued calls"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}

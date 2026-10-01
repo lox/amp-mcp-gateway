@@ -1061,86 +1061,93 @@
     @apply max-w-215 m-auto;
     overflow-wrap: anywhere;
   }
-  :where(html.dashboard) .operation h1 {
+  :where(html.dashboard) .operation .review-heading {
+    @apply flex items-center justify-between gap-4 mt-6 mb-3;
+  }
+  :where(html.dashboard) .operation .eyebrow {
+    @apply m-0 text-muted;
+  }
+  :where(html.dashboard) .operation .tool-path {
+    @apply flex flex-wrap items-baseline gap-x-3 text-[34px] mt-0 mb-3;
+  }
+  :where(html.dashboard) .tool-path .connection {
+    @apply text-[.85em] font-semibold text-muted;
+  }
+  :where(html.dashboard) .tool-path .separator {
+    @apply text-muted font-normal;
+  }
+  :where(html.dashboard) .operation .badge {
     @apply capitalize;
   }
-  :where(html.dashboard) .operation .heading h1 {
-    @apply mt-4;
-  }
-  :where(html.dashboard) .operation .heading {
-    @apply flex-row flex-wrap items-center;
-  }
   :where(html.dashboard) .operation h2 {
-    @apply mt-0;
+    @apply mt-6 mb-4;
   }
   :where(html.dashboard) .operation summary {
     @apply font-semibold;
   }
-  :where(html.dashboard) .operation details.card {
-    @apply p-[18px_24px];
+  :where(html.dashboard) .operation details {
+    @apply border border-solid border-divider rounded-[3px] p-4 my-5;
   }
   :where(html.dashboard) .operation pre {
     @apply leading-[1.65] text-[13px];
   }
-  :where(html.dashboard) .operation .attribution {
-    @apply text-[14px] m-[22px_0];
+  :where(html.dashboard) .operation details pre {
+    @apply max-h-105 overflow-auto;
+  }
+  :where(html.dashboard) .operation .result h2 {
+    @apply mt-0;
   }
   :where(html.dashboard) .operation .result pre {
-    background: #f7f9f5;
-    border: 1px solid #e7ebe5;
-  }
-  :where(html.dashboard) .operation .result details {
-    @apply mt-6;
-  }
-  :where(html.dashboard) .operation .result summary {
-    @apply text-[13px];
-    color: #586b62;
+    @apply border border-solid border-divider;
   }
   :where(html.dashboard) .amp-context {
-    background: #f2f5ef;
-    @apply rounded-[8px] p-4 m-[18px_0];
+    @apply px-5 py-4 mt-0 mb-6;
   }
   :where(html.dashboard) .amp-context dl {
-    @apply grid-cols-[110px_1fr] m-0;
+    @apply grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-3 m-0;
   }
-  :where(html.dashboard) .approval-actions {
-    @apply items-end mt-6;
+  :where(html.dashboard) .argument-list {
+    @apply bg-inset rounded-[3px] px-5 py-4 gap-y-2 gap-x-5 grid-cols-[150px_minmax(0,1fr)] max-h-70 overflow-auto;
   }
-  :where(html.dashboard) .approval-form {
-    @apply flex items-end gap-4;
-    flex: 1;
+  :where(html.dashboard) .argument-list code {
+    @apply whitespace-pre-wrap;
   }
   :where(html.dashboard) .approval-scope {
     border: 0;
-    @apply p-0 m-0 min-w-0;
-    flex: 1;
+    @apply border-t border-solid border-divider p-0 pt-6 mt-6 mx-0 mb-0 min-w-0;
   }
   :where(html.dashboard) .approval-scope legend {
-    @apply font-[650] mb-3;
+    @apply float-left w-full text-[19px] font-[650] mb-4;
   }
   :where(html.dashboard) .scope-options {
-    @apply flex flex-wrap gap-[12px_22px];
+    @apply clear-both flex flex-wrap gap-y-3 gap-x-6;
   }
   :where(html.dashboard) .scope-option {
-    @apply inline-flex items-center gap-[7px] cursor-pointer whitespace-nowrap;
+    @apply inline-flex items-center gap-2 cursor-pointer whitespace-nowrap;
   }
   :where(html.dashboard) .scope-option input {
     @apply w-4 h-4 m-0;
-    accent-color: #216442;
   }
   :where(html.dashboard) .scope-help {
-    color: #586b62;
-    @apply text-[13px] leading-[1.5] m-[10px_0_0];
+    @apply text-muted text-[13px] leading-[1.5] mt-3 mb-0;
+  }
+  :where(html.dashboard) .operation .audit-details {
+    @apply mb-0;
   }
   @media (max-width: 600px) {
-    :where(html.dashboard) .amp-context dl {
+    :where(html.dashboard) .operation .tool-path {
+      @apply text-[28px];
+    }
+    :where(html.dashboard) .amp-context,
+    :where(html.dashboard) .argument-list {
+      @apply p-3;
+    }
+    :where(html.dashboard) .amp-context dl,
+    :where(html.dashboard) .argument-list {
       @apply grid-cols-[1fr];
     }
-    :where(html.dashboard) .approval-form {
-      @apply grid w-full;
-    }
-    :where(html.dashboard) .approval-form .primary {
-      @apply w-full;
+    :where(html.dashboard) .operation details {
+      @apply p-3;
     }
   }
 
