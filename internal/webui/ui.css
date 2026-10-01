@@ -1105,43 +1105,70 @@
     @apply grid-cols-[110px_1fr] m-0;
   }
   :where(html.dashboard) .approval-actions {
-    @apply items-end mt-6;
+    @apply grid grid-cols-[auto_1fr] items-end mt-6;
   }
   :where(html.dashboard) .approval-form {
-    @apply flex items-end gap-4;
-    flex: 1;
+    display: contents;
   }
-  :where(html.dashboard) .approval-scope {
-    border: 0;
-    @apply p-0 m-0 min-w-0;
-    flex: 1;
+  :where(html.dashboard) .approval-form .primary {
+    justify-self: start;
   }
-  :where(html.dashboard) .approval-scope legend {
-    @apply font-[650] mb-3;
+  :where(html.dashboard) .remember-approval {
+    grid-column: 1 / -1;
   }
-  :where(html.dashboard) .scope-options {
-    @apply flex flex-wrap gap-[12px_22px];
+  :where(html.dashboard) .remember-toggle {
+    @apply flex items-start gap-3 cursor-pointer;
   }
-  :where(html.dashboard) .scope-option {
-    @apply inline-flex items-center gap-[7px] cursor-pointer whitespace-nowrap;
-  }
-  :where(html.dashboard) .scope-option input {
-    @apply w-4 h-4 m-0;
+  :where(html.dashboard) .remember-toggle input {
+    @apply w-4 h-4 m-[3px_0_0];
+    flex: none;
     accent-color: #216442;
   }
-  :where(html.dashboard) .scope-help {
+  :where(html.dashboard) .remember-toggle span {
+    @apply grid gap-1;
+  }
+  :where(html.dashboard) .remember-toggle small {
     color: #586b62;
-    @apply text-[13px] leading-[1.5] m-[10px_0_0];
+    @apply leading-[1.5];
+  }
+  :where(html.dashboard) .remember-options {
+    @apply hidden ml-7 mt-3 max-w-150;
+  }
+  :where(html.dashboard) .remember-approval:has(input[name="remember"]:checked) .remember-options {
+    @apply grid gap-2;
+  }
+  :where(html.dashboard) .remember-options details {
+    border-bottom: 1px solid #e7ebe5;
+    @apply pb-2;
+  }
+  :where(html.dashboard) .remember-options summary {
+    @apply text-[14px];
+  }
+  :where(html.dashboard) .remember-options .change {
+    color: #226a4d;
+    @apply underline;
+  }
+  :where(html.dashboard) .remember-options label {
+    @apply block text-[12px] font-semibold mt-3 mb-1;
+  }
+  :where(html.dashboard) .remember-options select {
+    @apply text-[13px] py-2;
+  }
+  :where(html.dashboard) .remember-warning {
+    @apply bg-selected p-3 m-[8px_0_0] text-[13px] leading-[1.5];
+  }
+  :where(html.dashboard) .remember-options .help {
+    @apply text-[12px] m-[2px_0_0];
+  }
+  :where(html.dashboard) .approval-grants button {
+    @apply whitespace-nowrap;
   }
   @media (max-width: 600px) {
     :where(html.dashboard) .amp-context dl {
       @apply grid-cols-[1fr];
     }
-    :where(html.dashboard) .approval-form {
-      @apply grid w-full;
-    }
-    :where(html.dashboard) .approval-form .primary {
-      @apply w-full;
+    :where(html.dashboard) .approval-actions {
+      @apply grid-cols-[1fr];
     }
   }
 

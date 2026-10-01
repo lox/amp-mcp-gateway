@@ -440,7 +440,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve for") || !strings.Contains(page.Body.String(), "<span>Once</span>") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || strings.Contains(page.Body.String(), "Remember this approval") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -480,10 +480,10 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
 				t.Fatal("incorrect refresh control")
 			}
-			if strings.Contains(body, "Approve for") != (status == "pending") {
+			if strings.Contains(body, "Approve once") != (status == "pending") {
 				t.Fatal("incorrect approval control")
 			}
-			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve for") {
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once") {
 				t.Fatal("arguments must precede approval")
 			}
 			if strings.Contains(body, "This thread") || strings.Contains(body, "This project") {
@@ -530,16 +530,13 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "<span>Once</span>", "<span>This thread</span>", "Authorise only this exact stored request.", "Allow future calls to notes.write in this thread for one hour, with any schema-valid arguments.", "Expiry or revocation stops queued calls"} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once", "Remember this approval", `value="exact">Same tool + same arguments`, `value="thread">This thread`, `value="never">Until revoked`, "Expiry or revocation stops queued calls"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, "<span>This project</span>") != tc.wantProject {
+		if strings.Contains(body, `value="project">This project`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
-		}
-		if strings.Contains(body, "Allow future calls to notes.write across threads in this project for one hour, with any schema-valid arguments.") != tc.wantProject {
-			t.Errorf("%s: project scope help visibility mismatch", tc.id)
 		}
 	}
 }

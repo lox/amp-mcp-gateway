@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -200,6 +201,19 @@ func (g *Gateway) bindingWith(tool Tool, binding string) string {
 	return g.bindings[tool.ID] + ":" + binding
 }
 
+func (g *Gateway) connectionBindingWith(connection, binding string) string {
+	// Reuse the tool bindings, which already cover schema, policy, account,
+	// credentials and owner configuration. Adding or changing a tool changes
+	// the connection-wide authority, including across a restart.
+	bindings := map[string]string{}
+	for id, tool := range g.tools {
+		if tool.Connection == connection {
+			bindings[id] = g.bindings[id]
+		}
+	}
+	return digest([]any{bindings, binding})
+}
+
 type findInput struct {
 	Query string `json:"query"`
 }
@@ -354,6 +368,13 @@ func (g *Gateway) mcpHandler() http.Handler {
 		return nil, map[string]any{"tools": out}, nil
 	})
 	mcp.AddTool(s, &mcp.Tool{Name: "call_tools", Description: "Submit exactly one operation. Never resubmit with a new request_id after an ambiguous response. Pending writes need browser approval; poll get_operation."}, func(ctx context.Context, r *mcp.CallToolRequest, in callInput) (*mcp.CallToolResult, any, error) {
+		// The SDK's generic decoding uses float64. Decode the original request
+		// again so exact approvals and upstream calls retain JSON number precision.
+		decoder := json.NewDecoder(bytes.NewReader(r.Params.Arguments))
+		decoder.UseNumber()
+		if err := decoder.Decode(&in); err != nil {
+			return nil, nil, err
+		}
 		o, err := g.submit(ctx, in)
 		if err != nil {
 			return nil, nil, err
@@ -415,7 +436,8 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = integration.Account
 		}
 	}
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	dynamicBinding := g.backend.Binding(t.Connection)
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -480,6 +502,9 @@ func (g *Gateway) Run(ctx context.Context) error {
 				valid = g.bindingWith(t, expectedBinding) == o.Binding
 			} else if ok && t.Policy != "deny" {
 				valid = g.bindingWith(t, "") == o.Binding
+			}
+			if valid && o.ConnectionBinding != "" {
+				valid = g.connectionBindingWith(t.Connection, expectedBinding) == o.ConnectionBinding
 			}
 			g.mu.RUnlock()
 			if !valid {
@@ -561,11 +586,16 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			scope := r.Form.Get("scope")
-			if scope == "" {
-				scope = "once"
+			if r.Form.Get("remember") != "on" {
+				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
+			} else {
+				options := store.ApprovalOptions{Breadth: r.Form.Get("breadth"), Scope: r.Form.Get("scope"), Expiry: r.Form.Get("expiry")}
+				if !slices.Contains([]string{"exact", "tool", "connection"}, options.Breadth) || !slices.Contains([]string{"thread", "project"}, options.Scope) || !slices.Contains([]string{"never", "1h", "24h"}, options.Expiry) {
+					http.Error(w, "Invalid approval.", http.StatusBadRequest)
+					return
+				}
+				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
 			}
-			err = g.store.Approve(r.Context(), r.PathValue("id"), actor, scope)
 		} else {
 			err = g.store.Decide(r.Context(), r.PathValue("id"), actor, false)
 		}

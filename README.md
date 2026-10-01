@@ -75,12 +75,21 @@ For example, after finding `notes.create`, the agent calls `call_tools` with:
 ```
 
 That demo tool requires approval. You review the account and exact arguments in
-the browser, then approve or deny. Amp-authenticated requests can be approved once,
-for the current thread, or across the current project. Standing thread and project
-approvals last one hour and can be revoked under **Operations → Standing approvals**.
-Expiry or revocation stops queued grant-authorized calls, not directly approved or
-already running calls. The request and its outcome are saved, so the agent can
-check back later without keeping the connection open.
+the browser, then approve once or deny. Requests with a verified Amp thread identity
+also offer **Remember this approval**. A saved approval can match the exact call,
+the tool with any arguments, or every non-blocked tool on the connection; it can be
+limited to the thread or, when verified, its project. It lasts until revoked unless
+you choose the one-hour or 24-hour preset. Manage saved approvals under
+**Operations → Standing approvals**. Expiry or revocation stops queued
+grant-authorized calls, not directly approved or already running calls. The request
+and its outcome are saved, so the agent can check back later without keeping the
+connection open.
+
+Remembering defaults to the same tool and exact arguments, in this thread, until
+revoked. Object key order does not affect matching; JSON number spellings must
+match exactly. Saved permissions remain bound to the verified owner and connection
+configuration, and never override blocked tools. Catalogue or credential changes
+can require fresh approval. Existing one-hour approvals keep their original expiry.
 
 Finished calls show the result first, with JSON formatted for reading. Expand
 **Raw MCP response** for the full response, or **Request details** and

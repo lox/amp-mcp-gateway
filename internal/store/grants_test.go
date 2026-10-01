@@ -2,7 +2,10 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -10,6 +13,106 @@ import (
 	"testing/synctest"
 	"time"
 )
+
+func TestApprovalGrantBreadth(t *testing.T) {
+	t.Run("exact canonical arguments preserve numbers", func(t *testing.T) {
+		s, _, _ := testStore(t)
+		source := ampOperation("exact-source", "thread", "project", "tool-binding")
+		source.ConnectionBinding = "connection-binding"
+		source.Arguments = map[string]any{"left": json.Number("900719925474099312345"), "right": "different"}
+		submitWithGrants(t, s, source)
+		if err := s.ApproveWithOptions(t.Context(), source.ID, "owner", ApprovalOptions{"exact", "thread", "never"}); err != nil {
+			t.Fatal(err)
+		}
+		matching := ampOperation("exact-match", "thread", "project", "tool-binding")
+		matching.ConnectionBinding = "connection-binding"
+		matching.Arguments = map[string]any{"right": "different", "left": json.Number("900719925474099312345")}
+		if got := submitWithGrants(t, s, matching); got.Status != "ready" {
+			t.Fatalf("canonical exact arguments did not match: %s", got.Status)
+		}
+		different := ampOperation("exact-different", "thread", "project", "tool-binding")
+		different.ConnectionBinding = "connection-binding"
+		different.Arguments = map[string]any{"left": json.Number("900719925474099312346"), "right": "different"}
+		if got := submitWithGrants(t, s, different); got.Status != "pending" {
+			t.Fatalf("asymmetric arguments matched exact grant: %s", got.Status)
+		}
+	})
+
+	t.Run("connection crosses tools but not bindings", func(t *testing.T) {
+		s, _, _ := testStore(t)
+		source := ampOperation("connection-source", "thread", "project", "tool-one-binding")
+		source.Tool, source.ConnectionBinding = "notes.create", "connection-binding"
+		submitWithGrants(t, s, source)
+		if err := s.ApproveWithOptions(t.Context(), source.ID, "owner", ApprovalOptions{"connection", "project", "24h"}); err != nil {
+			t.Fatal(err)
+		}
+		otherTool := ampOperation("other-tool", "another-thread", "project", "tool-two-binding")
+		otherTool.Tool, otherTool.ConnectionBinding = "notes.delete", "connection-binding"
+		if got := submitWithGrants(t, s, otherTool); got.Status != "ready" {
+			t.Fatalf("connection grant did not cross tools: %s", got.Status)
+		}
+		otherBinding := ampOperation("other-binding", "another-thread", "project", "tool-two-binding")
+		otherBinding.Tool, otherBinding.ConnectionBinding = "notes.delete", "changed-connection-binding"
+		if got := submitWithGrants(t, s, otherBinding); got.Status != "pending" {
+			t.Fatalf("connection grant crossed configuration binding: %s", got.Status)
+		}
+	})
+}
+
+func TestApprovalGrantExplicitExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _, _ := testStore(t)
+		for _, tc := range []struct{ id, expiry string }{{"timed", "1h"}, {"day", "24h"}, {"lasting", "never"}} {
+			o := ampOperation(tc.id, tc.id, "project", "binding")
+			o.ConnectionBinding = "connection"
+			submitWithGrants(t, s, o)
+			if err := s.ApproveWithOptions(t.Context(), o.ID, "owner", ApprovalOptions{"tool", "thread", tc.expiry}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(time.Hour)
+		for _, tc := range []struct{ id, thread, want string }{{"after-timed", "timed", "pending"}, {"before-day", "day", "ready"}, {"after-never", "lasting", "ready"}} {
+			o := ampOperation(tc.id, tc.thread, "project", "binding")
+			o.ConnectionBinding = "connection"
+			if got := submitWithGrants(t, s, o); got.Status != tc.want {
+				t.Fatalf("%s status = %s, want %s", tc.id, got.Status, tc.want)
+			}
+		}
+		time.Sleep(23 * time.Hour)
+		if got := submitWithGrants(t, s, ampOperation("after-day", "day", "project", "binding")); got.Status != "pending" {
+			t.Fatal("24-hour grant did not expire at its boundary")
+		}
+		if got := submitWithGrants(t, s, ampOperation("still-lasting", "lasting", "project", "binding")); got.Status != "ready" {
+			t.Fatal("indefinite grant expired")
+		}
+	})
+}
+
+func TestPersistedV1GrantRetainsExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _, _ := testStore(t)
+		o := ampOperation("legacy-source", "thread", "project", "binding")
+		submitWithGrants(t, s, o)
+		// Construct the old payload and key independently of today's grant builder.
+		rawKey, _ := json.Marshal([]string{"approval-grant-v1", "thread", o.Tool, "notes", "binding", "user-owner", "workspace-one", "project", "thread"})
+		hash := sha256.Sum256(rawKey)
+		id := hex.EncodeToString(hash[:])
+		payload, err := json.Marshal(map[string]any{"id": id, "scope": "thread", "tool": o.Tool, "connection": "notes", "binding": "binding", "amp_user_id": "user-owner", "amp_workspace_id": "workspace-one", "amp_project_id": "project", "amp_thread_id": "thread", "operation_id": o.ID, "created": time.Now().Unix()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec("INSERT INTO approval_grants(id,active,created,payload) VALUES(?,1,?,?)", id, time.Now().Unix(), s.seal("approval-grant:"+id, payload)); err != nil {
+			t.Fatal(err)
+		}
+		if got := submitWithGrants(t, s, ampOperation("legacy-before", "thread", "project", "binding")); got.Status != "ready" {
+			t.Fatal("legacy consent not recognized")
+		}
+		time.Sleep(time.Hour)
+		if got := submitWithGrants(t, s, ampOperation("legacy-after", "thread", "project", "binding")); got.Status != "pending" {
+			t.Fatal("legacy consent became permanent")
+		}
+	})
+}
 
 func ampOperation(id, thread, project, binding string) Operation {
 	o := operation(id, "pending")
