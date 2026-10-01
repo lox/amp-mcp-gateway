@@ -732,8 +732,11 @@ browser logins and token refreshes do not yet have audit events. Tool results ca
 contain sensitive data and are returned only to the authenticated owner/client.
 The dashboard and Audit read separate encrypted operation summaries, so listing
 activity does not decrypt arguments or results. Summaries include connection,
-requester and initial standing-approval scope. On the first startup after an
-upgrade, missing or older-version summaries are backfilled one payload at a time,
+requester, initial standing-approval scope and its source request. Audit resolves
+the original approver from that source's recorded approval event, not the current
+grant or the new requester; missing attribution is shown as unavailable.
+On the first startup after an upgrade, missing or older-version summaries are
+backfilled one payload at a time,
 before restart recovery; original operation ciphertext is preserved. Subsequent
 startups inspect only the small summaries. Back up large ledgers before upgrading
 and allow time for this one-time migration.

@@ -391,7 +391,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
-	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, Subject: o.Subject, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope}); err != nil {
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, Subject: o.Subject, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
 		return o, err
 	}
 	return o, tx.Commit()

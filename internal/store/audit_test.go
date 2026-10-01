@@ -75,6 +75,7 @@ func TestAuditSummaryUpgradeAndPayloadIsolation(t *testing.T) {
 	s, _, _ := testStore(t)
 	o := operation("legacy-summary", "ready")
 	o.Connection, o.AmpUserID, o.ApprovalScope = "notes", "verified-user", "project"
+	o.ApprovalGrantSource = "original-approval"
 	if _, err := s.Submit(t.Context(), o); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +83,8 @@ func TestAuditSummaryUpgradeAndPayloadIsolation(t *testing.T) {
 	if err := s.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&original); err != nil {
 		t.Fatal(err)
 	}
-	// Recreate the pre-upgrade encrypted summary without audit metadata.
-	old := s.seal("operation-summary:"+o.ID, []byte(`{"tool":"notes.create","account":"legacy"}`))
+	// Recreate the first audit summary version, before grant-source metadata.
+	old := s.seal("operation-summary:"+o.ID, []byte(`{"summary_version":1,"tool":"notes.create","account":"legacy"}`))
 	if _, err := s.db.Exec("UPDATE operation_summaries SET payload=? WHERE id=?", old, o.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestAuditSummaryUpgradeAndPayloadIsolation(t *testing.T) {
 		t.Fatalf("audit read full payload: %v", err)
 	}
 	got := rows[0].Operation
-	if got.Connection != "notes" || got.Subject != "owner" || got.AmpUserID != "verified-user" || got.ApprovalScope != "project" || got.Created != o.Created || got.Version != 1 {
+	if got.Connection != "notes" || got.Subject != "owner" || got.AmpUserID != "verified-user" || got.ApprovalScope != "project" || got.ApprovalGrantSource != "original-approval" || got.Created != o.Created || got.Version != 2 {
 		t.Fatalf("upgrade lost audit metadata: %+v", got)
 	}
 	if _, err := s.db.Exec("DELETE FROM operation_summaries WHERE id=?", o.ID); err != nil {

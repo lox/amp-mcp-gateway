@@ -156,6 +156,55 @@ func TestRawAuditRetainsConfigurationEvents(t *testing.T) {
 	}
 }
 
+func TestAuditStandingApprovalAttribution(t *testing.T) {
+	for _, scope := range []string{"thread", "project"} {
+		t.Run(scope, func(t *testing.T) {
+			g, s, _ := fixture(t)
+			o := store.Operation{ID: "source", Tool: "notes.create", Connection: "notes", Subject: "owner", AmpUserID: "requester", AmpThreadID: "thread", AmpProjectID: "project", Binding: "binding", Status: "pending", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()}
+			if _, err := s.Submit(t.Context(), o); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Approve(t.Context(), o.ID, "original<approver>", scope); err != nil {
+				t.Fatal(err)
+			}
+			o.ID = "consumer"
+			consumer, err := s.Submit(t.Context(), o)
+			if err != nil || consumer.Status != "ready" {
+				t.Fatalf("grant not applied: %+v %v", consumer, err)
+			}
+			if err := s.RevokeApprovalGrant(t.Context(), consumer.ApprovalGrant, "revoker"); err != nil {
+				t.Fatal(err)
+			}
+			// Replacing the active grant must not change the historical approver.
+			o.ID = "replacement"
+			if _, err := s.Submit(t.Context(), o); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Approve(t.Context(), o.ID, "replacement-approver", scope); err != nil {
+				t.Fatal(err)
+			}
+			rows, _, err := s.Audit(t.Context(), store.AuditFilter{Query: "consumer"})
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("audit: %v", err)
+			}
+			approval := rows[0].StandingApproval
+			if approval == nil || approval.Actor != "original<approver>" || approval.Operation != "source" || approval.Kind != "approval-"+scope || rows[0].Events[0].Actor != "amp:requester" {
+				t.Fatalf("lost original authority or changed recorded requester: %+v", rows[0])
+			}
+			w := httptest.NewRecorder()
+			g.audit(w, httptest.NewRequest("GET", "/audit?q=consumer", nil))
+			for _, want := range []string{"Requested by Amp caller", "Originally approved by", "original&lt;approver&gt;", `href="/operations/source"`} {
+				if !strings.Contains(w.Body.String(), want) {
+					t.Fatalf("missing %q", want)
+				}
+			}
+			if strings.Contains(w.Body.String(), "replacement-approver") || strings.Contains(w.Body.String(), "original<approver>") {
+				t.Fatal("wrong or unescaped approver")
+			}
+		})
+	}
+}
+
 func TestAuditRouteRequiresBrowserAuthentication(t *testing.T) {
 	g, s, _ := fixture(t)
 	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Demo: true, DemoPassword: "demo-only", OwnerSubject: "owner"})

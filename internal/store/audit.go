@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -17,8 +19,9 @@ type AuditFilter struct {
 
 // AuditRequest pairs a request's current outcome with its chronological events.
 type AuditRequest struct {
-	Operation OperationSummary
-	Events    []Event
+	Operation        OperationSummary
+	Events           []Event
+	StandingApproval *Event
 }
 
 // Audit returns at most 25 matching requests and whether another page exists.
@@ -108,6 +111,15 @@ LEFT JOIN operation_summaries s ON s.id=o.id WHERE o.created>=?`
 		}
 		if closeErr != nil {
 			return nil, false, closeErr
+		}
+		if op := out[i].Operation; op.ApprovalGrantSource != "" {
+			var e Event
+			err := tx.QueryRowContext(ctx, "SELECT sequence,operation,kind,actor,time FROM events WHERE operation=? AND kind=? ORDER BY sequence LIMIT 1", op.ApprovalGrantSource, "approval-"+op.ApprovalScope).Scan(&e.Sequence, &e.Operation, &e.Kind, &e.Actor, &e.Time)
+			if err == nil {
+				out[i].StandingApproval = &e
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return nil, false, err
+			}
 		}
 	}
 	return out, more, tx.Commit()
