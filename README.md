@@ -118,19 +118,21 @@ No page content is stored in htmx's browser history cache.
 ## Review a call inside Amp
 
 The project plugin in [`.amp/plugins/gateway-review.ts`](.amp/plugins/gateway-review.ts)
-adds `gateway_review_operation`: a read-only preview with an **Open approval page ↗**
-link. Follow it to approve or deny in the gateway, then return to Amp and click
-**I’ve reviewed it** to check the operation's status. The button neither opens a
-browser nor grants approval. Reload plugins in Amp after updating. For personal use
+adds `gateway_review_operation`: a minimal **Approval required: tool name** card
+with a native **Open approval page** link button, **Cancel**, and **Approved**.
+The link opens the gateway in your browser and leaves the card open. Review the
+arguments there, then return and click **Approved** to check the result—not to
+grant approval. Reload plugins in Amp after updating. For personal use
 outside this project, publish the same file as `gateway-review.ts` in your personal
 plugins repository. A project copy takes precedence over a personal copy with the
 same name; keep them in sync when publishing updates.
 
-After `call_tools` returns a pending operation, Amp supplies its `operation_id`,
-`approval_url`, tool, connection, account label and submitted arguments to the
-widget. Use `Not available` for an absent account label. The preview is supplied
-by Amp, **not fetched from the gateway**: verify the stored request on the approval
-page. This first version pins links to `https://lox-mcp-gateway.fly.dev`; change
+Amp supplies `operation_id` and the exact `status` from the latest `call_tools` or
+`get_operation` response. Only `pending` shows the card and requires `tool` and
+`approval_url`; all other statuses skip it, including calls already authorized by
+a project grant. The plugin does not fetch or independently verify this supplied
+status. There is no local approval cache. No arguments or account fields are shown.
+This version pins links to `https://lox-mcp-gateway.fly.dev`; change
 `gatewayOrigin` and the test URLs together for another deployment. It does not
 support local demo or portal URLs unchanged.
 
@@ -140,9 +142,12 @@ Amp uses the existing MCP `get_operation` tool with the same ID, up to 60 times 
 five-second intervals. A timeout is not success; an unknown outcome must not be
 automatically retried.
 
-The plugin uses a normal Markdown link rather than `system.open()`, which failed
-to launch the user's browser from an orb. Continuing is not proof of approval:
-Amp must read the gateway's status. End-to-end browser approval remains unverified.
+The native button requires Amp's `PluginConfirmField` support for `type: 'link'`
+([plugin guide](https://ampcode.com/docs/customize/plugins?ui=web)). It does not use
+`system.open()`, which targets the machine running the plugin. Older Amp versions
+that support only text and image fields need updating. Continuing is not proof of
+approval: Amp must read the gateway's status. End-to-end browser approval remains
+unverified.
 
 Run `mise run check-plugin` for the plugin tests (also run in Buildkite).
 
