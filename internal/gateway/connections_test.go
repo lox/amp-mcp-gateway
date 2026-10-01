@@ -203,8 +203,8 @@ func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	if _, err := g.submit(t.Context(), input("not-yet-enabled", "test")); err == nil {
 		t.Fatal("discovery enabled tool without save")
 	}
-	if g.drafts[ticket].Tools[0].Policy != "" || g.drafts[ticket].Default != "require_approval" {
-		t.Fatal("new tool did not inherit approval default")
+	if g.drafts[ticket].Tools[0].Policy != "require_approval" || g.drafts[ticket].Default != "require_approval" {
+		t.Fatal("new tool did not require approval")
 	}
 	save := func(ticket, policy string) *httptest.ResponseRecorder {
 		return formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {ticket}, "default_policy": {"require_approval"}, "policy_0": {policy}})
@@ -318,7 +318,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 		t.Fatal("wrong change summary", draft.Changes, draft.Removed)
 	}
 	for _, tool := range draft.Tools {
-		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "", "private": "require_approval", "unchanged": "allow"}[tool.Name]
+		want := map[string]string{"blocked": "deny", "changed": "require_approval", "new": "require_approval", "private": "require_approval", "unchanged": "allow"}[tool.Name]
 		if tool.Policy != want {
 			t.Fatalf("%s: %q, want %q", tool.Name, tool.Policy, want)
 		}
@@ -340,7 +340,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	if _, ok := g.tools["notes.gone"]; ok {
 		t.Fatal("removed tool stayed available")
 	}
-	if g.tools["notes.new"].Policy != "allow" || g.tools["notes.changed"].Policy != "require_approval" || g.tools["notes.private"].Policy != "require_approval" {
+	if g.tools["notes.new"].Policy != "require_approval" || g.tools["notes.changed"].Policy != "require_approval" || g.tools["notes.private"].Policy != "require_approval" {
 		t.Fatal("incorrect effective refresh policies")
 	}
 	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
@@ -361,7 +361,7 @@ func TestRefreshDefaultsExceptionsAndOfflineEditing(t *testing.T) {
 	if w := save(ticket, "deny"); w.Code != 303 {
 		t.Fatal(w.Body.String())
 	}
-	if g.tools["notes.new"].Policy != "deny" || g.tools["notes.unchanged"].Policy != "allow" || g.tools["notes.blocked"].Policy != "deny" {
+	if g.tools["notes.new"].Policy != "require_approval" || g.tools["notes.unchanged"].Policy != "allow" || g.tools["notes.blocked"].Policy != "deny" {
 		t.Fatal("default edit lost exceptions")
 	}
 }
@@ -413,7 +413,7 @@ func TestRefreshPreservesUnsavedPolicies(t *testing.T) {
 		t.Fatal("refresh lost edited default or published unsaved policies")
 	}
 	for _, tool := range draft.Tools {
-		want := map[string]string{"stable": "", "changed": "require_approval", "new": ""}[tool.Name]
+		want := map[string]string{"stable": "", "changed": "require_approval", "new": "require_approval"}[tool.Name]
 		if tool.Policy != want {
 			t.Fatalf("%s: got %q want %q", tool.Name, tool.Policy, want)
 		}

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
@@ -209,14 +210,15 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 }
 
 type toolDraft struct {
-	Connection string
-	Revision   string
-	Tools      []Tool
-	Expires    time.Time
-	Default    string
-	Private    bool
-	Changes    map[string]string // Non-nil for discovery reviews, even without changes.
-	Removed    []string
+	Connection  string
+	Revision    string
+	Tools       []Tool
+	Expires     time.Time
+	Default     string
+	Private     bool
+	Changes     map[string]string // Non-nil for discovery reviews, even without changes.
+	Removed     []string
+	Suggestions map[string]policy.Suggestion
 }
 
 func (draft toolDraft) edit(values url.Values, workloadIdentity bool) (toolDraft, error) {
@@ -447,9 +449,9 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 			changed++
 		}
 		schema, _ := json.Marshal(tool.InputSchema)
-		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID]})
+		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID], "Suggestion": draft.Suggestions[tool.ID]})
 	}
-	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
+	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -569,6 +571,34 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				}
 			}
 		}
+	}
+	if draft.Default == "" {
+		draft.Default = g.cfg.defaultPolicy(id)
+	}
+	g.mu.Unlock()
+	// Classification is advisory and may be slow. Never hold the catalogue lock
+	// over a provider request, or publish its result without rechecking the snapshot.
+	draft.suggestPolicies(r.Context(), !r.PostForm.Has("skip_jev"), g.policyClient, previous.Tools)
+	// Keep explanations alongside preserved choices when refreshing an unsaved review.
+	for _, tool := range draft.Tools {
+		for _, old := range previous.Tools {
+			if tool.Name == old.Name && tool.Description == old.Description && digest(tool.InputSchema) == digest(old.InputSchema) {
+				if suggestion, ok := previous.Suggestions[old.ID]; ok {
+					draft.Suggestions[tool.ID] = suggestion
+				}
+			}
+		}
+	}
+	g.mu.Lock()
+	if r.Context().Err() != nil {
+		g.mu.Unlock()
+		return // Keep the existing review; a disconnected owner cannot receive a new ticket.
+	}
+	current, exists := g.drafts[previousTicket]
+	if revision != digest(g.catalogue()) || (previousTicket != "" && (!exists || time.Now().After(current.Expires) || digest(current) != digest(previous))) {
+		g.mu.Unlock()
+		http.Error(w, "Configuration or review changed while fetching. Reopen saved permissions.", 409)
+		return
 	}
 	delete(g.drafts, previousTicket)
 	ticket, err := g.newDraft(draft)

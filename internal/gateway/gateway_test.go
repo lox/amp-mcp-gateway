@@ -70,6 +70,7 @@ func (b *sequencedBindingBackend) Call(ctx context.Context, connection, tool, ex
 
 func fixture(t *testing.T) (*Gateway, *store.Store, *fixtureBackend) {
 	t.Helper()
+	t.Setenv("TYPESAFE_API_KEY", "") // Discovery tests must never use a developer's real provider.
 	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
 		t.Fatal(err)

@@ -23,6 +23,7 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
+	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -54,15 +55,16 @@ type Backend interface {
 
 // Gateway owns validated tools and execution policy.
 type Gateway struct {
-	mu        sync.RWMutex // catalogue publication, submission and discovery snapshots
-	cfg       Config
-	store     *store.Store
-	backend   Backend
-	tools     map[string]Tool
-	schemas   map[string]*jsonschema.Schema
-	bindings  map[string]string
-	drafts    map[string]toolDraft
-	proposals map[string]policyProposal
+	mu           sync.RWMutex // catalogue publication, submission and discovery snapshots
+	cfg          Config
+	store        *store.Store
+	backend      Backend
+	tools        map[string]Tool
+	schemas      map[string]*jsonschema.Schema
+	bindings     map[string]string
+	drafts       map[string]toolDraft
+	proposals    map[string]policyProposal
+	policyClient policy.Client
 }
 
 // New validates and compiles the pinned tool catalogue.
@@ -127,6 +129,7 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		cfg.Tools = append(cfg.Tools, flyTool(""))
 	}
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
+	g.policyClient = policy.Client{Key: os.Getenv("TYPESAFE_API_KEY")}
 	for _, policy := range cfg.ToolDefaults {
 		if !validPolicy(policy) {
 			return nil, errors.New("invalid connection default")

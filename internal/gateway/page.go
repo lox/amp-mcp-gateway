@@ -2,7 +2,10 @@ package gateway
 
 import "html/template"
 
-var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
+var page = template.Must(template.New("page").Parse(`{{define "suggestion"}}{{if .Suggestion.Policy}}
+<details class="policy-suggestion" name="policy-explanation"><summary aria-label="Why {{if .Suggestion.Model}}Jev suggested{{else}}we require{{end}} {{if eq .Suggestion.Policy "allow"}}Allow{{else}}approval{{end}} for {{.Tool.Name}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></svg></summary><div class="suggestion-popover"><strong>{{if .Suggestion.Model}}Jev suggested {{if eq .Suggestion.Policy "allow"}}Allow{{else}}Require approval{{end}}{{else}}Approval fallback{{end}}</strong><p>{{.Suggestion.Reason}}</p>{{if .Suggestion.Model}}<p class="help">Based on tool metadata, not a safety guarantee.<br>Model: {{.Suggestion.Model}}</p>{{end}}</div></details>
+{{end}}{{end}}
+{{define "health"}}{{if .}}
 <details class="health-details"><summary><span class="badge {{if eq .Status "Healthy"}}succeeded{{else}}pending{{end}}">{{.Status}}</span><span class="visually-hidden"> · Connection diagnostics</span></summary>
 {{if or (eq .Status "Healthy") (eq .Status "Not tested")}}<p class="help">{{.Detail}}</p>{{end}}{{if .Refresh}}<p class="help">{{.Refresh}}</p>{{end}}
 <div class="health-times">{{if not .CheckedAt.IsZero}}<p>Last tested: {{.CheckedAt.Format "02 Jan 2006 15:04:05 UTC"}}</p>{{end}}
@@ -78,16 +81,17 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
 {{if .Ticket}}
 <form id="policies" method="post" action="/connections/{{.Connection.ID}}/tools"><input type="hidden" name="ticket" value="{{.Ticket}}">
 {{if .WorkloadIdentity}}<fieldset class="connection-access"><legend>Thread access</legend><label><input type="checkbox" name="private_connection" value="true" {{if .Draft.Private}}checked{{end}}><span><strong>Private connection</strong><small>Only expose this connection in your private, non-multiplayer threads where no non-owner can influence the call.</small></span></label></fieldset>{{end}}
-<fieldset class="permission-default"><legend>Default permission for tools</legend><p class="help">Applies to tools without an exception, including new tools when you save a refresh.</p>
+<fieldset class="permission-default"><legend>Default permission for tools</legend><p class="help">Applies to tools without an exception.</p>
 <div class="default-options"><label><input type="radio" name="default_policy" value="deny" {{if eq .Draft.Default "deny"}}checked{{end}}><span>Block</span></label><label><input type="radio" name="default_policy" value="require_approval" {{if eq .Draft.Default "require_approval"}}checked{{end}}><span>Require approval</span></label><label><input type="radio" name="default_policy" value="allow" {{if eq .Draft.Default "allow"}}checked{{end}}><span>Allow</span></label></div>
-<p id="default-warning" class="default-warning" {{if ne .Draft.Default "allow"}}hidden{{end}}>Allow permits calls without approval, including newly discovered tools after saving. Tool names and read-only hints are not a safety guarantee.</p></fieldset>
+<p id="default-warning" class="default-warning" {{if ne .Draft.Default "allow"}}hidden{{end}}>Allow permits calls without approval for tools using the connection default. New tools get explicit reviewable policies. Tool names and read-only hints are not a safety guarantee.</p></fieldset>
 <p class="note">Changed blocked tools stay blocked. Other changed tools require approval again.</p>
 {{if .Draft.Removed}}<details><summary>Removed tools</summary><ul>{{range .Draft.Removed}}<li><code>{{.}}</code></li>{{end}}</ul></details>{{end}}
-<div id="exceptions-card" class="card exceptions-card"><div class="exceptions-heading"><h2 id="tools-heading">Tools</h2><div class="refresh-tools"><button type="submit" formaction="/connections/{{.Connection.ID}}/discover">Refresh tools</button>{{if or .Draft.Changes .Draft.Removed}}<p class="help">{{.Added}} new · {{.Changed}} changed · {{len .Draft.Removed}} removed<br>Preview only · save to apply</p>{{end}}</div></div>
+<div id="exceptions-card" class="card exceptions-card"><div class="exceptions-heading"><h2 id="tools-heading">Tools</h2><div class="refresh-tools"><button type="submit" formaction="/connections/{{.Connection.ID}}/discover">Refresh tools</button>{{if .JevAvailable}}<details class="refresh-options" name="policy-explanation"><summary aria-label="Refresh options">⋯</summary><div class="suggestion-popover"><button type="submit" name="skip_jev" value="true" formaction="/connections/{{.Connection.ID}}/discover">Refresh without Jev</button><p class="help">Keep tool metadata here. New tools require approval.</p></div></details>{{end}}{{if or .Draft.Changes .Draft.Removed}}<p class="help">{{.Added}} new · {{.Changed}} changed · {{len .Draft.Removed}} removed<br>Preview only · save to apply</p>{{end}}</div></div>
+<p class="help suggestion-disclosure">{{if .JevAvailable}}Jev classifies new tools via TypeSafe using their names, descriptions and schemas.{{else}}Automatic suggestions unavailable: TYPESAFE_API_KEY is not set. New tools require approval unless blocked.{{end}}</p>
 <div class="exception-search" id="exception-search" hidden><label class="visually-hidden" for="tool-search">Search tools</label><input type="search" id="tool-search" placeholder="Search tools…"><button type="button" id="add-exception">Add exception</button></div>
 <div id="bulk-actions" class="bulk-actions" hidden><span id="selection-count">0 selected</span><button type="button" data-policy="allow">Allow</button><button type="button" data-policy="require_approval">Require approval</button><button type="button" data-policy="deny" class="danger">Block</button><button type="button" data-policy="inherit">Use default</button><button type="button" class="text-button" id="clear-selection">Clear</button></div>
 <div class="policy-columns"><input id="select-visible" class="tool-select" type="checkbox" aria-label="Select visible tools"><span>Tool</span><span class="permission-column">Permission</span><span></span></div>
-{{range $i,$row := .Rows}}<div class="policy-row" data-change="{{$row.Change}}"><input type="checkbox" class="tool-select" aria-label="Select {{$row.Tool.ID}}"><details><summary>{{$row.Tool.Name}} {{if $row.Change}}<span class="badge">{{$row.Change}}</span>{{end}}</summary><p><code>{{$row.Tool.ID}}</code></p><p>{{$row.Tool.Description}}</p><p class="help">Provider description · not a safety guarantee</p><pre>{{$row.Schema}}</pre></details><div class="policy-choice"><label class="visually-hidden" for="policy-{{$i}}">Permission for {{$row.Tool.Name}}</label><select class="tool-policy" id="policy-{{$i}}" name="policy_{{$i}}"><option value="inherit" {{if eq $row.Tool.Policy ""}}selected{{end}}>Use connection default</option><option value="deny" {{if eq $row.Tool.Policy "deny"}}selected{{end}}>Block</option><option value="require_approval" {{if eq $row.Tool.Policy "require_approval"}}selected{{end}}>Require approval</option><option value="allow" {{if eq $row.Tool.Policy "allow"}}selected{{end}}>Allow</option></select></div><button type="button" class="remove-exception" aria-label="Remove exception for {{$row.Tool.Name}}" title="Use connection default" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7"/></svg></button></div>{{end}}
+{{range $i,$row := .Rows}}<div class="policy-row" data-change="{{$row.Change}}"><input type="checkbox" class="tool-select" aria-label="Select {{$row.Tool.ID}}"><details><summary>{{$row.Tool.Name}} {{if $row.Change}}<span class="badge">{{$row.Change}}</span>{{end}}</summary><p><code>{{$row.Tool.ID}}</code></p><p>{{$row.Tool.Description}}</p><p class="help">Provider description · not a safety guarantee</p><pre>{{$row.Schema}}</pre></details><div class="policy-choice"><label class="visually-hidden" for="policy-{{$i}}">Permission for {{$row.Tool.Name}}</label><select class="tool-policy" id="policy-{{$i}}" name="policy_{{$i}}"><option value="inherit" {{if eq $row.Tool.Policy ""}}selected{{end}}>Use connection default</option><option value="deny" {{if eq $row.Tool.Policy "deny"}}selected{{end}}>Block</option><option value="require_approval" {{if eq $row.Tool.Policy "require_approval"}}selected{{end}}>Require approval</option><option value="allow" {{if eq $row.Tool.Policy "allow"}}selected{{end}}>Allow</option></select>{{template "suggestion" $row}}</div><button type="button" class="remove-exception" aria-label="Remove exception for {{$row.Tool.Name}}" title="Use connection default" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7"/></svg></button></div>{{end}}
 <p id="no-matches" class="help" hidden></p>
 <div id="tool-navigation" class="tool-navigation" hidden><p id="tool-count" class="help"></p><button type="button" class="text-button" data-view="exceptions">Exceptions</button><button type="button" class="text-button" data-view="all">All tools</button><button type="button" class="text-button" data-view="changes">New or changed</button></div>
 </div><div class="policy-footer"><div class="actions"><button class="primary">Save changes</button><a class="button" href="/connections/{{.Connection.ID}}/tools">Discard</a></div><p id="edit-status" role="status" class="help"></p><p class="help">Nothing changes until you save. Saving cancels queued requests; running calls must finish first. Edits expire in ten minutes.</p></div></form>
@@ -102,6 +106,24 @@ var page = template.Must(template.New("page").Parse(`{{define "health"}}{{if .}}
  const defaults = form.querySelectorAll('input[name="default_policy"]');
  let view = 'exceptions';
  let dirty = false;
+ form.querySelectorAll('.policy-suggestion, .refresh-options').forEach(explanation => explanation.addEventListener('toggle', () => {
+  if (!explanation.open) return;
+  explanation.classList.remove('above');
+  const panel = explanation.querySelector('.suggestion-popover');
+  const bounds = panel.getBoundingClientRect();
+  if (bounds.bottom > innerHeight && explanation.getBoundingClientRect().top > bounds.height + 6) explanation.classList.add('above');
+  panel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+ }));
+ form.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const explanation = form.querySelector('.policy-suggestion[open], .refresh-options[open]');
+  if (explanation) { explanation.open = false; explanation.querySelector('summary').focus(); }
+ });
+ document.addEventListener('click', event => {
+  form.querySelectorAll('.policy-suggestion[open], .refresh-options[open]').forEach(explanation => {
+   if (!explanation.contains(event.target)) explanation.open = false;
+  });
+ });
  function filter() {
   const query = search.value.toLowerCase().trim();
   const activeView = query ? 'all' : view;

@@ -395,6 +395,62 @@
   :where(html.dashboard) .policy-row pre {
     @apply p-3;
   }
+  :where(html.dashboard) .policy-choice {
+    @apply relative flex items-center gap-[6px];
+  }
+  :where(html.dashboard) .policy-choice select {
+    @apply min-w-0 flex-1;
+  }
+  :where(html.dashboard) .policy-suggestion {
+    @apply flex-none;
+  }
+  :where(html.dashboard) .policy-suggestion > summary {
+    @apply flex items-center justify-center w-7 h-8 rounded list-none;
+    color: #526486;
+  }
+  :where(html.dashboard) .policy-suggestion > summary::-webkit-details-marker,
+  :where(html.dashboard) .refresh-options > summary::-webkit-details-marker {
+    display: none;
+  }
+  :where(html.dashboard) .policy-suggestion > summary:hover,
+  :where(html.dashboard) .policy-suggestion[open] > summary {
+    background: #edf2fa;
+  }
+  :where(html.dashboard) .policy-suggestion > summary:focus-visible {
+    outline: 2px solid #216442;
+    outline-offset: 2px;
+  }
+  :where(html.dashboard) .policy-suggestion svg {
+    @apply w-[18px] h-[18px];
+  }
+  :where(html.dashboard) .suggestion-popover {
+    @apply absolute right-0 z-2 overflow-auto p-4 bg-white rounded-[6px] text-[13px] leading-[1.5];
+    top: calc(100% + 6px);
+    width: min(320px, calc(100vw - 100px));
+    max-height: 300px;
+    border: 1px solid #bccdc0;
+    box-shadow: 0 5px 18px #15244026;
+  }
+  :where(html.dashboard) .suggestion-popover p {
+    @apply m-[8px_0_0];
+  }
+  :where(html.dashboard) .suggestion-popover .help {
+    @apply text-[12px];
+  }
+  :where(html.dashboard) .policy-suggestion.above .suggestion-popover,
+  :where(html.dashboard) .refresh-options.above .suggestion-popover {
+    top: auto;
+    bottom: calc(100% + 6px);
+  }
+  :where(html.dashboard) .suggestion-disclosure {
+    @apply text-[12px] m-[8px_0_16px];
+  }
+  :where(html.dashboard) .refresh-options {
+    @apply relative inline-block align-top ml-1 text-left;
+  }
+  :where(html.dashboard) .refresh-options > summary {
+    @apply flex items-center justify-center w-8 h-10 list-none rounded-[3px] border border-control cursor-pointer;
+  }
   :where(html.dashboard) .remove-exception {
     @apply p-[6px];
     border: 0;
