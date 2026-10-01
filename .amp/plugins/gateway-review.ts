@@ -1,74 +1,51 @@
 import type { PluginAPI } from '@ampcode/plugin'
 
-export const description = 'Shows a read-only MCP Gateway preview with a browser approval link. Never approves or denies a call.'
+export const description = 'Links pending MCP Gateway calls to browser approval. Already-authorized calls skip the dialog.'
 
 const gatewayOrigin = 'https://lox-mcp-gateway.fly.dev'
-
-export function reviewMessage(input: Record<string, unknown>) {
-  if (typeof input.operation_id !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(input.operation_id)) {
-    throw new Error('Expected a gateway operation ID.')
-  }
-  const url = `${gatewayOrigin}/operations/${input.operation_id}`
-  if (input.approval_url !== url) throw new Error('Approval URL must match this operation on the configured gateway.')
-  if (typeof input.tool !== 'string' || typeof input.connection !== 'string' || typeof input.account !== 'string'
-    || !input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments)) {
-    throw new Error('Expected tool, connection, account and an arguments object.')
-  }
-  // JSON quoting keeps line breaks in metadata visible; a longer fence prevents
-  // tool arguments from escaping into active Markdown links or images.
-  const metadata = JSON.stringify({ Tool: input.tool, Connection: input.connection, Account: input.account }, null, 2)
-  const args = JSON.stringify(input.arguments, null, 2)
-  const longest = Math.max(2, ...((metadata + args).match(/`+/g) ?? []).map(run => run.length))
-  const fence = '`'.repeat(longest + 1)
-  return {
-    url,
-    message: [
-      '**Preview supplied by Amp. Verify the stored request on the gateway before approving.**',
-      `${fence}json\n${metadata}\n${fence}`,
-      '**Arguments**',
-      `${fence}json\n${args}\n${fence}`,
-      `Operation: ${input.operation_id}`,
-      `**[Open approval page ↗](${url})**`,
-      'Follow the link to approve or deny in the gateway, then return here and click “I’ve reviewed it” to check the result.',
-      'The continuation button does not open a page or approve anything.',
-      'Cancel only dismisses this preview; it does not deny the operation.',
-    ].join('\n\n'),
-  }
-}
+const statuses = ['pending', 'ready', 'running', 'succeeded', 'failed', 'denied', 'expired', 'unknown']
 
 export default function (amp: PluginAPI) {
   amp.registerTool({
     name: 'gateway_review_operation',
     title: 'Review gateway call',
-    description: 'Show a read-only preview and clickable approval link for a pending MCP Gateway operation. This tool does NOT approve, deny, submit, open a browser, or poll. Supply the returned operation ID and approval_url plus a preview of the submitted call; do not invent account labels (use "Not available" when absent). After the user continues, poll the existing MCP get_operation with the SAME ID until terminal status or a bounded timeout. Continuing is not proof of approval. Never resubmit. If dismissed, stop unless the user asks otherwise.',
+    description: 'Show a browser approval link only when the latest call_tools or get_operation response is pending. Copy its operation ID, status and approval_url; supply the tool name, not its arguments. Other statuses skip the dialog. This tool never submits, approves, denies or polls. Follow the returned next instruction; Approved is only a request to check gateway status, not proof of approval.',
     inputSchema: {
       type: 'object',
       properties: {
         operation_id: { type: 'string' },
-        approval_url: { type: 'string' },
-        tool: { type: 'string' },
-        connection: { type: 'string' },
-        account: { type: 'string' },
-        arguments: { type: 'object', additionalProperties: true },
+        status: { type: 'string', enum: statuses, description: 'Exact status from the latest gateway response; do not infer from the presence of an approval URL.' },
+        approval_url: { type: 'string', description: 'Required only for pending operations.' },
+        tool: { type: 'string', description: 'Tool name to display for pending operations.' },
       },
-      required: ['operation_id', 'approval_url', 'tool', 'connection', 'account', 'arguments'],
+      required: ['operation_id', 'status'],
       additionalProperties: false,
     },
     async execute(input, ctx) {
-      const { url, message } = reviewMessage(input)
-      const reviewed = await ctx.ui.confirm({
-        title: 'Review MCP tool call',
-        message,
-        confirmButtonText: 'I’ve reviewed it',
-        requireHuman: true,
-      })
-      if (!reviewed) return JSON.stringify({ status: 'dismissed', operation_id: input.operation_id, decisionSubmitted: false })
+      const id = input.operation_id
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw new Error('Expected a gateway operation ID.')
+      if (typeof input.status !== 'string' || !statuses.includes(input.status)) throw new Error('Supply the exact gateway status.')
+
+      if (input.status === 'pending') {
+        const url = `${gatewayOrigin}/operations/${id}`
+        if (input.approval_url !== url) throw new Error('Approval URL must match this operation on the configured gateway.')
+        if (typeof input.tool !== 'string' || !input.tool.trim()) throw new Error('Supply the tool name.')
+        const continued = await ctx.ui.confirm({
+          title: `Approval required: ${input.tool}`,
+          message: 'Open the approval page to review this tool call. After approving in the gateway, return here and click **Approved** to check the result.\n\nCancel only closes this dialog.',
+          fields: [{ type: 'link', name: 'approval', label: 'Open approval page', value: url }],
+          confirmButtonText: 'Approved',
+          requireHuman: true,
+        })
+        if (!continued) return JSON.stringify({
+          status: 'dismissed', operation_id: id, decisionSubmitted: false,
+          next: 'Stop. Dismissing this card does not deny the gateway operation. Do not resubmit.',
+        })
+      }
+
       return JSON.stringify({
-        status: 'check_operation',
-        operation_id: input.operation_id,
-        approval_url: url,
-        decisionSubmitted: false,
-        next: 'The user continued; this is not proof of approval. Poll get_operation with this same ID, at most 60 times at 5-second intervals. Stop on succeeded, failed, denied, expired, or unknown. On unknown do not retry. On timeout report the last observed status and the approval link; never claim success or resubmit.',
+        status: 'check_operation', operation_id: id, decisionSubmitted: false,
+        next: 'Read get_operation with this same ID. If pending, ready or running, poll at 5-second intervals for at most 5 minutes. Report terminal results from the gateway. Approved is not proof of approval. On unknown, do not retry. On timeout report the last observed status. Never resubmit the call.',
       })
     },
   })

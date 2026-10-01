@@ -1,50 +1,55 @@
-import { describe, expect, test } from 'bun:test'
-import register, { reviewMessage } from '../../.amp/plugins/gateway-review'
+import { expect, test } from 'bun:test'
+import register from '../../.amp/plugins/gateway-review'
 
-const input = {
-  operation_id: 'preview-fixture-001',
+const pending = {
+  operation_id: 'preview-fixture-001', status: 'pending', tool: 'notes.create',
   approval_url: 'https://lox-mcp-gateway.fly.dev/operations/preview-fixture-001',
-  tool: 'notes.create', connection: 'notes', account: 'Demo notes',
-  arguments: { text: 'Release checklist reviewed' },
 }
 
-describe('gateway review', () => {
-  test('renders exact preview with its provenance and contains hostile Markdown', () => {
-    const { message } = reviewMessage({ ...input, arguments: { text: '```\n![track](https://evil.example)\n```' } })
-    expect(message).toContain('Preview supplied by Amp')
-    expect(message).toContain('````json')
-    expect(message).toContain('\\n![track]')
-    expect(message).toContain(input.approval_url)
-  })
-  test('rejects substituted origins, IDs and malformed arguments', () => {
-    for (const patch of [
-      { approval_url: 'https://evil.example/operations/preview-fixture-001' },
-      { operation_id: 'different-request' },
-      { operation_id: '../login' },
-      { arguments: [] },
-    ]) expect(() => reviewMessage({ ...input, ...patch })).toThrow()
-  })
-  test.each([false, true])('human continuation %s never launches a browser or approves', async decision => {
-    let tool: any
-    let opened = ''
-    register({ registerTool: (definition: any) => { tool = definition }, system: { open: async (url: string) => { opened = url } } } as any)
-    const output = JSON.parse(await tool.execute(input, { ui: { confirm: async (options: any) => {
-      expect(options.requireHuman).toBe(true)
-      expect(options.confirmButtonText).toBe('I’ve reviewed it')
-      expect(options.message).toContain(`**[Open approval page ↗](${input.approval_url})**`)
-      return decision
-    } } }))
-    expect(output.decisionSubmitted).toBe(false)
-    expect(output.status).toBe(decision ? 'check_operation' : 'dismissed')
-    expect(opened).toBe('')
-  })
-  test('continuation needs no browser API and instructs polling rather than assuming approval', async () => {
-    let tool: any
-    register({ registerTool: (definition: any) => { tool = definition } } as any)
-    const output = JSON.parse(await tool.execute(input, { ui: { confirm: async () => true } }))
-    expect(output.next).toContain('not proof of approval')
-    expect(output.next).toContain('Poll get_operation with this same ID')
-    expect(output.approval_url).toBe(input.approval_url)
-    expect(output.decisionSubmitted).toBe(false)
-  })
+function tool() {
+  let definition: any
+  // No browser, network or credential API is supplied to the plugin.
+  register({ registerTool: (value: any) => { definition = value } } as any)
+  return definition
+}
+
+test.each([{}, undefined])('pending link-only dialog handles confirmation %j', async answer => {
+  let calls = 0
+  const output = JSON.parse(await tool().execute(pending, { ui: { confirm: async (options: any) => {
+    calls++
+    expect(options).toEqual({
+      title: 'Approval required: notes.create',
+      message: 'Open the approval page to review this tool call. After approving in the gateway, return here and click **Approved** to check the result.\n\nCancel only closes this dialog.',
+      fields: [{ type: 'link', name: 'approval', label: 'Open approval page', value: pending.approval_url }],
+      confirmButtonText: 'Approved', requireHuman: true,
+    })
+    return answer
+  } } }))
+  expect(calls).toBe(1)
+  expect(output.operation_id).toBe(pending.operation_id)
+  expect(output.decisionSubmitted).toBe(false)
+  expect(output.status).toBe(answer ? 'check_operation' : 'dismissed')
+  expect(output.next).toContain(answer ? 'Approved is not proof of approval' : 'Stop.')
+})
+
+test.each(['ready', 'running', 'succeeded', 'failed', 'denied', 'expired', 'unknown'])('%s skips approval even with an approval URL', async status => {
+  let calls = 0
+  const output = JSON.parse(await tool().execute({ ...pending, status }, { ui: { confirm: async () => { calls++; return {} } } }))
+  expect(calls).toBe(0)
+  expect(output.status).toBe('check_operation')
+  expect(output.next).toContain('Read get_operation with this same ID')
+  expect(output.decisionSubmitted).toBe(false)
+})
+
+test('ready needs neither tool name nor approval URL', async () => {
+  const output = JSON.parse(await tool().execute({ operation_id: pending.operation_id, status: 'ready' }, {}))
+  expect(output.status).toBe('check_operation')
+})
+
+test('missing status, unknown status and substituted links fail before any dialog', async () => {
+  for (const patch of [
+    { status: undefined }, { status: 'approved' }, { operation_id: '../login' },
+    { approval_url: 'https://evil.example/operations/preview-fixture-001' },
+    { operation_id: 'different-request' }, { tool: '' },
+  ]) await expect(tool().execute({ ...pending, ...patch }, {})).rejects.toThrow()
 })
