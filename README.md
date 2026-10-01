@@ -91,6 +91,8 @@ match exactly. Saved permissions remain bound to the verified owner and connecti
 configuration, and never override blocked tools. Catalogue or credential changes
 can require fresh approval. Existing one-hour approvals keep their original expiry.
 
+![Remembering an approval with exact-argument, thread and expiry controls](docs/images/remember-approval.png)
+
 Finished calls show the result first, with JSON formatted for reading. Expand
 **Raw MCP response** for the full response, or **Request details** and
 **Identity & audit** for the arguments and attribution.
