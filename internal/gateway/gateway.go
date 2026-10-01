@@ -559,6 +559,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /events", g.ledgerEvents)
+	mux.HandleFunc("GET /notifications", g.notifications)
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)

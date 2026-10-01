@@ -16,7 +16,7 @@ run = "npm ci --ignore-scripts --no-audit --no-fund && npm run build:css"
 [tasks.check]
 description = "Format, test and vet Go and browser JavaScript"
 depends = ["css"]
-run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./... && node --check internal/gateway/assets/live.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --test extension/background.test.js tests/live.test.js"
+run = "test -z \"$(gofmt -l cmd internal)\" && go test -race ./... && go vet ./... && node --check internal/gateway/assets/live.js && node --check internal/gateway/assets/notifications.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --test extension/background.test.js tests/live.test.js tests/gateway/*.test.js"
 
 [tasks.build]
 depends = ["css"]

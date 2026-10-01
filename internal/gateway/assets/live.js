@@ -2,6 +2,15 @@
 let ledgerSource = null;
 let livePending = false;
 
+function notificationTarget() {
+  return document.querySelector('#notification-feed[data-notifications-enabled]');
+}
+
+function refreshNotifications() {
+  const target = notificationTarget();
+  if (target) htmx.trigger(target, 'approval-update');
+}
+
 function deferLiveSwap(target) {
   const selection = window.getSelection();
   const selected = selection && !selection.isCollapsed && selection.rangeCount > 0 &&
@@ -23,7 +32,7 @@ function stopLive() {
 }
 
 function syncLive() {
-  if (document.hidden || !document.querySelector('[data-live]')) {
+  if (!notificationTarget() && (document.hidden || !document.querySelector('[data-live]'))) {
     stopLive();
     return;
   }
@@ -32,12 +41,13 @@ function syncLive() {
   ledgerSource = source;
   source.addEventListener('ledger', () => {
     if (source !== ledgerSource) return;
+    refreshNotifications();
     livePending = true;
     refreshLive();
   });
   source.onerror = () => {
     if (source !== ledgerSource) return;
-    const error = document.querySelector('.live-error');
+    const error = document.querySelector('.live-error') || document.querySelector('.notification-error');
     if (error) {
       error.hidden = false;
       error.textContent = 'Live updates disconnected. Reconnecting; you can also refresh the page.';
@@ -45,6 +55,7 @@ function syncLive() {
     if (source.readyState === EventSource.CLOSED) {
       // A rejected stream (e.g. expired login) cannot reconnect automatically.
       // A normal htmx GET will apply the existing full-page login redirect.
+      refreshNotifications();
       htmx.trigger(document.body, 'live-update');
       setTimeout(() => {
         if (source === ledgerSource) {
@@ -56,7 +67,16 @@ function syncLive() {
   };
 }
 
-document.addEventListener('visibilitychange', syncLive);
+document.addEventListener('visibilitychange', () => {
+  syncLive();
+  refreshLive();
+});
+document.addEventListener('gateway:notifications', () => {
+  syncLive();
+  refreshNotifications();
+  const error = document.querySelector('.notification-error');
+  if (error && !notificationTarget()) error.hidden = true;
+});
 window.addEventListener('pagehide', stopLive);
 window.addEventListener('pageshow', syncLive);
 for (const name of ['focusout', 'mouseout', 'selectionchange']) {
@@ -67,7 +87,9 @@ syncLive();
 // Preserve local UI state and report errors for all enhanced requests.
 document.addEventListener('htmx:beforeRequest', event => {
   const { elt } = event.detail;
-  if (elt.hasAttribute('hx-get') && document.hidden) {
+  const notification = elt.id === 'notification-feed';
+  if ((notification && !notificationTarget()) ||
+      (elt.hasAttribute('hx-get') && document.hidden && !notification)) {
     event.preventDefault();
     return;
   }
@@ -119,7 +141,8 @@ document.addEventListener('htmx:afterSwap', event => {
 
 document.addEventListener('htmx:afterRequest', event => {
   const { elt, successful } = event.detail;
-  if (!successful && elt.hasAttribute('data-live')) {
+  const notification = elt.id === 'notification-feed';
+  if (!successful && (elt.hasAttribute('data-live') || notification)) {
     // A failed GET consumed its invalidation. Reconnect for a fresh one instead
     // of waiting for another ledger change or the stream's minute-long lease.
     stopLive();
@@ -127,10 +150,13 @@ document.addEventListener('htmx:afterRequest', event => {
   }
   const health = elt.closest('.connection-status');
   if (health) elt.textContent = 'Test connection';
-  const error = health?.querySelector('.test-error') || document.querySelector('.live-error');
+  const error = notification ? document.querySelector('.notification-error')
+    : health?.querySelector('.test-error') || document.querySelector('.live-error');
   if (!error) return;
-  error.hidden = !!successful && (!document.querySelector('[data-live]') || ledgerSource?.readyState === EventSource.OPEN);
+  const live = notification ? notificationTarget() : document.querySelector('[data-live]');
+  error.hidden = !!successful && (!live || ledgerSource?.readyState === EventSource.OPEN);
   error.textContent = health
     ? 'Could not complete the test. Check your session and try again. Your tool permissions are unchanged.'
-    : 'Live updates are unavailable. Refresh the page to check the latest status.';
+    : notification ? 'Approval alerts are unavailable. Refresh the page to reconnect.'
+      : 'Live updates are unavailable. Refresh the page to check the latest status.';
 });
