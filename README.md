@@ -90,7 +90,11 @@ Finished calls show the result first, with JSON formatted for reading. Expand
 
 **Operations** opens to **Needs approval**. Switch to **All operations** to see
 recent outcomes. Each request includes its history and, after a decision, a link
-to the next pending request. **Audit** shows the latest 200 recorded events.
+to the next pending request. **Audit** groups events by request, with expandable
+timelines and filters for tool name or request ID, connection, outcome and time
+range. **Needs investigation** finds failed or unconfirmed outcomes. Browse older
+requests in pages of 25, or open **Raw events** for the latest 200 ledger events,
+including configuration changes. Arguments and results stay in request details.
 
 Operations and Audit update through an owner-authenticated SSE connection. The
 server checks the committed audit sequence every 250 ms and sends a payload-free

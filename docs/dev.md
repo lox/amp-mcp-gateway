@@ -13,7 +13,8 @@ its dependencies are locked in `package-lock.json`. Commit the generated
 `mise run dev`, `build`, `check`, the orb demo and the Docker build regenerate it.
 Plain `go build` uses the committed CSS and needs no Node installation.
 
-The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates.
+The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates
+and the Audit HTML template.
 Shared colour tokens and a four-pixel spacing scale live in `@theme` (for example,
 `p-6` is 24px on both the 14px dashboard and 16px sign-in page). Prefer these
 spacing utilities when adjusting layouts. Component rules use `@apply` and preserve
@@ -729,11 +730,23 @@ are durable local records, **not independently tamper-proof evidence**: an opera
 with database access can change them. Discovery, rejected malformed requests,
 browser logins and token refreshes do not yet have audit events. Tool results can
 contain sensitive data and are returned only to the authenticated owner/client.
-The dashboard reads separate encrypted operation summaries, so listing recent
-activity does not decrypt arguments or results. On the first startup after an
-upgrade, existing operations are backfilled one payload at a time, before restart
-recovery; their original ciphertext is preserved. Back up large ledgers before
-upgrading and allow time for this one-time migration.
+The dashboard and Audit read separate encrypted operation summaries, so listing
+activity does not decrypt arguments or results. Summaries include connection,
+requester, initial standing-approval scope and its source request. Audit resolves
+the original approver from that source's recorded approval event, not the current
+grant or the new requester; missing attribution is shown as unavailable.
+On the first startup after an upgrade, missing or older-version summaries are
+backfilled one payload at a time,
+before restart recovery; original operation ciphertext is preserved. Subsequent
+startups inspect only the small summaries. Back up large ledgers before upgrading
+and allow time for this one-time migration.
+
+Audit filters request creation time and current outcome, not event time. Each
+page reads summaries and timelines in one transaction. Pagination fixes the
+creation-time window and uses creation time plus request ID as a cursor; outcomes
+can still change between pages. Tool and connection matching scans encrypted
+summaries rather than indexing plaintext metadata. The raw-events view retains
+global events that do not belong to a request.
 
 ## Connect real services deliberately
 
