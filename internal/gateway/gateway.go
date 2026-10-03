@@ -572,9 +572,16 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/operations", http.StatusSeeOther) })
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/approvals", http.StatusSeeOther) })
 	mux.HandleFunc("GET /audit", g.audit)
-	for _, path := range []string{"/operations", "/connections", "/integrations", "/approval-grants"} {
+	mux.HandleFunc("GET /operations", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("view") == "all" {
+			http.Redirect(w, r, "/audit", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/approvals", http.StatusSeeOther)
+	})
+	for _, path := range []string{"/approvals", "/connections", "/integrations", "/approval-grants"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
 	}
 	mux.HandleFunc("GET /connections/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -629,11 +636,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	data := map[string]any{"Owner": g.cfg.OwnerSubject, "Section": strings.TrimPrefix(r.URL.Path, "/")}
 	var err error
 	switch r.URL.Path {
-	case "/operations":
-		if r.URL.Query().Get("view") == "all" {
-			http.Redirect(w, r, "/audit", http.StatusSeeOther)
-			return
-		}
+	case "/approvals":
 		data["Operations"], err = g.store.ListStatus(r.Context(), "pending")
 	case "/approval-grants":
 		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
@@ -661,7 +664,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if r.URL.Path == "/operations" {
+	if r.URL.Path == "/approvals" {
 		w.Header().Set("Vary", "HX-Request")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Header.Get("HX-Request") == "true" {

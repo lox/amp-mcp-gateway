@@ -59,7 +59,7 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "Disconnect Fly.io") {
 		t.Fatalf("configured state lost after invalid edit: %d %s", invalid.Code, invalid.Body.String())
 	}
-	for _, path := range []string{"/integrations", "/integrations/fly", "/operations", "/audit"} {
+	for _, path := range []string{"/integrations", "/integrations/fly", "/approvals", "/audit"} {
 		page := formRequest(h, cookie, "GET", path, nil)
 		if page.Code != http.StatusOK || strings.Contains(page.Body.String(), parent) {
 			t.Fatalf("integration credential exposed on %s", path)
