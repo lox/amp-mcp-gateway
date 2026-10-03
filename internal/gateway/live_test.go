@@ -74,7 +74,7 @@ func TestLiveOperationsList(t *testing.T) {
 	if err := s.Decide(t.Context(), "rejected-request", "owner", false); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("GET", "/operations", nil)
+	r := httptest.NewRequest("GET", "/approvals", nil)
 	r.Header.Set("HX-Request", "true")
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()
