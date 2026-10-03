@@ -110,16 +110,32 @@ including configuration changes. Arguments and results stay in request details.
 Operations and Audit update through an owner-authenticated SSE connection. The
 server checks the committed audit sequence every 250 ms and sends a payload-free
 notification when it changes; htmx then fetches the current HTML. Active execution
-pages stop listening when the call finishes. Hidden tabs disconnect and refresh
-on return. Updates wait while text is selected or a list link is focused/hovered,
+pages stop listening when the call finishes unless desktop alerts are enabled.
+Hidden tabs disconnect and refresh on return unless desktop alerts are enabled.
+Visible updates wait while text is selected or a list link is focused/hovered,
 then resume without needing another ledger event. Unchanged lists are not swapped.
+
+Open the **Approval notifications** bell beside **Sign out**, choose **Enable
+notifications**, and allow Chrome's permission prompt to receive desktop alerts
+for pending tool-call approvals. Any signed-in gateway
+page can stay open in the background; it reuses the SSE connection and fetches an
+authenticated, ID-only approval fragment. Alerts contain no tool names, account
+details or arguments. Clicking opens the review page; it never approves a request.
+Each refresh checks the 100 most recent pending requests, including existing ones
+when enabling alerts. The preference and the last 1,000 notified request IDs are
+stored in this browser, with cross-tab
+deduplication. **Disable notifications** turns alerts off across gateway tabs.
+HTTPS, browser site storage and a desktop browser supporting Notifications and Web
+Locks are required. Closed, discarded or suspended tabs cannot deliver alerts;
+browser or OS settings can also suppress them. This is not Web Push.
 
 SSE streams send keepalives and end after a minute; reconnecting rechecks
 authentication. Every HTML request also checks the session. Reconnecting refreshes
 current state, so missed notifications need no replay. Reverse proxies must allow
 streaming `/events` responses without buffering (the response sets
-`X-Accel-Buffering: no`). This is a per-visible-tab indexed SQLite check, not an
-in-memory event bus or a change to durable dispatch.
+`X-Accel-Buffering: no`). This is an indexed SQLite check per listening tab,
+including background tabs with alerts enabled, not an in-memory event bus or a
+change to durable dispatch.
 
 Connection tests update diagnostics in place. These enhancements use locally
 served htmx 2.0.8

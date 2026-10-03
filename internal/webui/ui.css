@@ -26,6 +26,39 @@
 }
 @layer components {
   /* dashboard */
+  :where(html.dashboard) .topbar .notification-trigger {
+    anchor-name: --notification-trigger;
+    @apply grid place-items-center size-10 p-[9px] flex-none;
+  }
+  :where(html.dashboard) .notification-trigger svg {
+    @apply size-5;
+  }
+  :where(html.dashboard) .notification-panel {
+    position: fixed;
+    inset: 76px 16px auto auto;
+    @apply m-0 w-[288px] max-w-[calc(100vw-32px)] p-5 rounded-[4px] bg-surface text-ink;
+    border: 1px solid #dcdde1;
+    box-shadow: 0 6px 20px #15244320;
+  }
+  :where(html.dashboard) .notification-panel h2 {
+    @apply text-[14px] tracking-normal m-0;
+  }
+  :where(html.dashboard) .notification-panel .help {
+    @apply text-[13px] m-[10px_0_16px];
+  }
+  :where(html.dashboard) .notification-panel button:disabled {
+    @apply opacity-[.65] cursor-default;
+  }
+  :where(html.dashboard) .notification-panel .notification-error {
+    @apply mb-0;
+  }
+  @supports (top: anchor(bottom)) {
+    :where(html.dashboard) .notification-panel {
+      position-anchor: --notification-trigger;
+      top: calc(anchor(bottom) + 10px);
+      right: clamp(16px, calc(anchor(center) - 144px), calc(100vw - 304px));
+    }
+  }
   :where(html.dashboard) * {
     @apply box-border;
   }

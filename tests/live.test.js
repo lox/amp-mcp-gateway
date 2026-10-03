@@ -57,7 +57,7 @@ test('failed fragment refresh reconnects and retries without another ledger chan
     document: {
       body: {},
       addEventListener: (name, callback) => { listeners[name] = callback; },
-      querySelector: selector => selector === '[data-live]' ? live : error,
+      querySelector: selector => selector === '[data-live]' ? live : selector === '.live-error' ? error : null,
     },
     window: { addEventListener() {}, getSelection: () => null },
     htmx: { trigger: () => { requests++; } },
