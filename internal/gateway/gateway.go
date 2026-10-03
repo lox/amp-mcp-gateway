@@ -41,6 +41,7 @@ type Tool struct {
 type Config struct {
 	Listen, BaseURL, Database, OwnerSubject, Issuer, ClientID string
 	AmpUserID, HostedDomain                                   string
+	AccountLink                                               bool `json:"-"`
 	Connections                                               []upstream.Connection
 	Integrations                                              []Integration `json:",omitempty"`
 	Tools                                                     []Tool
@@ -749,7 +750,8 @@ func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func (g *Gateway) render(w http.ResponseWriter, data any) {
+func (g *Gateway) render(w http.ResponseWriter, data map[string]any) {
+	data["AccountLink"] = g.cfg.AccountLink
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := page.Execute(w, data); err != nil {
 		slog.Error("render page", "error", err)

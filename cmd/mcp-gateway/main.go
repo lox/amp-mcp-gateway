@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/amplink"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
@@ -42,6 +44,7 @@ func run() error {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var err error
 	var cfg gateway.Config
 	var deployment deploymentConfig
 	var consent http.Handler
@@ -85,10 +88,14 @@ func run() error {
 	if cfg.Listen != "" {
 		*listen = cfg.Listen
 	}
+	shared := deployment.AmpLoginClientID != ""
+	if shared && (*demoMode || *portalAuth) {
+		return errors.New("Amp account linking requires production Google Workspace authentication")
+	}
+	if shared && (cfg.Issuer != "https://accounts.google.com" || cfg.HostedDomain == "" || cfg.AmpUserID == "") {
+		return errors.New("Amp account linking requires Google Workspace OIDC, HostedDomain, and the primary AmpUserID")
+	}
 	if *portalAuth {
-		if len(deployment.Accounts) != 0 {
-			return errors.New("multiple accounts require production OIDC, not orb portal authentication")
-		}
 		if err := validatePortalAuth(cfg, *listen, *demoMode); err != nil {
 			return err
 		}
@@ -96,6 +103,15 @@ func run() error {
 	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	if !*demoMode {
 		authCfg.ClientSecret = os.Getenv("GATEWAY_OIDC_SECRET")
+	}
+	if shared {
+		authCfg.AllowDomainMembers = true
+		identity, _ := json.Marshal([]string{cfg.Issuer, cfg.ClientID, cfg.HostedDomain})
+		var err error
+		authCfg.SessionKey, err = accountKey(secrets.SessionKey, "browser-session", identity)
+		if err != nil {
+			return err
+		}
 	}
 	authCfg.TrustedClientIPHeader = *clientIPHeader
 	if authCfg.TrustedClientIPHeader == "" && os.Getenv("FLY_APP_NAME") != "" {
@@ -108,41 +124,70 @@ func run() error {
 	if *demoMode {
 		authCfg.DemoPassword = "demo-only"
 	}
-	deployment.Config = cfg
-	configs, err := deployment.accounts(secrets)
-	if err != nil {
-		return err
-	}
-	var accounts []*accountRuntime
-	hosts := map[string]http.Handler{}
-	routeByHost := !*demoMode && !*portalAuth
-	for _, config := range configs {
-		account, err := newAccount(ctx, config, authCfg, consent)
+	group, ctx := errgroup.WithContext(ctx)
+	var sharedAuth *browserauth.Auth
+	if shared {
+		sharedAuth, err = browserauth.New(ctx, authCfg)
 		if err != nil {
 			return err
 		}
-		defer account.store.Close()
-		accounts = append(accounts, account)
-		if routeByHost {
-			host, err := accountHost(config.Config.BaseURL)
-			if err != nil {
-				return err
-			}
-			hosts[host] = account.handler
-		}
 	}
-	handler := accounts[0].handler
-	if routeByHost {
-		handler = accountRouter(hosts)
+	primaryConfig := accountConfig{Config: cfg, Secrets: secrets}
+	if shared {
+		primaryConfig.Config.AccountLink = true
+		primaryConfig.auth = sharedAuth
+	}
+	primary, err := newAccount(ctx, primaryConfig, authCfg, consent)
+	if err != nil {
+		return err
+	}
+	defer primary.store.Close()
+	accounts := []*accountRuntime{primary}
+	handler := primary.handler
+	var registry *accountRegistry
+	if shared {
+		registry, err = newRegistry(ctx, primary, primaryConfig, func(config accountConfig) (*accountRuntime, error) {
+			return newAccount(ctx, config, authCfg, nil)
+		})
+		if err != nil {
+			return err
+		}
+		defer registry.close()
+		accounts = nil
+		link, err := amplink.New(ctx, amplink.Config{
+			BaseURL: cfg.BaseURL, ClientID: deployment.AmpLoginClientID,
+			ClientSecret: os.Getenv("GATEWAY_AMP_OIDC_SECRET"), Current: registry.current, Link: registry.link,
+		})
+		if err != nil {
+			return err
+		}
+		handler = sharedAccountHandler(sharedAuth, registry, link)
+	}
+	if !*demoMode && !*portalAuth {
+		host, err := accountHost(cfg.BaseURL)
+		if err != nil {
+			return err
+		}
+		handler = accountRouter(host, handler)
 	}
 	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
-	group, ctx := errgroup.WithContext(ctx)
-	for _, account := range accounts {
+	startAccount := func(account *accountRuntime) {
 		group.Go(func() error { return account.gateway.Run(ctx) })
 		group.Go(func() error { return account.upstream.RunRefresh(ctx) })
 	}
+	for _, account := range accounts {
+		startAccount(account)
+	}
+	if registry != nil {
+		registry.start = startAccount
+		registry.mu.RLock()
+		for _, account := range registry.users {
+			startAccount(account)
+		}
+		registry.mu.RUnlock()
+	}
 	group.Go(func() error {
-		slog.Info("gateway listening", "address", *listen, "demo", *demoMode, "accounts", len(accounts))
+		slog.Info("gateway listening", "address", *listen, "demo", *demoMode, "account_linking", shared)
 		err := server.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -151,6 +196,11 @@ func run() error {
 	})
 	group.Go(func() error {
 		<-ctx.Done()
+		if registry != nil {
+			// Wait for an in-flight link before allowing the worker group to finish.
+			registry.mu.Lock()
+			registry.mu.Unlock()
+		}
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
 		return server.Shutdown(shutdown)
@@ -163,6 +213,7 @@ type accountRuntime struct {
 	store    *store.Store
 	gateway  *gateway.Gateway
 	upstream *upstream.Manager
+	browser  *browserbridge.Manager
 }
 
 func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.Config, consent http.Handler) (_ *accountRuntime, err error) {
@@ -192,11 +243,17 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err != nil {
 		return nil, err
 	}
-	authCfg.BaseURL, authCfg.OwnerSubject, authCfg.SessionKey = cfg.BaseURL, cfg.OwnerSubject, secrets.SessionKey
-	auth, err := browserauth.New(ctx, authCfg)
-	if err != nil {
-		return nil, err
+	auth := config.auth
+	if auth == nil {
+		authCfg.BaseURL, authCfg.OwnerSubject, authCfg.SessionKey = cfg.BaseURL, cfg.OwnerSubject, secrets.SessionKey
+		auth, err = browserauth.New(ctx, authCfg)
+		if err != nil {
+			return nil, err
+		}
 	}
+	routingIdentity, _ := json.Marshal([]string{cfg.Issuer, cfg.OwnerSubject, cfg.AmpUserID})
+	routingID := sha256.Sum256(routingIdentity)
+	browser.RoutingID = fmt.Sprintf("%x", routingID[:12])
 	mux := http.NewServeMux()
 	auth.Register(mux)
 	var mcpHandler, leaseHandler http.Handler
@@ -222,15 +279,32 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}, nil
+}
+
+func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry, link http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	auth.Register(mux)
+	mux.Handle("/account", auth.Require(link))
+	mux.Handle("/auth/amp/link", auth.Require(link))
+	mux.Handle("/auth/amp/callback", auth.Require(link))
+	mux.Handle("/mcp", http.HandlerFunc(registry.workload))
+	mux.Handle("POST /leases/{id}", http.HandlerFunc(registry.workload))
+	mux.Handle("/browser/connect", browserbridge.SocketRouter(registry.browserManager))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.Handle("/", auth.Require(http.HandlerFunc(registry.browser)))
+	return securityHeaders(mux)
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		w.Header().Set("X-Frame-Options", "DENY")
-		mux.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
-	return &accountRuntime{handler: handler, store: s, gateway: g, upstream: m}, nil
 }
 
 func validatePortalAuth(cfg gateway.Config, listen string, demo bool) error {

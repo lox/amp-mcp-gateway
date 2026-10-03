@@ -3,41 +3,38 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
-	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/go-jose/go-jose/v4"
 )
 
-type identityTransport struct {
+type ampIdentityTransport struct {
 	base   http.RoundTripper
 	issuer string
 }
 
-func (tr identityTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+func (tr ampIdentityTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Host == "ampcode.com" {
 		r = r.Clone(r.Context())
-		u, _ := url.Parse(tr.issuer + strings.TrimPrefix(r.URL.Path, "/api/workload-identity"))
-		r.URL = u
-		r.Header.Set("X-Test-Amp", "true")
+		r.URL, _ = url.Parse(tr.issuer + strings.TrimPrefix(r.URL.Path, "/api/workload-identity"))
 	}
 	return tr.base.RoundTrip(r)
 }
 
-// Exercise the actual application wiring, OIDC callbacks and signed Amp requests.
-// The only replacement is the identity provider; no external services or secrets.
-func TestTwoAccountAuthenticationAndIsolation(t *testing.T) {
+// This uses the real workload verifier behind the registry's untrusted JWT hint.
+// A valid signature is insufficient when the selected account's user or audience differs.
+func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -46,14 +43,45 @@ func TestTwoAccountAuthenticationAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mint := func(claims map[string]any) string {
-		t.Helper()
-		claims["exp"] = time.Now().Add(time.Hour).Unix()
-		raw, err := json.Marshal(claims)
-		if err != nil {
-			t.Fatal(err)
+	var issuer string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{"issuer": "https://ampcode.com/api/workload-identity", "jwks_uri": issuer + "/keys", "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token"})
+		case "/keys":
+			_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
+		default:
+			http.NotFound(w, r)
 		}
-		signed, err := signer.Sign(raw)
+	}))
+	defer provider.Close()
+	issuer = provider.URL
+	original := http.DefaultTransport
+	http.DefaultTransport = ampIdentityTransport{base: original, issuer: issuer}
+	defer func() { http.DefaultTransport = original }()
+
+	secrets := accountSecrets()
+	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: filepath.Join(t.TempDir(), "gateway.db"), OwnerSubject: "google-alice", AmpUserID: "amp-alice", Issuer: "browser-issuer", ClientID: "browser-client", HostedDomain: "example.com"}, Secrets: secrets}
+	authCfg := browserauth.Config{Demo: true, DemoPassword: "fixture", OwnerSubject: "google-alice"}
+	primary, err := newAccount(t.Context(), base, authCfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.store.Close()
+	r, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) { return newAccount(t.Context(), c, authCfg, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.close()
+	if err := r.link(t.Context(), "google-bob", "amp-bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	mint := func(user, audience string) string {
+		t.Helper()
+		claims, _ := json.Marshal(map[string]any{"iss": "https://ampcode.com/api/workload-identity", "aud": audience, "sub": "actor", "user_id": user, "thread_id": "T-01a0b6d8-e50f-7723-941c-60bca63723ba", "thread_visibility": "private", "thread_multiplayer": false, "thread_non_owner_can_influence": false, "token_use": "mcp", "exp": time.Now().Add(time.Hour).Unix()})
+		signed, err := signer.Sign(claims)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,171 +91,136 @@ func TestTwoAccountAuthenticationAndIsolation(t *testing.T) {
 		}
 		return token
 	}
-	var issuer string
-	var tokens sync.Map
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
-			iss := issuer
-			if r.Header.Get("X-Test-Amp") == "true" {
-				iss = "https://ampcode.com/api/workload-identity"
-			}
-			json.NewEncoder(w).Encode(map[string]any{"issuer": iss, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"}})
-		case "/keys":
-			json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
-		case "/token":
-			token, ok := tokens.LoadAndDelete(r.FormValue("code"))
-			if !ok {
-				http.Error(w, "invalid code", 400)
-				return
-			}
-			json.NewEncoder(w).Encode(map[string]any{"access_token": "fixture", "token_type": "Bearer", "id_token": token})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer provider.Close()
-	issuer = provider.URL
-	originalTransport := http.DefaultTransport
-	http.DefaultTransport = identityTransport{base: originalTransport, issuer: issuer}
-	defer func() { http.DefaultTransport = originalTransport }()
-
-	cfg, secrets := accountFixture(t)
-	cfg.Issuer = issuer
-	cfg.Connections = []upstream.Connection{{ID: "notes", URL: "https://notes.example/mcp", Account: "Alice's private notes", NoAuth: true}}
-	cfg.Tools = []gateway.Tool{{ID: "notes.create", Connection: "notes", Name: "create", Policy: "require_approval", InputSchema: map[string]any{"type": "object"}}}
-	configs, err := cfg.accounts(secrets)
-	if err != nil {
+	request := func(token string) int {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		w := httptest.NewRecorder()
+		r.workload(w, req)
+		return w.Code
+	}
+	if got := request(mint("amp-alice", base.Config.BaseURL)); got != http.StatusOK {
+		t.Fatalf("valid primary token: %d", got)
+	}
+	if got := request(mint("amp-bob", base.Config.BaseURL)); got != http.StatusOK {
+		t.Fatalf("valid linked token: %d", got)
+	}
+	now := time.Now()
+	private := store.Operation{ID: "alice-private", Subject: "google-alice", AmpUserID: "amp-alice", AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", Private: true, Status: "succeeded", Digest: "alice-secret-digest", Result: json.RawMessage(`{"secret":"alice-private-result"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
+	if _, err := primary.store.Submit(t.Context(), private); err != nil {
 		t.Fatal(err)
 	}
-	var runtimes []*accountRuntime
-	hosts := map[string]http.Handler{}
-	for _, c := range configs {
-		runtime, err := newAccount(t.Context(), c, browserauth.Config{Issuer: issuer, ClientID: "client", ClientSecret: "fixture-secret"}, nil)
+	bob := r.users["amp-bob"]
+	own := store.Operation{ID: "bob-own-operation", Subject: "google-bob", AmpUserID: "amp-bob", Status: "succeeded", Digest: "bob-digest", Result: json.RawMessage(`{"owner":"bob"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
+	if _, err := bob.store.Submit(t.Context(), own); err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(token, id string) string {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_operation","arguments":{"id":"`+id+`"}}}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		w := httptest.NewRecorder()
+		r.workload(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("lookup %s returned %d: %s", id, w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	bobToken := mint("amp-bob", base.Config.BaseURL)
+	if body := lookup(bobToken, private.ID); !strings.Contains(body, "operation unavailable") || strings.Contains(body, "alice-private-result") {
+		t.Fatalf("Bob read primary private operation: %s", body)
+	}
+	if body := lookup(bobToken, own.ID); !strings.Contains(body, `bob`) || strings.Contains(body, "operation unavailable") {
+		t.Fatalf("Bob could not read own operation: %s", body)
+	}
+	aliceToken := mint("amp-alice", base.Config.BaseURL)
+	if body := lookup(aliceToken, private.ID); !strings.Contains(body, "alice-private-result") {
+		t.Fatalf("primary owner could not read private operation: %s", body)
+	}
+	if err := bob.store.Approve(t.Context(), private.ID, "google-bob", "once"); err == nil {
+		t.Fatal("Bob approved primary private operation through his account")
+	}
+	unchanged, err := primary.store.Get(t.Context(), private.ID)
+	if err != nil || unchanged.Status != "succeeded" {
+		t.Fatalf("Bob's approval attempt changed primary operation: %#v, %v", unchanged, err)
+	}
+	pendingBob := own
+	pendingBob.ID, pendingBob.Status = "bob-pending-operation", "pending"
+	if _, err := bob.store.Submit(t.Context(), pendingBob); err != nil {
+		t.Fatal(err)
+	}
+	if err := bob.store.Approve(t.Context(), pendingBob.ID, "google-bob", "once"); err != nil {
+		t.Fatalf("Bob could not approve own operation: %v", err)
+	}
+	if approved, err := bob.store.Get(t.Context(), pendingBob.ID); err != nil || approved.Status != "ready" {
+		t.Fatalf("Bob's own approval was not persisted: %#v, %v", approved, err)
+	}
+	// Exercise routing from browserauth's authenticated subject, including the
+	// actual approval handler, rather than relying only on separate store objects.
+	browserRequest := func(subject, method, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		auth, err := browserauth.New(t.Context(), browserauth.Config{
+			BaseURL: base.Config.BaseURL, OwnerSubject: subject, SessionKey: secrets.SessionKey,
+			Demo: true, DemoPassword: "fixture-password",
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer func() { runtime.store.Close() }()
-		runtimes = append(runtimes, runtime)
-		host, _ := accountHost(c.Config.BaseURL)
-		hosts[host] = runtime.handler
-	}
-	router := http.NewCrossOriginProtection().Handler(accountRouter(hosts))
-	request := func(method, origin, path string, body io.Reader, cookie *http.Cookie, bearer string) *httptest.ResponseRecorder {
-		t.Helper()
-		r := httptest.NewRequest(method, origin+path, body)
-		if cookie != nil {
-			r.AddCookie(cookie)
+		mux := http.NewServeMux()
+		auth.Register(mux)
+		login := httptest.NewRequest("POST", "/login", strings.NewReader("password=fixture-password"))
+		login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		session := httptest.NewRecorder()
+		mux.ServeHTTP(session, login)
+		if session.Code != http.StatusSeeOther {
+			t.Fatal("fixture login failed")
 		}
-		if bearer != "" {
-			r.Header.Set("Authorization", "Bearer "+bearer)
+		req := httptest.NewRequest(method, path, nil)
+		for _, cookie := range session.Result().Cookies() {
+			req.AddCookie(cookie)
 		}
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Accept", "application/json, text/event-stream")
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, r)
+		auth.Require(http.HandlerFunc(r.browser)).ServeHTTP(w, req)
 		return w
 	}
-	login := func(origin, subject string, want int) *http.Cookie {
-		t.Helper()
-		start := request("GET", origin, "/login", nil, nil, "")
-		u, err := url.Parse(start.Header().Get("Location"))
-		if err != nil || u.Query().Get("nonce") == "" {
-			t.Fatal("missing OIDC challenge", err)
-		}
-		if u.Query().Get("redirect_uri") != origin+"/auth/callback" {
-			t.Fatal("wrong account callback")
-		}
-		code := rand.Text()
-		tokens.Store(code, mint(map[string]any{"iss": issuer, "sub": subject, "aud": "client", "nonce": u.Query().Get("nonce")}))
-		end := request("GET", origin, "/auth/callback?state="+url.QueryEscape(u.Query().Get("state"))+"&code="+code, nil, start.Result().Cookies()[0], "")
-		if end.Code != want {
-			t.Fatalf("login %s as %s: %d %s", origin, subject, end.Code, end.Body.String())
-		}
-		for _, cookie := range end.Result().Cookies() {
-			if cookie.Name == "mcp_gateway_session" {
-				return cookie
-			}
-		}
-		return nil
+	if w := browserRequest("google-alice", "GET", "/operations/alice-private"); w.Code != 200 || !strings.Contains(w.Body.String(), "alice-private-result") {
+		t.Fatalf("owner browser lookup: %d %s", w.Code, w.Body.String())
 	}
-	alice, bob := configs[0].Config.BaseURL, configs[1].Config.BaseURL
-	aCookie := login(alice, "alice-sub", 303)
-	bCookie := login(bob, "bob-sub", 303)
-	if aCookie == nil || bCookie == nil {
-		t.Fatal("no session cookies")
+	if w := browserRequest("google-bob", "GET", "/operations/alice-private"); w.Code != 404 || strings.Contains(w.Body.String(), "alice-private-result") {
+		t.Fatalf("cross-account browser lookup: %d", w.Code)
 	}
-	login(bob, "alice-sub", 401)
-	login(alice, "bob-sub", 401)
-	for _, path := range []string{"/connections", "/operations", "/audit", "/approval-grants", "/integrations/chrome", "/integrations/fly", "/events"} {
-		for _, cross := range []struct {
-			origin string
-			cookie *http.Cookie
-		}{{alice, bCookie}, {bob, aCookie}} {
-			if w := request("GET", cross.origin, path, nil, cross.cookie, ""); w.Code != 303 {
-				t.Fatalf("cross-account cookie at %s: %d", path, w.Code)
-			}
-		}
+	if w := browserRequest("unlinked-subject", "GET", "/operations"); w.Code != 303 || w.Header().Get("Location") != "/account" {
+		t.Fatal("unlinked browser was not sent to linking")
 	}
-	if w := request("GET", alice, "/connections", nil, aCookie, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "Alice&#39;s private notes") {
-		t.Fatal("owner cannot see connection", w.Code)
-	}
-	if w := request("GET", bob, "/connections", nil, bCookie, ""); w.Code != 200 || strings.Contains(w.Body.String(), "private notes") {
-		t.Fatal("connection catalogue crossed accounts", w.Code)
-	}
-	ampToken := func(origin, user string) string {
-		return mint(map[string]any{"iss": "https://ampcode.com/api/workload-identity", "aud": origin, "sub": "amp-" + user, "user_id": user, "thread_id": "T-01a0b6d8-e50f-7723-941c-60bca63723ba", "token_use": "mcp"})
-	}
-	aToken, bToken := ampToken(alice, "user_alice"), ampToken(bob, "user_bob")
-	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_tools","arguments":{"request_id":"same-request-001","calls":[{"tool_id":"notes.create","arguments":{"text":"alice-secret"}}]}}}`
-	if w := request("POST", alice, "/mcp", strings.NewReader(call), nil, aToken); w.Code != 200 || !strings.Contains(w.Body.String(), "pending") {
-		t.Fatalf("owner submit: %d %s", w.Code, w.Body.String())
-	}
-	for _, tc := range []struct{ origin, token string }{{alice, bToken}, {bob, aToken}, {bob, ampToken(bob, "user_alice")}} {
-		for _, path := range []string{"/mcp", "/leases/same-request-001"} {
-			if w := request("POST", tc.origin, path, strings.NewReader(call), nil, tc.token); w.Code != 401 {
-				t.Fatalf("foreign token accepted at %s: %d", path, w.Code)
-			}
-		}
-	}
-	for _, path := range []string{"/operations/same-request-001", "/operations/same-request-001/image", "/connections/notes/tools"} {
-		if w := request("GET", bob, path, nil, bCookie, ""); w.Code != 404 {
-			t.Fatalf("foreign resource at %s: %d", path, w.Code)
-		}
-	}
-	if w := request("POST", bob, "/operations/same-request-001/approve", nil, bCookie, ""); w.Code < 400 {
-		t.Fatal("foreign approval accepted")
-	}
-	operation, err := runtimes[0].store.Get(t.Context(), "same-request-001")
-	if err != nil || operation.Status != "pending" {
-		t.Fatal("foreign approval affected owner", err)
-	}
-	lookup := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_operation","arguments":{"id":"same-request-001"}}}`
-	if w := request("POST", bob, "/mcp", strings.NewReader(lookup), nil, bToken); w.Code != 200 || !strings.Contains(w.Body.String(), "operation unavailable") || strings.Contains(w.Body.String(), "alice-secret") {
-		t.Fatalf("foreign result lookup: %d %s", w.Code, w.Body.String())
-	}
-	if w := request("POST", alice, "/operations/same-request-001/approve", nil, aCookie, ""); w.Code != 303 {
-		t.Fatal("owner approval failed", w.Code)
-	}
-	if approved, err := runtimes[0].store.Get(t.Context(), operation.ID); err != nil || approved.Status != "ready" {
-		t.Fatal("owner approval was not persisted", err)
-	}
-	// Identical IDs remain independent, including after reopening the additional account.
-	_, err = runtimes[1].store.Submit(t.Context(), store.Operation{ID: operation.ID, Subject: "bob-sub", Status: "denied", Digest: "bob-digest", Created: time.Now().Unix()})
-	if err != nil {
+	pendingAlice := private
+	pendingAlice.ID, pendingAlice.Status = "alice-pending", "pending"
+	if _, err := primary.store.Submit(t.Context(), pendingAlice); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtimes[1].store.Close(); err != nil {
-		t.Fatal(err)
+	if w := browserRequest("google-bob", "POST", "/operations/alice-pending/approve"); w.Code < 400 {
+		t.Fatal("cross-account browser approval accepted")
 	}
-	reopened, err := store.Open(configs[1].Config.Database, configs[1].Secrets.EncryptionKey)
-	if err != nil {
-		t.Fatal(err)
+	if op, err := primary.store.Get(t.Context(), pendingAlice.ID); err != nil || op.Status != "pending" {
+		t.Fatal("foreign browser approval changed primary operation")
 	}
-	runtimes[1].store = reopened
-	op, err := reopened.Get(t.Context(), operation.ID)
-	if err != nil || op.Subject != "bob-sub" || op.Digest != "bob-digest" {
-		t.Fatal("account restart lost or mixed state", err)
+	if w := browserRequest("google-alice", "POST", "/operations/alice-pending/approve"); w.Code != 303 {
+		t.Fatalf("owner browser approval failed: %d %s", w.Code, w.Body.String())
+	}
+	parts := strings.Split(bobToken, ".")
+	var tamperedClaims map[string]any
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	_ = json.Unmarshal(payload, &tamperedClaims)
+	tamperedClaims["user_id"] = "amp-alice"
+	payload, _ = json.Marshal(tamperedClaims)
+	parts[1] = base64.RawURLEncoding.EncodeToString(payload)
+	for name, token := range map[string]string{
+		"wrong audience": mint("amp-alice", "https://foreign.example"),
+		"tampered routing hint selects another account": strings.Join(parts, "."),
+	} {
+		if got := request(token); got != http.StatusUnauthorized {
+			t.Fatalf("%s accepted: %d", name, got)
+		}
 	}
 }

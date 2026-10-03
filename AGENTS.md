@@ -1,6 +1,6 @@
 # Amp MCP Gateway
 
-Go MCP gateway for Amp with isolated owner accounts. Use mise: `.agents/setup`, then `mise run check`.
+Go MCP gateway for Amp with isolated owner accounts linked on one shared host. Use mise: `.agents/setup`, then `mise run check`.
 Keep dependencies deliberate; use the official MCP SDK rather than handwritten JSON-RPC.
 
 ## Invariants
@@ -11,8 +11,11 @@ Keep dependencies deliberate; use the official MCP SDK rather than handwritten J
 - No tokens in logs, source, screenshots or tool results. `.local/` is disposable demo state.
 - Production UI uses OIDC; demo password login is explicitly opt-in and only for fake data.
 - One process/SQLite volume only. Do not remove the file lock or add replicas.
-- Accounts have distinct origins, identity-bound databases and keys. Never share a
-  catalogue, credential manager, browser pairing manager or worker between accounts.
+- Linked accounts share the production hostname and Google browser authentication,
+  but have identity-bound databases and derived keys. Never share a catalogue,
+  credential manager, browser pairing manager or worker between accounts.
+- Account links bind a verified Google subject to the stable Amp user ID returned
+  by Amp's actor API. Never infer links from email or accept a manually supplied ID.
 
 ## Preview
 

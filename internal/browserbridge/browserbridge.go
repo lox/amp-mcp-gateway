@@ -38,8 +38,10 @@ type backend interface {
 // Manager owns browser pairing state and active extension connections. Pairing
 // credentials deliberately live only for this process in the first slice.
 type Manager struct {
-	fallback backend
-	baseURL  string
+	// RoutingID is a non-secret account selector, set only before serving requests.
+	RoutingID string
+	fallback  backend
+	baseURL   string
 
 	mu              sync.Mutex
 	connections     map[string]upstream.Connection
@@ -221,6 +223,16 @@ func resultToMCP(raw json.RawMessage) (*mcp.CallToolResult, error) {
 // Socket accepts extension WebSockets. Authentication occurs in the first
 // message so the pairing secret never appears in a URL or access log.
 func (m *Manager) Socket() http.Handler {
+	return socketRouter(func(string) *Manager { return m }, m.unauthenticated)
+}
+
+// SocketRouter selects an account from the first-message credential. Selection
+// is not authentication: the selected manager verifies the entire credential.
+func SocketRouter(selectManager func(string) *Manager) http.Handler {
+	return socketRouter(selectManager, make(chan struct{}, maxUnauthenticatedSockets))
+}
+
+func socketRouter(selectManager func(string) *Manager, unauthenticated chan struct{}) http.Handler {
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout: 10 * time.Second,
 		CheckOrigin: func(r *http.Request) bool {
@@ -229,7 +241,7 @@ func (m *Manager) Socket() http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
-		case m.unauthenticated <- struct{}{}:
+		case unauthenticated <- struct{}{}:
 		default:
 			http.Error(w, "browser pairing busy", http.StatusServiceUnavailable)
 			return
@@ -237,7 +249,7 @@ func (m *Manager) Socket() http.Handler {
 		pendingAuthentication := true
 		release := func() {
 			if pendingAuthentication {
-				<-m.unauthenticated
+				<-unauthenticated
 				pendingAuthentication = false
 			}
 		}
@@ -251,6 +263,12 @@ func (m *Manager) Socket() http.Handler {
 		var hello wireMessage
 		if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.PairingCode == "" || len(hello.PairingCode) > 200 || hello.InstallID == "" || len(hello.InstallID) > 200 || hello.ShareID == "" || len(hello.ShareID) > 200 || hello.TabID <= 0 || len(hello.TabTitle) > 200 || len(hello.TabURL) > 2000 {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "invalid hello"), time.Now().Add(time.Second))
+			ws.Close()
+			return
+		}
+		m := selectManager(hello.PairingCode)
+		if m == nil {
+			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "pairing rejected"), time.Now().Add(time.Second))
 			ws.Close()
 			return
 		}
@@ -297,6 +315,9 @@ func (m *Manager) accept(hello wireMessage) (string, string, string, bool) {
 			reconnect, err = randomString(32)
 			if err != nil {
 				return "", "", "", false
+			}
+			if m.RoutingID != "" {
+				reconnect = m.RoutingID + "." + reconnect
 			}
 			p.hash = sha256.Sum256([]byte(reconnect))
 		}
@@ -512,6 +533,9 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "pairing unavailable", http.StatusInternalServerError)
 		return
+	}
+	if m.RoutingID != "" {
+		code = m.RoutingID + "." + code
 	}
 	hash := sha256.Sum256([]byte(code))
 	m.mu.Lock()

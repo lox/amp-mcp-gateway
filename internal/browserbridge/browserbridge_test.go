@@ -215,6 +215,63 @@ func TestReconnectTargetUsesUnambiguousIdentityEncoding(t *testing.T) {
 	}
 }
 
+func TestSocketRouterRejectsPrefixTamperingAndReconnectKeepsPrefix(t *testing.T) {
+	first, _ := browserManager(t)
+	second, _ := browserManager(t)
+	first.RoutingID, second.RoutingID = "account-one", "account-two"
+	hash := sha256.Sum256([]byte("account-one.pairing-secret"))
+	first.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	selectManager := func(code string) *Manager {
+		prefix, _, ok := strings.Cut(code, ".")
+		if !ok {
+			return nil
+		}
+		if prefix == first.RoutingID {
+			return first
+		}
+		if prefix == second.RoutingID {
+			return second
+		}
+		return nil
+	}
+	server := httptest.NewServer(SocketRouter(selectManager))
+	defer server.Close()
+	dial := func(code string) (*websocket.Conn, wireMessage, error) {
+		header := http.Header{"Origin": []string{"chrome-extension://extension-id"}}
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), header)
+		if err != nil {
+			return nil, wireMessage{}, err
+		}
+		err = ws.WriteJSON(wireMessage{Type: "hello", PairingCode: code, InstallID: "install", ShareID: "share", TabID: 42})
+		if err != nil {
+			ws.Close()
+			return nil, wireMessage{}, err
+		}
+		var paired wireMessage
+		err = ws.ReadJSON(&paired)
+		return ws, paired, err
+	}
+	ws, paired, err := dial("account-one.pairing-secret")
+	if err != nil || paired.Type != "paired" || !strings.HasPrefix(paired.Reconnect, "account-one.") {
+		t.Fatalf("initial routed pairing = %#v, %v", paired, err)
+	}
+	ws.Close()
+
+	tampered := "account-two." + strings.TrimPrefix(paired.Reconnect, "account-one.")
+	bad, _, err := dial(tampered)
+	if bad != nil {
+		bad.Close()
+	}
+	if err == nil {
+		t.Fatal("reconnect credential accepted with another account prefix")
+	}
+	reconnected, next, err := dial(paired.Reconnect)
+	if err != nil || next.Type != "paired" || !strings.HasPrefix(next.Reconnect, "account-one.") {
+		t.Fatalf("routed reconnect = %#v, %v", next, err)
+	}
+	reconnected.Close()
+}
+
 func TestReceivedResultWinsOverImmediateClose(t *testing.T) {
 	c := &client{closed: make(chan struct{})}
 	result := make(chan response, 1)

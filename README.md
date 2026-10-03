@@ -5,9 +5,10 @@ them behind one connection, keeps their credentials in one place, and lets you
 require approval before Amp calls particular tools. It remains compatible with
 any client that supports Streamable HTTP MCP.
 
-It's self-hosted, written in Go, and supports independent user accounts in one
-deployment. Each account has its own origin, credentials, approvals and history.
-The local demo uses fake services; production uses OIDC and signed Amp identities.
+It's self-hosted, written in Go, and supports independently linked users on one
+shared host. Each user has separate credentials, approvals and history while
+sharing browser authentication and the `/mcp` audience. The local demo uses fake
+services; production uses Google Workspace OIDC and signed Amp identities.
 It remains a prototype, not a production security certification.
 
 ## How it works
@@ -240,16 +241,18 @@ credential integration prototype.
 
 A few limits worth knowing:
 
-- One owner per account and one call per request. Search is keyword-based.
-- Configure additional accounts with distinct HTTPS origins, OIDC subjects and
-  Amp user IDs. Accounts are isolated, not a shared team catalogue. See
-  [multiple accounts on Fly](docs/dev.md#multiple-accounts-on-fly).
+- One owner per linked account and one call per request. Search is keyword-based.
+- In account-linking mode, Workspace members sign in on the shared host and then
+  use **Sign in with Amp**. The gateway obtains their stable Amp user ID from
+  Amp; it does not match emails or accept manually entered IDs. Each linked user
+  gets isolated providers and state. See [shared-host account linking](docs/dev.md#shared-host-account-linking).
 - Amp remote MCP definitions can authenticate with Amp Workload Identity; requests
   retain their verified workspace, project and thread context. Browser approvals
   use a separate OIDC login.
-- Google Workspace login can require both your domain and your exact account.
-  Validate the configured identity provider before relying on a deployment. The
-  local demo uses a shared fixture token.
+- Google Workspace login restricts the hosted domain. The configured bootstrap
+  owner is additionally bound to its exact Google subject and Amp user ID.
+  Validate both identity providers before relying on a deployment. The local demo
+  uses a shared fixture token.
 - Model names are reported by the client, not verified. Account names are labels.
 - The audit log is local, not tamper-proof.
 - Per account, new work pauses at 10,000 retained operations, 50,000 audit events, or 64 MiB

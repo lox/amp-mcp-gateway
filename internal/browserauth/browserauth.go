@@ -40,15 +40,16 @@ type subjectKey struct{}
 // Config configures owner authentication. Demo mode is deliberately separate
 // from OIDC mode and requires both Demo and DemoPassword.
 type Config struct {
-	BaseURL      string
-	Issuer       string
-	ClientID     string
-	ClientSecret string
-	OwnerSubject string
-	HostedDomain string
-	SessionKey   string
-	DemoPassword string
-	Demo         bool
+	BaseURL            string
+	Issuer             string
+	ClientID           string
+	ClientSecret       string
+	OwnerSubject       string
+	HostedDomain       string
+	AllowDomainMembers bool // Admit other verified Google Workspace subjects in HostedDomain.
+	SessionKey         string
+	DemoPassword       string
+	Demo               bool
 	// TrustedClientIPHeader requires an ingress that overwrites this header and
 	// prevents clients from reaching the listener directly. Empty uses RemoteAddr.
 	TrustedClientIPHeader string
@@ -57,15 +58,16 @@ type Config struct {
 
 // Auth owns browser authentication state and handlers.
 type Auth struct {
-	baseURL        *url.URL
-	key            []byte
-	secure         bool
-	demo           bool
-	password       string
-	owner          string
-	hostedDomain   string
-	clientIPHeader string
-	portalUserID   string
+	baseURL            *url.URL
+	key                []byte
+	secure             bool
+	demo               bool
+	password           string
+	owner              string
+	hostedDomain       string
+	allowDomainMembers bool
+	clientIPHeader     string
+	portalUserID       string
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
@@ -99,16 +101,20 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		return nil, errors.New("browserauth: SessionKey must be base64 encoding of exactly 32 bytes")
 	}
 	a := &Auth{
-		baseURL:        base,
-		key:            key,
-		secure:         base.Scheme == "https",
-		demo:           c.Demo,
-		password:       c.DemoPassword,
-		owner:          c.OwnerSubject,
-		hostedDomain:   c.HostedDomain,
-		clientIPHeader: c.TrustedClientIPHeader,
-		states:         make(map[string]pendingState),
-		now:            time.Now,
+		baseURL:            base,
+		key:                key,
+		secure:             base.Scheme == "https",
+		demo:               c.Demo,
+		password:           c.DemoPassword,
+		owner:              c.OwnerSubject,
+		hostedDomain:       c.HostedDomain,
+		allowDomainMembers: c.AllowDomainMembers,
+		clientIPHeader:     c.TrustedClientIPHeader,
+		states:             make(map[string]pendingState),
+		now:                time.Now,
+	}
+	if c.AllowDomainMembers && (c.Demo || c.PortalUserID != "" || c.Issuer != "https://accounts.google.com" || c.HostedDomain == "") {
+		return nil, errors.New("browserauth: domain membership requires Google Workspace OIDC and HostedDomain")
 	}
 	if c.PortalUserID != "" {
 		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.HostedDomain != "" || base.Scheme != "https" || c.OwnerSubject != "amp-portal:"+c.PortalUserID {
@@ -189,7 +195,7 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			return
 		}
 		sub, ok := a.sessionSubject(r)
-		if !ok || sub != a.owner {
+		if !ok || (!a.allowDomainMembers && sub != a.owner) {
 			if r.Header.Get("HX-Request") == "true" || r.Header.Get("Accept") == "text/event-stream" {
 				// Never follow login/OIDC inside a fragment or EventSource request.
 				w.Header().Set("HX-Redirect", "/login")
@@ -401,16 +407,17 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	if idToken.Subject != a.owner {
+	if idToken.Subject == "" || (!a.allowDomainMembers && idToken.Subject != a.owner) {
 		slog.Warn("browser authentication failed", "reason", "owner")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 	if a.hostedDomain != "" {
 		var claims struct {
-			HostedDomain string `json:"hd"`
+			HostedDomain  string `json:"hd"`
+			EmailVerified bool   `json:"email_verified"`
 		}
-		if err := idToken.Claims(&claims); err != nil || claims.HostedDomain != a.hostedDomain {
+		if err := idToken.Claims(&claims); err != nil || claims.HostedDomain != a.hostedDomain || (a.allowDomainMembers && !claims.EmailVerified) {
 			slog.Warn("browser authentication failed", "reason", "hosted_domain")
 			http.Error(w, "authentication failed", http.StatusUnauthorized)
 			return
