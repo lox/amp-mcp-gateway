@@ -167,7 +167,7 @@ func run() error {
 		}
 		handler = sharedAccountHandler(sharedAuth, registry, link)
 	}
-	if !*demoMode && !*portalAuth {
+	if shared {
 		host, err := accountHost(cfg.BaseURL)
 		if err != nil {
 			return err

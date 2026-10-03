@@ -824,6 +824,10 @@ and selects **Sign in with Amp**. The callback `/auth/amp/callback` verifies Amp
 OIDC response and calls `/api/v2/actor` to obtain the stable user ID. Email addresses
 are neither compared nor used as identifiers, and there is no manual Amp ID field.
 
+In this mode the TLS proxy must preserve the public `Host` matching `BaseURL`;
+other hosts return 404 except for `/healthz`. Forwarded host headers are not trusted.
+Without `AmpLoginClientID`, existing single-owner proxy behavior is unchanged.
+
 The top-level `OwnerSubject`, `AmpUserID`, `Database`, encryption key and existing
 primary data remain the bootstrap account. On first enabling linking, the database
 is permanently bound to its issuer, Google subject and Amp ID. Later identity
