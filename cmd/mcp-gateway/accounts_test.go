@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
@@ -87,6 +89,7 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 	r.close()
 
 	opened = nil
+	base.Config.ClientID = "rotated-browser-client"
 	restarted, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) {
 		opened = append(opened, c)
 		child, openErr := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
@@ -132,5 +135,37 @@ func TestRegistryStopsLinkingAfterShutdown(t *testing.T) {
 	r := &accountRegistry{ctx: ctx}
 	if err := r.link(context.Background(), "subject", "user"); err == nil {
 		t.Fatal("link accepted during shutdown")
+	}
+}
+
+func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	r := &accountRegistry{
+		ctx: t.Context(), config: accountConfig{Secrets: accountSecrets()},
+		links: map[string]string{"existing": "amp-existing"}, users: map[string]*accountRuntime{},
+		open: func(accountConfig) (*accountRuntime, error) {
+			close(entered)
+			<-release
+			return nil, errors.New("discovery unavailable")
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.link(t.Context(), "new", "amp-new") }()
+	<-entered
+	defer func() {
+		close(release)
+		if err := <-done; err == nil {
+			t.Error("failed discovery published an account")
+		}
+	}()
+	routed := make(chan string, 1)
+	go func() { routed <- r.current("existing") }()
+	select {
+	case got := <-routed:
+		if got != "amp-existing" {
+			t.Fatal("existing link lost")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow runtime creation blocked existing account lookup")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,7 @@ type accountConfig struct {
 // accountRegistry serializes one-to-one linking and owns all account runtimes.
 // Only the OAuth callback calls link; unverified workload hints never create state.
 type accountRegistry struct {
+	linkMu   sync.Mutex // Serialize creation without blocking existing-account routing.
 	mu       sync.RWMutex
 	ctx      context.Context
 	primary  *accountRuntime
@@ -47,7 +49,7 @@ type accountRegistry struct {
 }
 
 func newRegistry(ctx context.Context, primary *accountRuntime, config accountConfig, open func(accountConfig) (*accountRuntime, error)) (*accountRegistry, error) {
-	identity, _ := json.Marshal([]string{config.Config.Issuer, config.Config.ClientID, config.Config.HostedDomain})
+	identity, _ := json.Marshal([]string{config.Config.Issuer, config.Config.HostedDomain})
 	key := fmt.Sprintf("account-links/v1/%x", sha256.Sum256(identity))
 	r := &accountRegistry{ctx: ctx, primary: primary, config: config, key: key, links: map[string]string{}, users: map[string]*accountRuntime{}, subjects: map[string]*accountRuntime{}, open: open}
 	raw, err := primary.store.LoadToken(ctx, key)
@@ -95,21 +97,25 @@ func (r *accountRegistry) current(subject string) string {
 }
 
 func (r *accountRegistry) link(ctx context.Context, subject, ampID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.linkMu.Lock()
+	defer r.linkMu.Unlock()
 	if err := r.ctx.Err(); err != nil {
 		return errors.New("gateway is shutting down")
 	}
 	if subject == "" || ampID == "" {
 		return errors.New("missing identity")
 	}
-	if old := r.links[subject]; old != "" {
+	r.mu.RLock()
+	old, used := r.links[subject], r.users[ampID] != nil
+	next := maps.Clone(r.links)
+	r.mu.RUnlock()
+	if old != "" {
 		if old == ampID {
 			return nil
 		}
 		return errors.New("account already linked")
 	}
-	if r.users[ampID] != nil {
+	if used {
 		return errors.New("Amp identity already linked")
 	}
 	cfg, err := r.userConfig(subject, ampID)
@@ -120,17 +126,19 @@ func (r *accountRegistry) link(ctx context.Context, subject, ampID string) error
 	if err != nil {
 		return err
 	}
-	r.links[subject] = ampID
-	raw, err := json.Marshal(r.links)
+	next[subject] = ampID
+	raw, err := json.Marshal(next)
 	if err == nil {
 		err = r.primary.store.SaveToken(ctx, r.key, raw)
 	}
 	if err != nil {
-		delete(r.links, subject)
 		account.store.Close()
 		return err
 	}
+	r.mu.Lock()
+	r.links = next
 	r.users[ampID], r.subjects[subject] = account, account
+	r.mu.Unlock()
 	if r.start != nil {
 		r.start(account)
 	}
@@ -207,6 +215,8 @@ func (r *accountRegistry) browserManager(code string) *browserbridge.Manager {
 // close is called after HTTP serving and workers stop, or during failed startup.
 // The primary account is closed by main.
 func (r *accountRegistry) close() {
+	r.linkMu.Lock()
+	defer r.linkMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, account := range r.subjects {

@@ -479,20 +479,28 @@ func (g *Gateway) getOperation(ctx context.Context, id string) (store.Operation,
 
 // Run executes persisted requests serially until ctx is cancelled. It never retries dispatch.
 func (g *Gateway) Run(ctx context.Context) error {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	timer := time.NewTimer(0) // Drain persisted ready work on startup.
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-g.store.Ready():
+			timer.Reset(0)
+		case <-timer.C:
+			// Retain expiration/recovery checks without polling idle accounts at 5 Hz.
+			timer.Reset(time.Minute)
 			o, err := g.store.Claim(ctx)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return fmt.Errorf("claim operation: %w", err)
 			}
+			timer.Reset(0) // Continue draining after this operation, including denials.
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
 			expectedBinding := ""

@@ -77,7 +77,12 @@ func newFixture(t *testing.T) *fixture {
 	h, err := New(context.Background(), Config{
 		BaseURL: "http://gateway.example", ClientID: "client", ClientSecret: "client-secret",
 		IssuerURL: f.issuer.URL, ActorURL: f.issuer.URL + "/actor", InsecureCookies: true,
-		Subject: func(context.Context) string { return f.subject }, Current: func(string) string { return "" },
+		Subject: func(context.Context) string { return f.subject }, Current: func(subject string) string {
+			if subject == f.linkedSubject {
+				return f.linkedAmpID
+			}
+			return ""
+		},
 		Link: func(_ context.Context, subject, ampID string) error {
 			f.linkedSubject, f.linkedAmpID = subject, ampID
 			return f.linkErr
@@ -131,6 +136,27 @@ func TestSignedOAuthHandshakeLinksActor(t *testing.T) {
 	}
 	if replay := f.callback(state, cookie); replay.Code != http.StatusBadRequest {
 		t.Fatalf("replay status = %d", replay.Code)
+	}
+	start := httptest.NewRecorder()
+	f.handler.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/auth/amp/link", nil))
+	if start.Header().Get("Location") != "/account" || len(start.Result().Cookies()) != 0 {
+		t.Fatal("already linked user created another pending link")
+	}
+}
+
+func TestRepeatedStartsCannotConsumeOtherUsersLinkCapacity(t *testing.T) {
+	f := newFixture(t)
+	oldState, oldCookie := f.begin(t)
+	for range maxPending + 1 {
+		f.begin(t)
+	}
+	if w := f.callback(oldState, oldCookie); w.Code != http.StatusBadRequest {
+		t.Fatal("superseded attempt was not invalidated")
+	}
+	f.subject = "other-google-user"
+	state, cookie := f.begin(t)
+	if w := f.callback(state, cookie); w.Code != http.StatusSeeOther || f.linkedSubject != "other-google-user" {
+		t.Fatal("one user exhausted another user's linking capacity")
 	}
 }
 

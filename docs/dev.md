@@ -538,15 +538,18 @@ To configure a deployment:
 1. Register a dedicated Google OAuth **Web application** client in your Workspace
    organisation. Use an internal consent screen where available and the exact
    redirect URI `https://gateway.example.com/auth/callback`, replacing the host.
-2. Register the Amp Login client with the exact redirect URI
-   `https://lox-mcp-gateway.fly.dev/auth/amp/callback`. The supplied client ID is
-   `client_01M3ZSYJJ8GF4TDDEAWBVC8CSM`; keep its secret out of the config file.
-3. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set the Google client ID and
+2. Register your own Amp Login client with the exact redirect URI
+   `https://YOUR-GATEWAY-HOST/auth/amp/callback`. Keep its secret out of the config
+   file. The maintainer's deployment uses `https://lox-mcp-gateway.fly.dev/auth/amp/callback`
+   and client `client_01M3ZSYJJ8GF4TDDEAWBVC8CSM`; those are not self-hosting defaults.
+3. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set `BaseURL` to your
+   own HTTPS origin. Set the Google client ID and
    your stable Google `sub`, obtained from a verified Google sign-in. Keep
    `HostedDomain` set to your Workspace domain. `OwnerSubject` and `AmpUserID`
    bootstrap the existing primary account and must be its stable Google subject
    and Amp ID. There is no first-login takeover or email-based matching.
-4. Set `AmpLoginClientID` to enable shared-host linking. This mode requires Google
+4. Set `AmpLoginClientID` to your own registered client ID to enable shared-host
+   linking. This mode requires Google
    issuer `https://accounts.google.com`, a non-empty `HostedDomain`, and the
    bootstrap `OwnerSubject` and `AmpUserID` above. Enabling it invalidates existing
    browser sessions because linked mode derives a different shared session key.
@@ -832,8 +835,10 @@ not isolation from a compromised host or process. Back up the primary database,
 the entire accounts directory and the unchanged master keys.
 
 Each Google subject and Amp user ID can be linked only once. Links persist in the
-bootstrap database and are restored on restart. Users then configure the same
-`https://lox-mcp-gateway.fly.dev/mcp` remote endpoint with Amp Workload Identity;
+bootstrap database and are restored on restart, including after Google client-ID
+rotation. Changing the trusted issuer or Workspace domain uses a separate link
+namespace. Users then configure the same `https://YOUR-GATEWAY-HOST/mcp` remote
+endpoint with Amp Workload Identity;
 the verified Amp user ID routes each request to its isolated runtime.
 
 Unlink, reassignment and offboarding are not implemented. Do not edit stored links
@@ -844,6 +849,11 @@ revoke standing authority and provider credentials deliberately when offboarding
 Sign-out clears the browser cookie but cannot revoke a copied cookie; sessions last
 up to 12 hours. Resource admission limits apply separately per account, while CPU,
 memory and total disk remain shared. Multiple replicas remain unsupported.
+
+Account workers wake after committed submissions/approvals and drain ready work
+on startup. Idle expiration sweeps run once per minute per account; expiration
+still prevents dispatch at claim time. One user may hold one pending Amp login
+attempt, replaced on retry, so repeated starts cannot fill the global state limit.
 
 This linking mode is implemented and locally tested but has not been deployed or
 configured with production secrets. Live Google/Amp linking and Fly checks are

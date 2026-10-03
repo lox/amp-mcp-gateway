@@ -198,8 +198,8 @@ func run() error {
 		<-ctx.Done()
 		if registry != nil {
 			// Wait for an in-flight link before allowing the worker group to finish.
-			registry.mu.Lock()
-			registry.mu.Unlock()
+			registry.linkMu.Lock()
+			registry.linkMu.Unlock()
 		}
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()

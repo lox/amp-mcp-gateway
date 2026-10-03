@@ -142,6 +142,10 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if h.current(subject) != "" {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
 	state, err := randomString()
 	if err != nil {
 		http.Error(w, "account linking unavailable", http.StatusInternalServerError)
@@ -156,7 +160,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	now := h.now()
 	for key, item := range h.states {
-		if !item.expires.After(now) {
+		if !item.expires.After(now) || item.subject == subject {
 			delete(h.states, key)
 		}
 	}

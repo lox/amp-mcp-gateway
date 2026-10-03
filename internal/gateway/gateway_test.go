@@ -122,6 +122,30 @@ func await(t *testing.T, s *store.Store, id, status string) store.Operation {
 	return store.Operation{}
 }
 
+func TestWorkerDrainsPersistedReadyWorkWithoutWakeups(t *testing.T) {
+	g, s, _ := fixture(t)
+	for _, id := range []string{"persisted-first", "persisted-second"} {
+		if _, err := g.submit(t.Context(), input(id, id)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Decide(t.Context(), id, "owner", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-s.Ready() // A restarted process has no in-memory notifications.
+	runWorker(t, g)
+	await(t, s, "persisted-first", "succeeded")
+	await(t, s, "persisted-second", "succeeded")
+	// Work arriving after draining still wakes the otherwise-idle worker.
+	if _, err := g.submit(t.Context(), input("later-request", "later")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Decide(t.Context(), "later-request", "owner", true); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, "later-request", "succeeded")
+}
+
 func TestApprovalExecutesStoredArgumentsExactlyOnce(t *testing.T) {
 	g, s, b := fixture(t)
 	runWorker(t, g)
