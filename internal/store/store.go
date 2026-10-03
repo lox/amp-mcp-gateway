@@ -2,6 +2,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -47,6 +48,7 @@ type Operation struct {
 	Digest                        string          `json:"digest"`
 	LegacyDigest                  string          `json:"-"`
 	Binding                       string          `json:"binding"`
+	ConnectionBinding             string          `json:"connection_binding,omitempty"`
 	ApprovalScope                 string          `json:"approval_scope,omitempty"`
 	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
 	ApprovalGrantSource           string          `json:"approval_grant_source,omitempty"`
@@ -313,7 +315,9 @@ func (s *Store) decode(row scanner) (Operation, error) {
 	if err != nil {
 		return o, err
 	}
-	err = json.Unmarshal(raw, &o)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	err = decoder.Decode(&o)
 	if o.Private && len(o.Result) == 0 {
 		o.Result = o.ProtectedResult
 	}
@@ -404,10 +408,10 @@ func event(ctx context.Context, tx *sql.Tx, id, kind, actor string) error {
 
 // Decide consumes an unexpired one-off approval or denial.
 func (s *Store) Decide(ctx context.Context, id, actor string, approve bool) error {
-	return s.decide(ctx, id, actor, approve, "once")
+	return s.decide(ctx, id, actor, approve, nil)
 }
 
-func (s *Store) decide(ctx context.Context, id, actor string, approve bool, scope string) error {
+func (s *Store) decide(ctx context.Context, id, actor string, approve bool, options *ApprovalOptions) error {
 	status := "denied"
 	if approve {
 		status = "ready"
@@ -428,15 +432,15 @@ func (s *Store) decide(ctx context.Context, id, actor string, approve bool, scop
 	if n != 1 {
 		return errors.New("operation no longer awaiting approval or expired")
 	}
-	if approve && scope != "once" {
+	if approve && options != nil {
 		o, err := s.decode(tx.QueryRowContext(ctx, "SELECT id,status,payload FROM operations WHERE id=?", id))
 		if err != nil {
 			return err
 		}
-		if err := s.saveGrant(ctx, tx, o, scope); err != nil {
+		if err := s.saveGrant(ctx, tx, o, *options); err != nil {
 			return err
 		}
-		if err := event(ctx, tx, id, "approval-"+scope, actor); err != nil {
+		if err := event(ctx, tx, id, "approval-"+options.Scope, actor); err != nil {
 			return err
 		}
 	}

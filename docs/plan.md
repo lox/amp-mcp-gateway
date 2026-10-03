@@ -24,8 +24,9 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once or create a revocable standing approval
-  lasting one hour for the same tool/configuration binding in its verified Amp
-  thread or project. Check the original consent again at atomic claim.
+  for exact arguments, a tool, or a connection in its verified Amp thread or project.
+  Default to exact arguments in this thread until revoked; optionally expire after
+  one or 24 hours. Keep configuration bindings and check consent again at atomic claim.
   Never automatically retry an ambiguous dispatch.
 - Permit tools from private connections only when each fresh Amp token attests a
   private, non-multiplayer thread where no non-owner can influence the call.
@@ -92,9 +93,10 @@ documentation/setup work.
 Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience,
 `token_use=mcp` and one allowed user ID. The signed subject and thread ID plus
 optional workspace/project IDs are stored and shown during review. Pending requests
-can be approved once, for the thread, or across the project. Standing approvals are
-encrypted, bound to the exact identity/tool/configuration context, listed for the
-owner, revocable, and expire one hour after creation. Expiry, revocation or replaced
+default to one-off approval. A Remember checkbox reveals the allowed calls,
+thread/project context and optional expiry. Standing approvals are encrypted,
+bound to identity and configuration, listed for the owner, and revocable. New grants
+default to no expiry; existing one-hour grants retain their deadline. Expiry, revocation or replaced
 consent denies queued grant-authorized calls at atomic claim; directly approved
 and already claimed calls are unaffected. Amp-hosted remote MCP definitions send the short-lived
 token directly, without a local bridge or stored gateway credential. Native credential

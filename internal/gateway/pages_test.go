@@ -57,6 +57,10 @@ func TestFocusedPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	oneOff := formRequest(h, cookie, "GET", "/operations/"+second.ID, nil).Body.String()
+	if !strings.Contains(oneOff, ">Approve once</button>") || !strings.Contains(oneOff, ">Deny</button>") || strings.Contains(oneOff, "Remember this approval") {
+		t.Fatal("request without verified Amp thread identity offered reusable approval controls")
+	}
 	if w := formRequest(h, cookie, "POST", "/operations/"+first.ID+"/deny", nil); w.Code != 303 {
 		t.Fatal("could not deny request")
 	}
@@ -71,5 +75,17 @@ func TestFocusedPages(t *testing.T) {
 	}
 	if strings.Count(review, "<td>pending</td>") != 1 {
 		t.Fatal("request history included another operation")
+	}
+	g.cfg.AmpUserID = "user-owner"
+	identity := ampIdentity{Subject: "amp:user-owner", UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+	remembered, err := g.submit(withAmpIdentity(t.Context(), identity), input("remember-request", "remember-private-argument"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rememberReview := formRequest(h, cookie, "GET", "/operations/"+remembered.ID, nil).Body.String()
+	for _, want := range []string{`name="remember" value="on"`, `name="breadth"`, `value="exact"`, `value="tool"`, `value="connection"`, `name="scope"`, `value="thread"`, `value="project"`, `name="expiry"`, `value="never"`, `value="1h"`, `value="24h"`, "Same tool + same arguments", "This thread", "Until revoked", "Approve & remember"} {
+		if !strings.Contains(rememberReview, want) {
+			t.Fatalf("remember approval review missing %q", want)
+		}
 	}
 }

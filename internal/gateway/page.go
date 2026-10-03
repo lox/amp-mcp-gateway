@@ -197,13 +197,39 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Parse(au
 {{if eq .Status "pending"}}<div class="card"><h2>Review this request</h2><p>Account: <strong>{{.Account}}</strong> (configured label) · Connection: <code>{{.Connection}}</code></p>
 {{if .AmpThreadID}}<div class="amp-context"><dl><dt>Workspace</dt><dd>{{if .AmpWorkspaceID}}<code>{{.AmpWorkspaceID}}</code>{{else}}Not provided by Amp{{end}}</dd><dt>Project</dt><dd>{{if .AmpProjectID}}<code>{{.AmpProjectID}}</code>{{else}}No project{{end}}</dd><dt>Thread</dt><dd><a href="https://ampcode.com/threads/{{.AmpThreadID}}">{{.AmpThreadID}}</a></dd></dl></div>{{end}}
 <h3>Exact arguments</h3><pre>{{$.Arguments}}</pre><p class="note">Approve only if the account, tool and arguments are correct. This is not an effect preview.</p>
-<div class="actions approval-actions"><form class="approval-form" method="post" action="/operations/{{.ID}}/approve"><fieldset class="approval-scope"><legend>Approve for</legend><div class="scope-options"><label class="scope-option"><input type="radio" name="scope" value="once" data-help="Authorise only this exact stored request." checked><span>Once</span></label>{{if .AmpThreadID}}<label class="scope-option"><input type="radio" name="scope" value="thread" data-help="Allow future calls to {{.Tool}} in this thread for one hour, with any schema-valid arguments."><span>This thread</span></label>{{end}}{{if .AmpProjectID}}<label class="scope-option"><input type="radio" name="scope" value="project" data-help="Allow future calls to {{.Tool}} across threads in this project for one hour, with any schema-valid arguments."><span>This project</span></label>{{end}}</div><p class="scope-help" aria-live="polite">Authorise only this exact stored request.</p>{{if .AmpThreadID}}<p class="help">Thread and project approvals last one hour. Revoke them under <a href="/approval-grants">Standing approvals</a>. Expiry or revocation stops queued calls, not this directly approved request or calls already running.</p>{{end}}</fieldset><button class="primary">Approve</button></form><form method="post" action="/operations/{{.ID}}/deny"><button class="danger">Deny</button></form></div></div>
+<div class="actions approval-actions"><form class="approval-form" method="post" action="/operations/{{.ID}}/approve">{{if and .AmpUserID .AmpThreadID}}<div class="remember-approval"><label class="remember-toggle"><input type="checkbox" name="remember" value="on" disabled><span><strong>Remember this approval</strong><small>Allow matching calls without asking again.</small></span></label><noscript><p class="help">Enable JavaScript to save an approval. You can still approve this request once.</p></noscript><div class="remember-options">
+<details><summary><span class="breadth-summary">Same tool + same arguments</span> <span aria-hidden="true">·</span> <span class="change">Change</span></summary><label for="approval-breadth">Calls that can use this approval</label><select id="approval-breadth" name="breadth"><option value="exact">Same tool + same arguments</option><option value="tool">Same tool + any arguments</option><option value="connection">Any tool on this connection</option></select></details>
+<details><summary><span class="scope-summary">This thread</span> <span aria-hidden="true">·</span> <span class="change">Change</span></summary><label for="approval-scope">Amp context</label><select id="approval-scope" name="scope"><option value="thread">This thread</option>{{if .AmpProjectID}}<option value="project">This project</option>{{end}}</select></details>
+<details><summary><span class="expiry-summary">Until revoked</span> <span aria-hidden="true">·</span> <span class="change">Add expiry</span></summary><label for="approval-expiry">Expiry</label><select id="approval-expiry" name="expiry"><option value="never">Until revoked</option><option value="1h">In 1 hour</option><option value="24h">In 24 hours</option></select></details>
+<p class="remember-warning" role="status">Identical calls may run again without asking. Configuration changes require approval again.</p><p class="help">Revoke saved approvals under <a href="/approval-grants">Standing approvals</a>. Expiry or revocation stops queued calls, not this request or calls already running.</p></div></div>{{end}}<button class="primary">Approve once</button></form><form method="post" action="/operations/{{.ID}}/deny"><button class="danger">Deny</button></form></div></div>
 <script>
 (() => {
  const form = document.querySelector('.approval-form');
  if (!form) return;
- const help = form.querySelector('.scope-help');
- form.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', () => { if (input.checked) help.textContent = input.dataset.help; }));
+ const remember = form.querySelector('input[name="remember"]');
+ if (!remember) return;
+ const button = form.querySelector('.primary');
+ const breadth = form.querySelector('[name="breadth"]');
+ const scope = form.querySelector('[name="scope"]');
+ const expiry = form.querySelector('[name="expiry"]');
+ const warning = form.querySelector('.remember-warning');
+ const labels = select => select.options[select.selectedIndex].textContent;
+ function update() {
+  button.textContent = remember.checked ? 'Approve & remember' : 'Approve once';
+  form.querySelector('.breadth-summary').textContent = labels(breadth);
+  form.querySelector('.scope-summary').textContent = labels(scope);
+  form.querySelector('.expiry-summary').textContent = labels(expiry);
+  expiry.closest('details').querySelector('.change').textContent = expiry.value === 'never' ? 'Add expiry' : 'Change';
+  warning.textContent = breadth.value === 'exact'
+   ? 'Identical calls may run again without asking. Configuration changes require approval again.'
+   : breadth.value === 'tool'
+    ? 'This tool may run again with any arguments without asking. Configuration changes require approval again.'
+    : 'All tools on this connection may run with any arguments without asking. Blocked tools remain blocked, and configuration changes require approval again.';
+ }
+ [remember, breadth, scope, expiry].forEach(control => control.addEventListener('change', update));
+ remember.checked = false;
+ update();
+ remember.disabled = false;
 })();
 </script>
 {{else}}{{template "operation-status" $}}<p class="help live-error" role="alert" hidden></p>{{end}}
@@ -216,7 +242,13 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Parse(au
 <a class="button" href="/connections/{{.ID}}/tools">Manage tools</a></div>{{else}}<div class="empty"><h2>No connections yet</h2><p>Add a server, connect credentials, then review its tools.</p></div>{{end}}</div>
 {{else if eq .Section "audit"}}{{if .RawAudit}}<div class="heading"><h1>Raw audit events</h1><a href="/audit">← Request history</a></div><p class="sub">The latest 200 events, including configuration changes. Newest first · {{.Zone}}.</p><div id="audit-live" class="card scroll" data-live hx-get="{{.Current}}" hx-trigger="live-update from:body queue:last">{{template "audit-list" .}}</div><p class="help live-error" role="alert" hidden></p>{{else}}{{template "audit-history" .}}{{end}}
 {{else}}<h1>Operations</h1><p class="sub">Review requests, inspect results and manage standing approvals.</p><nav class="tabs" aria-label="Operation views"><a href="/operations" {{if and (ne .Section "approval-grants") (not .AllOperations)}}aria-current="page"{{end}}>Needs approval</a><a href="/operations?view=all" {{if .AllOperations}}aria-current="page"{{end}}>All operations</a><a href="/approval-grants" {{if eq .Section "approval-grants"}}aria-current="page"{{end}}>Standing approvals</a></nav>
-{{if eq .Section "approval-grants"}}<h2>Standing approvals</h2><p class="sub">Standing approvals last one hour. Expiry or revocation stops queued calls, but cannot cancel directly approved requests or calls already running.</p><div class="card scroll">{{if .ApprovalGrants}}<table><thead><tr><th>Tool</th><th>Scope</th><th>Amp context</th><th>Expires (UTC)</th><th></th></tr></thead><tbody>{{range .ApprovalGrants}}<tr><td><code>{{.Tool}}</code></td><td>{{if eq .Scope "thread"}}This thread{{else}}This project{{end}}</td><td>{{if eq .Scope "thread"}}<a href="https://ampcode.com/threads/{{.AmpThreadID}}">{{.AmpThreadID}}</a>{{else}}Project <code>{{.AmpProjectID}}</code>{{if .AmpWorkspaceID}}<br><small>Workspace <code>{{.AmpWorkspaceID}}</code></small>{{end}}{{end}}</td><td>{{.Expires.UTC.Format "2006-01-02 15:04:05"}}</td><td><form method="post" action="/approval-grants/{{.ID}}/revoke"><button class="danger">Revoke</button></form></td></tr>{{end}}</tbody></table>{{else}}<p class="sub">No standing approvals. Thread and project approvals created during review appear here.</p>{{end}}</div>
+{{if eq .Section "approval-grants"}}<h2>Standing approvals</h2><p class="sub">Saved approvals allow matching calls until they expire or you revoke them. Expiry or revocation stops queued calls, but cannot cancel directly approved requests or calls already running.</p>
+<div class="card scroll">{{if .ApprovalGrants}}<table class="approval-grants"><thead><tr><th>Allowed calls</th><th>Connection</th><th>Scope</th><th>Amp context</th><th>Expiry</th><th></th></tr></thead><tbody>
+{{range .ApprovalGrants}}<tr><td>{{if eq .Breadth "exact"}}Same tool + same arguments<br><code>{{.Tool}}</code><br><a href="/operations/{{.OperationID}}">View exact request</a>{{else if eq .Breadth "connection"}}All tools{{else}}Tool + any arguments<br><code>{{.Tool}}</code>{{end}}</td>
+<td><code>{{.Connection}}</code></td><td>{{if eq .Scope "thread"}}This thread{{else}}This project{{end}}</td>
+<td>{{if eq .Scope "thread"}}<a href="https://ampcode.com/threads/{{.AmpThreadID}}">{{.AmpThreadID}}</a>{{else}}Project <code>{{.AmpProjectID}}</code>{{if .AmpWorkspaceID}}<br><small>Workspace <code>{{.AmpWorkspaceID}}</code></small>{{end}}{{end}}</td>
+<td>{{if eq .Expiry "never"}}Until revoked{{else}}{{.Expires.UTC.Format "2006-01-02 15:04:05 UTC"}}{{end}}</td><td><form method="post" action="/approval-grants/{{.ID}}/revoke"><button class="danger">Revoke</button></form></td></tr>{{end}}
+</tbody></table>{{else}}<p class="sub">No standing approvals. Approvals you remember during request review appear here.</p>{{end}}</div>
 {{else}}<div id="operations-live" class="card scroll" data-live hx-get="/operations{{if .AllOperations}}?view=all{{end}}" hx-trigger="live-update from:body queue:last">{{template "operations-list" .}}</div><p class="help live-error" role="alert" hidden></p>{{end}}{{end}}
 {{end}}<footer>Local durable audit · encrypted payloads · not independently tamper-proof · no automatic write retries</footer></main></div>
 </body></html>
