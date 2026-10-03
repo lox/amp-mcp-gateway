@@ -6,11 +6,11 @@
       <label class="search">Search requests<input type="search" name="q" value="{{.Filter.Query}}" placeholder="Tool name or request ID" maxlength="256"></label>
       <label>Requested within<select name="period"><option value="24h" {{if eq .Period "24h"}}selected{{end}}>Last 24 hours</option><option value="7d" {{if eq .Period "7d"}}selected{{end}}>Last 7 days</option><option value="all" {{if eq .Period "all"}}selected{{end}}>All time</option></select></label>
       <label>Connection<input name="connection" list="audit-connections" value="{{.Filter.Connection}}" placeholder="All connections" maxlength="256"><datalist id="audit-connections">{{range .Connections}}<option value="{{.ID}}">{{.Account}}</option>{{end}}</datalist></label>
-      <label>Outcome<select name="outcome"><option value="">All outcomes</option>{{range $value := .Outcomes}}<option value="{{$value}}" {{if eq $.Filter.Outcome $value}}selected{{end}}>{{if eq $value "investigate"}}Needs investigation{{else}}{{status $value}}{{end}}</option>{{end}}</select></label>
+      <label>Outcome<select name="outcome"><option value="">All outcomes</option>{{range $value := .Outcomes}}<option value="{{$value}}" {{if eq $.Filter.Outcome $value}}selected{{end}}>{{if eq $value "active"}}In progress{{else if eq $value "investigate"}}Needs investigation{{else}}{{status $value}}{{end}}</option>{{end}}</select></label>
       <label>Timezone<select name="zone"><option value="Australia/Melbourne" {{if eq .Zone "Australia/Melbourne"}}selected{{end}}>Melbourne</option><option value="UTC" {{if eq .Zone "UTC"}}selected{{end}}>UTC</option></select></label>
       <button class="primary">Apply filters</button>
     </div>
-    <div class="filter-footer"><div class="chips" aria-label="Quick outcome filters"><button name="preset" value="all" aria-pressed="{{eq .Filter.Outcome ""}}">All</button><button name="preset" value="investigate" aria-pressed="{{eq .Filter.Outcome "investigate"}}">Needs investigation</button><button name="preset" value="denied" aria-pressed="{{eq .Filter.Outcome "denied"}}">Denied</button></div><a href="/audit">Clear filters</a></div>
+    <div class="filter-footer"><div class="chips" aria-label="Quick outcome filters"><button name="preset" value="all" aria-pressed="{{eq .Filter.Outcome ""}}">All</button><button name="preset" value="active" aria-pressed="{{eq .Filter.Outcome "active"}}">In progress</button><button name="preset" value="investigate" aria-pressed="{{eq .Filter.Outcome "investigate"}}">Needs investigation</button><button name="preset" value="denied" aria-pressed="{{eq .Filter.Outcome "denied"}}">Denied</button></div><a href="/audit">Clear filters</a></div>
   </form>
   <div id="audit-live" data-live hx-get="{{.Current}}" hx-trigger="live-update from:body queue:last">{{template "audit-requests" .}}</div>
   <p class="help live-error" role="alert" hidden></p>
@@ -20,11 +20,11 @@
 {{define "audit-requests"}}
   <div class="list-meta"><span>{{len .Requests}} requests on this page · newest requested first</span><span>{{.Zone}} · through <time datetime="{{iso .Filter.Until}}">{{stamp .Filter.Until .Zone}}</time></span></div>
   <section class="requests" aria-label="Request history">
-    <div class="columns" aria-hidden="true"><span></span><span>Requested</span><span>Tool / request</span><span>Connection / account</span><span class="requester">Requested by</span><span>Outcome</span></div>
+    <div class="columns" aria-hidden="true"><span></span><span>Requested / updated</span><span>Tool / request</span><span>Connection / account</span><span class="requester">Requested by</span><span>Outcome</span></div>
     {{range .Requests}}{{$op := .Operation}}
     <details class="audit-entry" data-request-id="{{$op.ID}}">
       <summary>
-        <span class="when"><time datetime="{{iso $op.Created}}">{{stamp $op.Created $.Zone}}</time></span>
+        <span class="when"><time datetime="{{iso $op.Created}}">{{stamp $op.Created $.Zone}}</time>{{with updated .Events}}<span class="secondary">Updated <time datetime="{{iso .}}">{{stamp . $.Zone}}</time></span>{{end}}</span>
         <span class="request-tool tool">{{$op.Tool}}<span class="secondary request-id" title="{{$op.ID}}">{{$op.ID}}</span></span>
         <span class="request-connection">{{$op.Connection}}<span class="secondary">{{$op.Account}}</span></span>
         <span class="requester">{{if $op.AmpUserID}}Amp caller<span class="secondary">Verified user</span>{{else}}{{actor $op.Subject $.Owner}}<span class="secondary">Token identity</span>{{end}}</span>

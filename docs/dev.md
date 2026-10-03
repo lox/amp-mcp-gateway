@@ -747,12 +747,13 @@ before restart recovery; original operation ciphertext is preserved. Subsequent
 startups inspect only the small summaries. Back up large ledgers before upgrading
 and allow time for this one-time migration.
 
-Audit filters request creation time and current outcome, not event time. Each
-page reads summaries and timelines in one transaction. Pagination fixes the
-creation-time window and uses creation time plus request ID as a cursor; outcomes
-can still change between pages. Tool and connection matching scans encrypted
-summaries rather than indexing plaintext metadata. The raw-events view retains
-global events that do not belong to a request.
+Audit filters request creation time and current outcome, not event time. The **In
+progress** outcome groups queued and running requests and searches all time so
+older active work remains discoverable. Each page reads summaries and timelines
+in one transaction. Pagination fixes the creation-time window and uses creation
+time plus request ID as a cursor; outcomes can still change between pages. Tool
+and connection matching scans encrypted summaries rather than indexing plaintext
+metadata. The raw-events view retains global events that do not belong to a request.
 
 ## Connect real services deliberately
 
@@ -787,7 +788,7 @@ the encryption key separately. Losing the key loses the encrypted data. Changing
 the key is not a supported rotation procedure. Changing `AmpUserID` revokes the old
 user on restart and invalidates queued operations. Changing identity configuration
 also invalidates queued approvals; drain work before updating it. Standing thread
-and project approvals can be revoked under **Operations → Standing approvals**, but there is no Amp
+and project approvals can be revoked under **Approvals → Standing approvals**, but there is no Amp
 token introspection or way to stop a thread from submitting new pending requests.
 Legacy standing approvals expire one hour after their original creation, without
 an upgrade grace period; new approvals may explicitly have no expiry. Older queued

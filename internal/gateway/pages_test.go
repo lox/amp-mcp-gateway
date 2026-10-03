@@ -17,7 +17,6 @@ func TestFocusedPages(t *testing.T) {
 	h, cookie := adminUI(t, g, m)
 	for _, tc := range []struct{ path, want, absent string }{
 		{"/operations", "Nothing needs your approval", "Add MCP"},
-		{"/operations?view=all", "No operations yet", "Add MCP"},
 		{"/integrations", "Fly.io", "Nothing needs your approval"},
 		{"/integrations/fly", "Connect Fly.io", "Nothing needs your approval"},
 		{"/connections", "Add MCP", "Nothing needs your approval"},
@@ -42,6 +41,9 @@ func TestFocusedPages(t *testing.T) {
 	if w := formRequest(h, cookie, "GET", "/", nil); w.Code != 303 || w.Header().Get("Location") != "/operations" {
 		t.Fatal("home did not redirect to operations")
 	}
+	if w := formRequest(h, cookie, "GET", "/operations?view=all", nil); w.Code != 303 || w.Header().Get("Location") != "/audit" {
+		t.Fatal("retired all-operations view did not redirect to audit")
+	}
 	if w := formRequest(h, cookie, "GET", "/connections/missing/settings", nil); w.Code != 404 {
 		t.Fatal("missing connection did not return 404")
 	}
@@ -65,12 +67,11 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal("could not deny request")
 	}
 	pending := formRequest(h, cookie, "GET", "/operations", nil).Body.String()
-	all := formRequest(h, cookie, "GET", "/operations?view=all", nil).Body.String()
-	if strings.Contains(pending, first.ID) || !strings.Contains(pending, second.ID) || !strings.Contains(all, first.ID) || strings.Contains(all, "private-argument") {
-		t.Fatal("operation views did not filter or exposed payloads")
+	if strings.Contains(pending, first.ID) || !strings.Contains(pending, second.ID) || strings.Contains(pending, "All operations") || strings.Contains(pending, "private-argument") {
+		t.Fatal("approvals view did not filter or exposed payloads")
 	}
 	review := formRequest(h, cookie, "GET", "/operations/"+first.ID, nil).Body.String()
-	if !strings.Contains(review, `href="/operations/`+second.ID+`">Review next request`) || !strings.Contains(review, "Request history") || !strings.Contains(review, "<td>denied</td>") {
+	if !strings.Contains(review, `href="/operations/`+second.ID+`">Review next request`) || !strings.Contains(review, `href="/audit" aria-current="page"`) || !strings.Contains(review, `href="/audit">← Audit`) || !strings.Contains(review, "Request history") || !strings.Contains(review, "<td>denied</td>") {
 		t.Fatal("review lost the next request or request history")
 	}
 	if strings.Count(review, "<td>pending</td>") != 1 {
@@ -83,6 +84,9 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	rememberReview := formRequest(h, cookie, "GET", "/operations/"+remembered.ID, nil).Body.String()
+	if !strings.Contains(rememberReview, `href="/operations" aria-current="page"`) || !strings.Contains(rememberReview, `href="/operations">← Approvals`) {
+		t.Fatal("pending request did not return to approvals")
+	}
 	for _, want := range []string{`name="remember" value="on"`, `name="breadth"`, `value="exact"`, `value="tool"`, `value="connection"`, `name="scope"`, `value="thread"`, `value="project"`, `name="expiry"`, `value="never"`, `value="1h"`, `value="24h"`, "Same tool + same arguments", "This thread", "Until revoked", "Approve & remember"} {
 		if !strings.Contains(rememberReview, want) {
 			t.Fatalf("remember approval review missing %q", want)

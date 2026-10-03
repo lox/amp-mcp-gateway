@@ -74,23 +74,17 @@ func TestLiveOperationsList(t *testing.T) {
 	if err := s.Decide(t.Context(), "rejected-request", "owner", false); err != nil {
 		t.Fatal(err)
 	}
-	for _, all := range []bool{false, true} {
-		path := "/operations"
-		if all {
-			path += "?view=all"
-		}
-		r := httptest.NewRequest("GET", path, nil)
-		r.Header.Set("HX-Request", "true")
-		r.AddCookie(cookie)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		body := w.Body.String()
-		if w.Code != 200 || !strings.Contains(body, "waiting") || strings.Contains(body, "rejected") != all || strings.Contains(body, "private-argument") || strings.Contains(body, "<html") {
-			t.Fatalf("incorrect operations fragment: %d %s", w.Code, body)
-		}
-		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Vary") != "HX-Request" {
-			t.Fatal("list fragment must not be cached")
-		}
+	r := httptest.NewRequest("GET", "/operations", nil)
+	r.Header.Set("HX-Request", "true")
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "waiting") || strings.Contains(body, "rejected") || strings.Contains(body, "private-argument") || strings.Contains(body, "<html") {
+		t.Fatalf("incorrect approvals fragment: %d %s", w.Code, body)
+	}
+	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Vary") != "HX-Request" {
+		t.Fatal("list fragment must not be cached")
 	}
 }
 

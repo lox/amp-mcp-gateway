@@ -46,6 +46,8 @@ LEFT JOIN operation_summaries s ON s.id=o.id WHERE o.created>=?`
 	}
 	if f.Outcome == "investigate" {
 		query += " AND status IN ('failed','unknown')"
+	} else if f.Outcome == "active" {
+		query += " AND status IN ('ready','running')"
 	} else if f.Outcome != "" {
 		query += " AND status=?"
 		args = append(args, f.Outcome)

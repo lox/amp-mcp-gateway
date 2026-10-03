@@ -82,6 +82,28 @@ func TestAuditHistoryRenderingAndFilters(t *testing.T) {
 	}
 }
 
+func TestAuditInProgressIncludesOlderQueuedAndRunningRequests(t *testing.T) {
+	g, s, _ := fixture(t)
+	created := time.Now().Add(-48 * time.Hour).Unix()
+	for _, status := range []string{"ready", "running", "succeeded"} {
+		o := store.Operation{ID: "old-" + status, Tool: "notes.write", Connection: "notes", Status: status, Created: created}
+		if _, err := s.Submit(t.Context(), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := httptest.NewRecorder()
+	g.audit(w, httptest.NewRequest("GET", "/audit?preset=active", nil))
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "old-ready") || !strings.Contains(body, "old-running") || strings.Contains(body, "old-succeeded") {
+		t.Fatalf("in-progress filter did not select all-time active requests: %d %s", w.Code, body)
+	}
+	for _, want := range []string{`value="all" selected`, `value="active" selected`, `aria-pressed="true">In progress`, "Updated <time"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("in-progress view missing %q", want)
+		}
+	}
+}
+
 func TestAuditPaginationPreservesFiltersAndTimeWindow(t *testing.T) {
 	g, s, _ := fixture(t)
 	now := time.Now().Unix()
