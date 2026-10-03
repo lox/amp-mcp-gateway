@@ -160,7 +160,7 @@ func (g *Gateway) callIntegration(ctx operationContext, integration Integration,
 	}
 	var audience string
 	if g.cfg.AmpUserID != "" {
-		audience, err = ampAudience(g.cfg.BaseURL)
+		audience, err = CanonicalOrigin(g.cfg.BaseURL)
 		if err != nil {
 			return nil, err
 		}

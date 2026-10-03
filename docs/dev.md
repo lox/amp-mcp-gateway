@@ -24,7 +24,9 @@ as `pending`, `succeeded`, `failed`, `denied` and `unknown` have explicit compon
 rules, so dynamic Go status values cannot cause Tailwind to omit their styling.
 New utility variants must be written as complete class names, not concatenated.
 
-This is a single-owner prototype. Tests use fake services, not real accounts.
+Each linked account has one owner; one process and hostname can serve multiple
+isolated accounts with shared Google browser authentication.
+Tests use fake services, not real accounts.
 See the [plan](plan.md) and [feature matrix](todo.md) for what's still missing.
 
 ## Run the demo
@@ -498,10 +500,11 @@ MCP workload authentication, browser CSRF protection and upstream OAuth stay
 enabled. Register each upstream callback against the portal origin (for Dropbox,
 `/connections/dropbox/callback`). No Google browser callback is needed in this mode.
 
-### Fly: Amp clients and Google browser login
+### Fly: Amp clients, Google browser login and Amp account linking
 
-A Fly deployment needs Google credentials, exact owner restrictions and a public
-HTTPS origin. `fly.toml` uses one Machine in Sydney and `/data/gateway.db` on a
+A Fly deployment needs Google Workspace credentials, bootstrap owner restrictions,
+Amp Login credentials and a public HTTPS origin. `fly.toml` uses one Machine in
+Sydney and `/data/gateway.db` on a
 persistent volume. It does not run demo mode or fake providers. Before relying on
 a deployment, verify health, authenticated Amp discovery, unauthenticated rejection
 and a complete browser login against its configured identity provider.
@@ -535,15 +538,23 @@ To configure a deployment:
 1. Register a dedicated Google OAuth **Web application** client in your Workspace
    organisation. Use an internal consent screen where available and the exact
    redirect URI `https://gateway.example.com/auth/callback`, replacing the host.
-2. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set the client ID and
+2. Register your own Amp Login client with the exact redirect URI
+   `https://YOUR-GATEWAY-HOST/auth/amp/callback`. Keep its secret out of the config
+   file. The maintainer's deployment uses `https://lox-mcp-gateway.fly.dev/auth/amp/callback`
+   and client `client_01M3ZSYJJ8GF4TDDEAWBVC8CSM`; those are not self-hosting defaults.
+3. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set `BaseURL` to your
+   own HTTPS origin. Set the Google client ID and
    your stable Google `sub`, obtained from a verified Google sign-in. Keep
-   `HostedDomain` set to your Workspace domain. Both domain and exact owner must
-   match; an email suffix or the `hd` login hint is not authorization. There is no
-   first-login takeover.
-3. Confirm `AmpUserID` is your immutable Amp ID. All orb threads created by that
-   user share the configured owner's tool authority and can read its operations.
-   Project restrictions and per-thread permissions are not implemented.
-4. Supply `GATEWAY_OIDC_SECRET`, `GATEWAY_ENCRYPTION_KEY` and `GATEWAY_SESSION_KEY`
+   `HostedDomain` set to your Workspace domain. `OwnerSubject` and `AmpUserID`
+   bootstrap the existing primary account and must be its stable Google subject
+   and Amp ID. There is no first-login takeover or email-based matching.
+4. Set `AmpLoginClientID` to your own registered client ID to enable shared-host
+   linking. This mode requires Google
+   issuer `https://accounts.google.com`, a non-empty `HostedDomain`, and the
+   bootstrap `OwnerSubject` and `AmpUserID` above. Enabling it invalidates existing
+   browser sessions because linked mode derives a different shared session key.
+5. Supply `GATEWAY_OIDC_SECRET`, `GATEWAY_AMP_OIDC_SECRET`,
+   `GATEWAY_ENCRYPTION_KEY` and `GATEWAY_SESSION_KEY`
    through Fly secrets. Generate the latter two independently as 32 random bytes,
    standard base64. Back up the encryption key separately from the database.
    Never put credentials in source, command arguments, logs or chat.
@@ -556,7 +567,7 @@ export FLY_APP=your-app-name
   fly secrets import --stage --app "$FLY_APP"
 ```
 
-Use `fly secrets import --stage` with protected stdin for the three secret values
+Use `fly secrets import --stage` with protected stdin for the four secret values
 too. `GATEWAY_CONFIG` is decoded by Fly into `/etc/gateway.json`; the encryption
 and session keys remain environment secrets, not files on the database volume.
 Do not set `GATEWAY_TOKEN`: setting `AmpUserID` disables shared-token MCP access.
@@ -642,11 +653,11 @@ as the audience, and rejects redirects. No gateway credential or OAuth sign-in i
 stored in Amp. This authentication mode does not apply to local MCP configuration.
 The local demo still uses `demo-client` and its disposable bearer token.
 
-The gateway verifies Amp's fixed issuer and signature, exact audience, expiry,
-`token_use=mcp`, owner user ID and a thread ID. Stored operations include the
+The gateway verifies Amp's fixed issuer and signature, exact shared-host audience,
+expiry, `token_use=mcp`, a linked user ID and a thread ID. Stored operations include the
 verified Amp subject, user and thread plus optional workspace and project claims;
-the Google subject identifies the separate human approval. Model labels remain
-unverified. All threads owned by the configured Amp user can submit requests, but
+the linked Google subject identifies the separate human approval. Model labels remain
+unverified. All threads owned by that Amp user can submit requests, but
 standing approval can be narrowed to one thread or one workspace/project. A valid
 Amp signature alone is not authorization.
 
@@ -719,14 +730,14 @@ results are never truncated or changed by presentation.
 
 ## Identity and audit boundaries
 
-With Amp authentication, “on behalf of” maps the verified Amp user to the configured
-Google owner. Signed workspace, project and thread IDs supply approval scope and
+With Amp authentication, “on behalf of” maps the verified Amp user to its linked
+Google subject. Signed workspace, project and thread IDs supply approval scope and
 audit context, not a delegation chain or proof of human consent. A standing grant
 also binds the exact tool and connection/configuration digest. Legacy bearer mode
 identifies only the configured owner, not the actual holder, and offers one-shot
 approval only.
-Browser approvals check the owner's OIDC issuer/subject, audience, signature,
-expiry, nonce and configured hosted domain.
+Browser approvals use the authenticated Google subject linked to that account;
+login checks issuer, audience, signature, expiry, nonce and configured hosted domain.
 Model identity is explicitly client-reported and unverified; it never grants authority.
 Upstream account names are configured labels, not verified provider identities.
 
@@ -772,6 +783,7 @@ metadata. The raw-events view retains global events that do not belong to a requ
    | `GATEWAY_SESSION_KEY` | Separate random 32 bytes, standard base64 |
    | `GATEWAY_TOKEN` | Legacy/demo only when `AmpUserID` is absent; at least 32 characters |
    | `GATEWAY_OIDC_SECRET` | Browser OIDC client secret |
+   | `GATEWAY_AMP_OIDC_SECRET` | Amp Login OIDC client secret; required when `AmpLoginClientID` enables account linking |
    | Connection `TokenEnv` / `ClientSecretEnv` | Upstream credentials |
 
 5. Run `mise run build`, then `bin/mcp-gateway -config gateway.json`. Production
@@ -785,8 +797,9 @@ put secrets in URLs, enable real accounts in demo mode, or add replicas.
 
 Stop the process before taking a consistent backup of the SQLite database and keep
 the encryption key separately. Losing the key loses the encrypted data. Changing
-the key is not a supported rotation procedure. Changing `AmpUserID` revokes the old
-user on restart and invalidates queued operations. Changing identity configuration
+the key is not a supported rotation procedure. In single-owner mode, changing
+`AmpUserID` revokes the old user on restart and invalidates queued operations.
+Changing identity configuration
 also invalidates queued approvals; drain work before updating it. Standing thread
 and project approvals can be revoked under **Approvals → Standing approvals**, but there is no Amp
 token introspection or way to stop a thread from submitting new pending requests.
@@ -801,9 +814,63 @@ when changing OIDC configuration or revoking browser sessions. Sign-out clears t
 browser cookie but cannot revoke a copied session cookie; sessions otherwise last
 12 hours.
 
+## Shared-host account linking
+
+`AmpLoginClientID` enables this mode; there is no `Accounts` array. Everyone uses
+the configured `BaseURL`, the existing Google callback `/auth/callback`, and the
+same `/mcp` audience. Google Workspace OIDC authenticates the browser and restricts
+login to `HostedDomain`. After login, an unlinked domain member lands on **Account**
+and selects **Sign in with Amp**. The callback `/auth/amp/callback` verifies Amp's
+OIDC response and calls `/api/v2/actor` to obtain the stable user ID. Email addresses
+are neither compared nor used as identifiers, and there is no manual Amp ID field.
+
+In this mode the TLS proxy must preserve the public `Host` matching `BaseURL`;
+other hosts return 404 except for `/healthz`. Forwarded host headers are not trusted.
+Without `AmpLoginClientID`, existing single-owner proxy behavior is unchanged.
+
+The top-level `OwnerSubject`, `AmpUserID`, `Database`, encryption key and existing
+primary data remain the bootstrap account. On first enabling linking, the database
+is permanently bound to its issuer, Google subject and Amp ID. Later identity
+changes fail startup, even if linking is disabled; do not repurpose the database.
+A newly linked Google subject receives its own encrypted database under
+`Database + ".accounts"` (for example
+`/data/gateway.db.accounts/`), derived storage key, catalogue, providers, OAuth
+state, workers, Chrome pairing manager, Fly leases, approvals and audit history.
+Users do not share connections or credentials. They do share the process, disk,
+hostname, Google browser authentication and session-cookie boundary, so this is
+not isolation from a compromised host or process. Back up the primary database,
+the entire accounts directory and the unchanged master keys.
+
+Each Google subject and Amp user ID can be linked only once. Links persist in the
+bootstrap database and are restored on restart, including after Google client-ID
+rotation. Changing the trusted issuer or Workspace domain uses a separate link
+namespace. Users then configure the same `https://YOUR-GATEWAY-HOST/mcp` remote
+endpoint with Amp Workload Identity;
+the verified Amp user ID routes each request to its isolated runtime.
+
+Unlink, reassignment and offboarding are not implemented. Do not edit stored links
+or reuse a database for another person. Disabling a Google Workspace user prevents
+future browser logins, but existing gateway sessions last until expiry and the
+linked Amp identity retains workload access. There is no automatic deprovisioning;
+revoke standing authority and provider credentials deliberately when offboarding.
+Sign-out clears the browser cookie but cannot revoke a copied cookie; sessions last
+up to 12 hours. Resource admission limits apply separately per account, while CPU,
+memory and total disk remain shared. Multiple replicas remain unsupported.
+
+Workload discovery and JWKS caching are shared across the deployment; exact user
+authorization remains account-specific. Account workers wake after committed
+submissions/approvals and drain ready work on startup. Idle expiration sweeps run
+once per minute per account; expiration
+still prevents dispatch at claim time. One user may hold one pending Amp login
+attempt, replaced on retry, so repeated starts cannot fill the global state limit.
+
+This linking mode is implemented and locally tested but has not been deployed or
+configured with production secrets. Live Google/Amp linking and Fly checks are
+therefore blocked until deployment.
+
 ## Verification and limits
 
-New operation and agent policy-proposal admission is bounded by 10,000 retained
+Per-account operation and agent policy-proposal admission is bounded by 10,000 retained
 operations, 50,000 audit events, and 64 MiB of encrypted operation payload plus
 audit text-field bytes. There is also a limit of 16 pending, ready or running
 operations. Requests beyond these limits return an MCP tool error and persist
@@ -829,8 +896,8 @@ runs `go vet`. Tests cover the MCP protocol, argument substitution, stale approv
 concurrent approval/claim, unknown outcomes, restart recovery, ciphertext integrity,
 OIDC claim rejection/PKCE/state replay, OAuth refresh rotation and CSRF.
 
-Deferred: multiple users, per-agent identities and delegation chains, verified model
+Deferred: shared team connections, per-agent identities and delegation chains, verified model
 attestation, semantic/Jev discovery, batch calls, stdio/legacy-SSE upstreams,
 provider-specific account introspection, signed audit exports, retention and key
-rotation, policy expressions and production deployment hardening. Keep usage
+rotation, policy expressions and production deployment hardening. Keep each account
 owner-only and low-volume; public ingress is not a claim of production certification.

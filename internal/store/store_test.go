@@ -31,6 +31,49 @@ func operation(id, status string) Operation {
 	return Operation{ID: id, Tool: "notes.create", Subject: "owner", Digest: "digest", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{"text": "sensitive-request-value"}}
 }
 
+func TestWorkerWakeupsFollowCommittedReadyTransitions(t *testing.T) {
+	s, _, _ := testStore(t)
+	check := func(want bool) {
+		t.Helper()
+		select {
+		case <-s.Ready():
+			if !want {
+				t.Fatal("unexpected worker wakeup")
+			}
+		default:
+			if want {
+				t.Fatal("committed ready work did not wake worker")
+			}
+		}
+	}
+	if _, err := s.Submit(t.Context(), operation("pending", "pending")); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+	if err := s.Decide(t.Context(), "pending", "owner", true); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	if op, err := s.Claim(t.Context()); err != nil || op.ID != "pending" {
+		t.Fatalf("wakeup preceded durable ready work: %v", err)
+	}
+	if err := s.Decide(t.Context(), "missing", "owner", true); err == nil {
+		t.Fatal("missing approval accepted")
+	}
+	check(false)
+	for _, id := range []string{"ready-a", "ready-b"} {
+		if _, err := s.Submit(t.Context(), operation(id, "ready")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(true)
+	check(false) // Multiple ready commits coalesce; the worker drains them.
+	if _, err := s.Submit(t.Context(), operation("ready-a", "ready")); err != nil {
+		t.Fatal(err)
+	}
+	check(false) // Idempotent retries do not create more work.
+}
+
 func TestEventSequenceIgnoresRollbackAndIdleClaims(t *testing.T) {
 	s, _, _ := testStore(t)
 	check := func(want int64) {

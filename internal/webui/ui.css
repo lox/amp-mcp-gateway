@@ -6,6 +6,7 @@
 @source "../gateway/page.go";
 @source "../gateway/audit.html";
 @source "../browserauth/browserauth.go";
+@source "../amplink/amplink.go";
 @source "../browserbridge/browserbridge.go";
 @theme {
   /* Keep the original pixel spacing independent of the 14px dashboard font. */

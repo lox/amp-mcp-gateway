@@ -1,6 +1,8 @@
 # Security policy
 
-Amp MCP Gateway is a single-owner prototype, not a production security product.
+Amp MCP Gateway supports isolated owner accounts, but remains a prototype, not a
+production security product. Accounts share a trusted process, host and operator;
+they are not sandboxes against compromise of that process or host.
 Only the latest commit on `main` receives security fixes.
 
 ## Reporting a vulnerability

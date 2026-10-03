@@ -7,6 +7,7 @@
   "ClientID": "REPLACE_WITH_DEDICATED_GOOGLE_CLIENT_ID",
   "HostedDomain": "example.com",
   "AmpUserID": "user_REPLACE_ME",
+  "AmpLoginClientID": "REPLACE_WITH_YOUR_AMP_LOGIN_CLIENT_ID",
   "Connections": [],
   "Tools": []
 }

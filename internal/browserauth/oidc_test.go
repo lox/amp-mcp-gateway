@@ -25,18 +25,23 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := []struct {
-		name         string
-		hostedDomain string
-		claimDomain  string
-		claimSubject string
-		wantSuccess  bool
-		wantReason   string
+		name          string
+		hostedDomain  string
+		claimDomain   string
+		claimSubject  string
+		domainMembers bool
+		verified      bool
+		wantSuccess   bool
+		wantReason    string
 	}{
 		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
 		{name: "valid hosted domain", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "owner-123", wantSuccess: true},
 		{name: "missing hosted domain claim", hostedDomain: "example.com", claimSubject: "owner-123", wantReason: "hosted_domain"},
 		{name: "wrong hosted domain claim", hostedDomain: "example.com", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
 		{name: "same domain wrong owner", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", wantReason: "owner"},
+		{name: "verified domain member", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", domainMembers: true, verified: true, wantSuccess: true},
+		{name: "unverified domain member", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", domainMembers: true, wantReason: "hosted_domain"},
+		{name: "member wrong domain", hostedDomain: "example.com", claimDomain: "foreign.example", claimSubject: "other-owner", domainMembers: true, verified: true, wantReason: "hosted_domain"},
 		{name: "wrong nonce", claimSubject: "owner-123", wantReason: "nonce"},
 		{name: "wrong audience", claimSubject: "owner-123", wantReason: "id_token_verification"},
 		{name: "expired", claimSubject: "owner-123", wantReason: "id_token_verification"},
@@ -78,6 +83,7 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 					return
 				}
 				claims := map[string]any{"iss": issuer, "sub": tt.claimSubject, "aud": "gateway", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
+				claims["email_verified"] = tt.verified
 				if tt.claimDomain != "" {
 					claims["hd"] = tt.claimDomain
 				}
@@ -115,6 +121,9 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// The local signed provider stands in for Google. Constructor restrictions
+			// are checked separately; exercise the actual callback and session here.
+			a.allowDomainMembers = tt.domainMembers
 			app := http.NewServeMux()
 			a.Register(app)
 			login := httptest.NewRecorder()
@@ -181,6 +190,15 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			for _, c := range res.Result().Cookies() {
 				if c.Name == sessionCookie && c.MaxAge > 0 {
 					session = true
+					request := httptest.NewRequest("GET", "/", nil)
+					request.AddCookie(c)
+					accepted := false
+					a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+						accepted = Subject(r.Context()) == tt.claimSubject
+					})).ServeHTTP(httptest.NewRecorder(), request)
+					if !accepted {
+						t.Fatal("verified member session rejected or mapped to wrong subject")
+					}
 				}
 			}
 			if session != tt.wantSuccess {
@@ -195,6 +213,26 @@ func TestOIDCRealHandshakeAndClaims(t *testing.T) {
 			}
 			if callback().Code != http.StatusBadRequest {
 				t.Fatal("OAuth state replay accepted")
+			}
+		})
+	}
+}
+
+func TestNewRejectsDomainMembersOutsideGoogleWorkspace(t *testing.T) {
+	base := Config{BaseURL: "https://gateway.example", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), OwnerSubject: "owner", Issuer: "https://accounts.google.com", ClientID: "client", ClientSecret: "secret", HostedDomain: "example.com", AllowDomainMembers: true}
+	for name, mutate := range map[string]func(*Config){
+		"non-Google issuer": func(c *Config) { c.Issuer = "https://issuer.example" },
+		"empty domain":      func(c *Config) { c.HostedDomain = "" },
+		"demo": func(c *Config) {
+			c.Demo, c.DemoPassword = true, "demo-only"
+			c.Issuer, c.ClientID, c.ClientSecret, c.HostedDomain = "", "", "", ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := base
+			mutate(&cfg)
+			if _, err := New(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "domain membership requires Google Workspace") {
+				t.Fatalf("unsafe domain-member configuration returned %v", err)
 			}
 		})
 	}

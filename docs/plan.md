@@ -18,9 +18,12 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - One Streamable HTTP MCP endpoint: `find_tools`, `call_tools`, `get_operation`,
   and `propose_policy_changes` for human-only application of policy batches.
 - Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
-- Single owner, one process, one SQLite disk. Persist intent before dispatch.
-- Google Workspace OIDC for the browser; Amp Workload Identity for remote MCP calls.
-  Match one Google subject and one Amp user. Keep the signed thread link; neither
+- One owner per isolated linked account, one shared HTTPS origin, one process and
+  one SQLite volume. Each user has a separate database. Persist intent before dispatch.
+- Google Workspace OIDC for shared browser authentication; Amp Login links each
+  Google subject to the stable user ID returned by Amp's actor API, and Amp Workload
+  Identity authenticates remote MCP calls. Do not match emails or accept manual IDs.
+  Keep the signed thread link; neither
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once or create a revocable standing approval
@@ -34,6 +37,23 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   and its data-handling requirements are acceptable.
 
 ## Delivery slices
+
+### Shared-host account linking — implemented locally
+
+`AmpLoginClientID` enables Workspace members to authenticate on the configured
+host and link through **Sign in with Amp**. Amp's actor API supplies the stable Amp
+user ID. The existing top-level owner remains the bootstrap account with its current
+database and keys; additional links get derived keys and separate databases under
+`Database + ".accounts"`. Each account owns its catalogue, providers, Chrome pairing,
+Fly leases, approvals and history while sharing browser authentication, hostname
+and `/mcp` audience.
+
+Validation covers one-to-one linking, signed Google/Amp authentication, workload
+routing, resource isolation and restart persistence. Production secrets and deploy
+have not been configured, so live verification is blocked. Unlink, reassignment,
+offboarding automation, shared connections and multiple replicas are out of scope.
+Disabling Google only prevents future login; it does not revoke existing sessions
+or linked Amp workload access.
 
 ### 1. Local vertical slice — complete
 
@@ -90,8 +110,8 @@ documentation/setup work.
 
 ### 3. Amp workload identity and Google browser login — implemented
 
-Amp tokens authenticate `/mcp` against a fixed issuer, gateway-origin audience,
-`token_use=mcp` and one allowed user ID. The signed subject and thread ID plus
+Amp tokens authenticate `/mcp` against a fixed issuer, shared gateway-origin audience,
+`token_use=mcp` and the linked account's user ID. The signed subject and thread ID plus
 optional workspace/project IDs are stored and shown during review. Pending requests
 default to one-off approval. A Remember checkbox reveals the allowed calls,
 thread/project context and optional expiry. Standing approvals are encrypted,
@@ -102,8 +122,9 @@ and already claimed calls are unaffected. Amp-hosted remote MCP definitions send
 token directly, without a local bridge or stored gateway credential. Native credential
 redemption also accepts an orb-minted `token_use=exchanged` token with the same audience
 and exact thread identity because the automatic MCP token is not exposed to the shell.
-Google browser login requires both the exact subject and configured hosted-domain claim. Both
-identities map explicitly to one configured owner; there is no delegation tree.
+Google browser login requires the configured hosted-domain claim. Amp Login binds
+each Google subject to the stable actor ID; the bootstrap pair is configured
+explicitly. There is no delegation tree.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, thread/project grant boundary and revocation tests, Google domain fixture
@@ -125,7 +146,7 @@ may only narrow authority. Do not build a general policy language first.
 Acceptance: negative tests demonstrate that changed arguments, resource state,
 account or delegation cannot reuse an approval or exceed a mandate.
 
-### 5. Single-owner Fly deployment — initial deployment running
+### 5. Fly deployment — existing single-owner deployment
 
 An initial single-owner deployment runs on public Fly HTTPS with one Machine and
 volume, separate environment secrets, Google login configuration and Amp workload
@@ -136,6 +157,9 @@ The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registra
 and deployment. Buildkite tests changes and deploys non-PR `main` builds serially;
 its app-scoped Fly secret is configured and deployment has passed. Tailscale is optional additional
 network protection, not authentication.
+
+The shared-host linking change is not deployed and its Amp Login secret is not
+configured. Its live Google/Amp linking checks remain blocked until rollout.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection

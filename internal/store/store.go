@@ -25,6 +25,7 @@ type Store struct {
 	aead   cipher.AEAD
 	lock   *os.File
 	limits ledgerUsage
+	ready  chan struct{}
 }
 
 // Operation is an immutable request with mutable execution state.
@@ -104,7 +105,7 @@ func Open(path, key string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, aead: aead, lock: lock, limits: ledgerUsage{operations: 10000, events: 50000, bytes: 64 << 20, outstanding: 16}}
+	s := &Store{db: db, aead: aead, lock: lock, ready: make(chan struct{}, 1), limits: ledgerUsage{operations: 10000, events: 50000, bytes: 64 << 20, outstanding: 16}}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
@@ -398,7 +399,24 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, Subject: o.Subject, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
 		return o, err
 	}
-	return o, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return o, err
+	}
+	if o.Status == "ready" {
+		s.signalReady()
+	}
+	return o, nil
+}
+
+// Ready coalesces post-commit wakeups for the single account worker. The worker
+// must drain ready operations at startup and after every wakeup.
+func (s *Store) Ready() <-chan struct{} { return s.ready }
+
+func (s *Store) signalReady() {
+	select {
+	case s.ready <- struct{}{}:
+	default:
+	}
 }
 
 func event(ctx context.Context, tx *sql.Tx, id, kind, actor string) error {
@@ -447,7 +465,13 @@ func (s *Store) decide(ctx context.Context, id, actor string, approve bool, opti
 	if err = event(ctx, tx, id, status, actor); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if approve {
+		s.signalReady()
+	}
+	return nil
 }
 
 // Claim atomically marks one unexpired operation running before any network dispatch.
@@ -491,6 +515,7 @@ func (s *Store) Claim(ctx context.Context) (Operation, error) {
 			if err := tx.Commit(); err != nil {
 				return o, err
 			}
+			s.signalReady() // A denied head does not prove the rest of the queue is empty.
 			return Operation{}, sql.ErrNoRows
 		}
 	}

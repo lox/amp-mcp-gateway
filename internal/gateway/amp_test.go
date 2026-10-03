@@ -311,15 +311,15 @@ func TestAmpAudience(t *testing.T) {
 		{"https://[2001:0db8:0000:0000:0000:0000:0000:0001]:8443", "https://[2001:db8::1]:8443"},
 	} {
 		t.Run(tc.base, func(t *testing.T) {
-			got, err := ampAudience(tc.base)
+			got, err := CanonicalOrigin(tc.base)
 			if err != nil || got != tc.want {
-				t.Fatalf("ampAudience(%q) = %q, %v; want %q", tc.base, got, err, tc.want)
+				t.Fatalf("CanonicalOrigin(%q) = %q, %v; want %q", tc.base, got, err, tc.want)
 			}
 		})
 	}
 	for _, base := range []string{"http://gateway.example.com", "https://gateway.example.com/mcp", "https://user@gateway.example.com", "https://127.000.000.001"} {
-		if got, err := ampAudience(base); err == nil {
-			t.Errorf("ampAudience(%q) = %q, want error", base, got)
+		if got, err := CanonicalOrigin(base); err == nil {
+			t.Errorf("CanonicalOrigin(%q) = %q, want error", base, got)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-# Single-owner gateway. Configure Google login and Amp identity before deployment.
+# One process and hostname; Google Workspace users link their Amp identities in the UI.
 app = "lox-mcp-gateway"
 primary_region = "syd"
 kill_signal = "SIGTERM"
