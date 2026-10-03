@@ -3,6 +3,18 @@
 Go MCP gateway for Amp with isolated owner accounts linked on one shared host. Use mise: `.agents/setup`, then `mise run check`.
 Keep dependencies deliberate; use the official MCP SDK rather than handwritten JSON-RPC.
 
+## Documentation
+
+- Keep documentation current when behavior, setup, constraints, or operational
+  procedures change.
+- Keep `README.md` short: summarize the project, provide the minimum working quick
+  start, and link to the appropriate file under `docs/` for detail.
+- Put each fact in one authoritative place. Link to it instead of copying it across
+  the README, development guide, plan, and TODOs.
+- Remove stale instructions and obsolete status notes as part of the change that
+  makes them stale. Do not accumulate speculative sections, duplicate explanations,
+  progress narration, or documentation for behavior that does not exist.
+
 ## Invariants
 
 - Never dispatch before persisting and atomically claiming an operation.
