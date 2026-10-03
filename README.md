@@ -80,7 +80,7 @@ also offer **Remember this approval**. A saved approval can match the exact call
 the tool with any arguments, or every non-blocked tool on the connection; it can be
 limited to the thread or, when verified, its project. It lasts until revoked unless
 you choose the one-hour or 24-hour preset. Manage saved approvals under
-**Operations → Standing approvals**. Expiry or revocation stops queued
+**Approvals → Standing approvals**. Expiry or revocation stops queued
 grant-authorized calls, not directly approved or already running calls. The request
 and its outcome are saved, so the agent can check back later without keeping the
 connection open.
@@ -99,15 +99,16 @@ Finished calls show the result first, with JSON formatted for reading. Expand
 
 ![Reviewing a demo request before approving it](docs/images/approval.png)
 
-**Operations** opens to **Needs approval**. Switch to **All operations** to see
-recent outcomes. Each request includes its history and, after a decision, a link
-to the next pending request. **Audit** groups events by request, with expandable
-timelines and filters for tool name or request ID, connection, outcome and time
-range. **Needs investigation** finds failed or unconfirmed outcomes. Browse older
-requests in pages of 25, or open **Raw events** for the latest 200 ledger events,
-including configuration changes. Arguments and results stay in request details.
+**Approvals** opens to **Needs approval** and also manages **Standing approvals**.
+Each request includes its history and, after a decision, a link to the next pending
+request. **Audit** contains all requests and outcomes, with expandable timelines
+and filters for tool name or request ID, connection, outcome and time range. **In
+progress** finds queued or running requests regardless of age; **Needs
+investigation** finds failed or unconfirmed outcomes. Browse older requests in
+pages of 25, or open **Raw events** for the latest 200 ledger events, including
+configuration changes. Arguments and results stay in request details.
 
-Operations and Audit update through an owner-authenticated SSE connection. The
+Approvals and Audit update through an owner-authenticated SSE connection. The
 server checks the committed audit sequence every 250 ms and sends a payload-free
 notification when it changes; htmx then fetches the current HTML. Active execution
 pages stop listening when the call finishes unless desktop alerts are enabled.
@@ -144,7 +145,7 @@ Native forms and page refresh still work without JavaScript. Approval, OAuth and
 Chrome pairing remain full-page flows; live updates never resubmit those actions.
 No page content is stored in htmx's browser history cache.
 
-![Recent demo operations](docs/images/dashboard.png)
+![Recent demo request history in Audit](docs/images/dashboard.png)
 
 ## Review a call inside Amp
 

@@ -621,12 +621,11 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	var err error
 	switch r.URL.Path {
 	case "/operations":
-		status := "pending"
 		if r.URL.Query().Get("view") == "all" {
-			status = ""
+			http.Redirect(w, r, "/audit", http.StatusSeeOther)
+			return
 		}
-		data["AllOperations"] = status == ""
-		data["Operations"], err = g.store.ListStatus(r.Context(), status)
+		data["Operations"], err = g.store.ListStatus(r.Context(), "pending")
 	case "/approval-grants":
 		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
 	case "/connections":

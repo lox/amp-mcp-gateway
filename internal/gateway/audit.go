@@ -22,7 +22,13 @@ var auditTemplateFuncs = template.FuncMap{
 		loc, _ := time.LoadLocation(zone) // Validated before rendering.
 		return time.Unix(epoch, 0).In(loc).Format("02 Jan 2006 · 15:04:05 MST")
 	},
-	"iso":    func(epoch int64) string { return time.Unix(epoch, 0).UTC().Format(time.RFC3339) },
+	"iso": func(epoch int64) string { return time.Unix(epoch, 0).UTC().Format(time.RFC3339) },
+	"updated": func(events []store.Event) int64 {
+		if len(events) == 0 {
+			return 0
+		}
+		return events[len(events)-1].Time
+	},
 	"status": auditStatus,
 	"event":  auditEvent,
 	"actor": func(actor, owner string) string {
@@ -144,6 +150,9 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 	if period == "" {
 		period = "24h"
 	}
+	if f.Outcome == "active" {
+		period = "all"
+	}
 	if zone == "" {
 		zone = "Australia/Melbourne"
 	}
@@ -181,7 +190,7 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch f.Outcome {
-	case "", "investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired":
+	case "", "active", "investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired":
 	default:
 		bad()
 		return
@@ -221,7 +230,7 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 		"Section":  "audit",
 		"Requests": requests, "Filter": f, "Period": period, "Zone": zone,
 		"Owner": g.cfg.OwnerSubject, "Connections": connections,
-		"Outcomes": []string{"investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired"},
+		"Outcomes": []string{"active", "investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired"},
 		"Older":    older, "Latest": latest,
 	})
 }

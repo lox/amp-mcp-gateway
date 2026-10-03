@@ -12,6 +12,8 @@ func TestAuditFiltersPaginationAndTimeline(t *testing.T) {
 		o := operation(fmt.Sprintf("request-%02d", i), "succeeded")
 		if i == 57 {
 			o.Status = "pending"
+		} else if i == 58 {
+			o.Status = "running"
 		}
 		o.Created = 1000 + int64(i/2) // Exercise cursor ties.
 		o.Connection, o.Account = "notes", "Notes account"
@@ -59,6 +61,10 @@ func TestAuditFiltersPaginationAndTimeline(t *testing.T) {
 		if len(got) != 1 || got[0].Operation.ID != tc.want || len(got[0].Events) != 2 || got[0].Events[0].Kind != "pending" || got[0].Events[1].Actor != "human" {
 			t.Fatalf("filtered timeline: %+v", got)
 		}
+	}
+	active, _, err := s.Audit(t.Context(), AuditFilter{Outcome: "active", Query: "request-58"})
+	if err != nil || len(active) != 1 || active[0].Operation.ID != "request-58" {
+		t.Fatalf("active filter: %+v %v", active, err)
 	}
 	// Unfiltered pagination must not skip requests sharing a timestamp.
 	all, more, err := s.Audit(t.Context(), AuditFilter{})
