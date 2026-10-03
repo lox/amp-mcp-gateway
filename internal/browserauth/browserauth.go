@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -40,16 +41,17 @@ type subjectKey struct{}
 // Config configures owner authentication. Demo mode is deliberately separate
 // from OIDC mode and requires both Demo and DemoPassword.
 type Config struct {
-	BaseURL            string
-	Issuer             string
-	ClientID           string
-	ClientSecret       string
-	OwnerSubject       string
-	HostedDomain       string
-	AllowDomainMembers bool // Admit other verified Google Workspace subjects in HostedDomain.
-	SessionKey         string
-	DemoPassword       string
-	Demo               bool
+	BaseURL      string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	OwnerSubject string
+	WorkspaceID  string
+	ActorURL     string // Local fixture override; production uses the Amp actor API.
+	Login        func(context.Context, string, *oauth2.Token) (string, error)
+	SessionKey   string
+	DemoPassword string
+	Demo         bool
 	// TrustedClientIPHeader requires an ingress that overwrites this header and
 	// prevents clients from reaching the listener directly. Empty uses RemoteAddr.
 	TrustedClientIPHeader string
@@ -58,19 +60,21 @@ type Config struct {
 
 // Auth owns browser authentication state and handlers.
 type Auth struct {
-	baseURL            *url.URL
-	key                []byte
-	secure             bool
-	demo               bool
-	password           string
-	owner              string
-	hostedDomain       string
-	allowDomainMembers bool
-	clientIPHeader     string
-	portalUserID       string
+	baseURL        *url.URL
+	key            []byte
+	secure         bool
+	demo           bool
+	password       string
+	owner          string
+	workspaceID    string
+	actorURL       string
+	loginAccount   func(context.Context, string, *oauth2.Token) (string, error)
+	clientIPHeader string
+	portalUserID   string
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
+	client   *http.Client
 
 	mu     sync.Mutex
 	states map[string]pendingState
@@ -101,23 +105,21 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		return nil, errors.New("browserauth: SessionKey must be base64 encoding of exactly 32 bytes")
 	}
 	a := &Auth{
-		baseURL:            base,
-		key:                key,
-		secure:             base.Scheme == "https",
-		demo:               c.Demo,
-		password:           c.DemoPassword,
-		owner:              c.OwnerSubject,
-		hostedDomain:       c.HostedDomain,
-		allowDomainMembers: c.AllowDomainMembers,
-		clientIPHeader:     c.TrustedClientIPHeader,
-		states:             make(map[string]pendingState),
-		now:                time.Now,
-	}
-	if c.AllowDomainMembers && (c.Demo || c.PortalUserID != "" || c.Issuer != "https://accounts.google.com" || c.HostedDomain == "") {
-		return nil, errors.New("browserauth: domain membership requires Google Workspace OIDC and HostedDomain")
+		baseURL:        base,
+		key:            key,
+		secure:         base.Scheme == "https",
+		demo:           c.Demo,
+		password:       c.DemoPassword,
+		owner:          c.OwnerSubject,
+		workspaceID:    c.WorkspaceID,
+		actorURL:       c.ActorURL,
+		loginAccount:   c.Login,
+		clientIPHeader: c.TrustedClientIPHeader,
+		states:         make(map[string]pendingState),
+		now:            time.Now,
 	}
 	if c.PortalUserID != "" {
-		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.HostedDomain != "" || base.Scheme != "https" || c.OwnerSubject != "amp-portal:"+c.PortalUserID {
+		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.WorkspaceID != "" || base.Scheme != "https" || c.OwnerSubject != "amp-portal:"+c.PortalUserID {
 			return nil, errors.New("browserauth: portal mode requires HTTPS, an Amp portal owner and no OIDC/demo configuration")
 		}
 		a.portalUserID = c.PortalUserID
@@ -127,7 +129,7 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		if c.DemoPassword == "" {
 			return nil, errors.New("browserauth: DemoPassword is required in demo mode")
 		}
-		if c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.HostedDomain != "" {
+		if c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.WorkspaceID != "" {
 			return nil, errors.New("browserauth: OIDC configuration is not allowed in demo mode")
 		}
 		if a.owner == "" {
@@ -138,10 +140,17 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 	if c.DemoPassword != "" {
 		return nil, errors.New("browserauth: DemoPassword requires Demo mode")
 	}
-	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.OwnerSubject == "" {
-		return nil, errors.New("browserauth: Issuer, ClientID, ClientSecret, and OwnerSubject are required in production")
+	if c.ClientID == "" || c.ClientSecret == "" || c.WorkspaceID == "" || c.Login == nil {
+		return nil, errors.New("browserauth: ClientID, ClientSecret, WorkspaceID and Login are required in production")
 	}
-	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 20 * time.Second})
+	if c.Issuer == "" {
+		c.Issuer = "https://auth.ampcode.com"
+	}
+	if a.actorURL == "" {
+		a.actorURL = "https://ampcode.com/api/v2/actor"
+	}
+	a.client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ctx = oidc.ClientContext(ctx, a.client)
 	provider, err := oidc.NewProvider(ctx, c.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("browserauth: discover issuer: %w", err)
@@ -150,12 +159,8 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		ClientID:     c.ClientID,
 		ClientSecret: c.ClientSecret,
 		Endpoint:     provider.Endpoint(),
-		RedirectURL:  a.endpoint("auth/callback"),
-		Scopes:       []string{oidc.ScopeOpenID},
-	}
-	if c.HostedDomain != "" {
-		// Google requires email or profile alongside openid. Request no profile data.
-		a.oauth.Scopes = append(a.oauth.Scopes, "email")
+		RedirectURL:  a.endpoint("auth/amp/callback"),
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "offline_access", "amp.api:workspace.projects:view"},
 	}
 	a.verifier = provider.Verifier(&oidc.Config{ClientID: c.ClientID})
 	return a, nil
@@ -178,7 +183,8 @@ func (a *Auth) Register(mux *http.ServeMux) {
 		return
 	}
 	mux.Handle("/login", cop.Handler(http.HandlerFunc(a.login)))
-	mux.Handle("/auth/callback", http.HandlerFunc(a.callback))
+	mux.Handle("/auth/amp/callback", http.HandlerFunc(a.callback))
+	mux.Handle("GET /auth/amp/login", http.HandlerFunc(a.login))
 	mux.Handle("/logout", cop.Handler(http.HandlerFunc(a.logout)))
 }
 
@@ -195,7 +201,7 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			return
 		}
 		sub, ok := a.sessionSubject(r)
-		if !ok || (!a.allowDomainMembers && sub != a.owner) {
+		if !ok || (a.demo && sub != a.owner) {
 			if r.Header.Get("HX-Request") == "true" || r.Header.Get("Accept") == "text/event-stream" {
 				// Never follow login/OIDC inside a fragment or EventSource request.
 				w.Header().Set("HX-Redirect", "/login")
@@ -254,6 +260,11 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}
+	if r.URL.Path == "/login" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = ampLoginPage.Execute(w, nil)
+		return
+	}
 	state, err := randomString(32)
 	if err != nil {
 		http.Error(w, "authentication unavailable", http.StatusInternalServerError)
@@ -307,10 +318,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) redirectLogin(w http.ResponseWriter, r *http.Request, state string, pending pendingState) {
-	authOptions := []oauth2.AuthCodeOption{oidc.Nonce(pending.nonce), oauth2.S256ChallengeOption(pending.verifier)}
-	if a.hostedDomain != "" {
-		authOptions = append(authOptions, oauth2.SetAuthURLParam("hd", a.hostedDomain))
-	}
+	authOptions := []oauth2.AuthCodeOption{oidc.Nonce(pending.nonce), oauth2.S256ChallengeOption(pending.verifier), oauth2.SetAuthURLParam("resource", "https://ampcode.com/api/v2")}
 	http.Redirect(w, r, a.oauth.AuthCodeURL(state, authOptions...), http.StatusSeeOther)
 }
 
@@ -369,7 +377,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	cv, ok := a.readSignedCookie(r, stateCookie)
 	a.clearCookie(w, stateCookie)
-	if !ok || cv.State == "" || r.URL.Query().Get("state") != cv.State {
+	if !ok || cv.State == "" || len(r.URL.Query()["state"]) != 1 || r.URL.Query().Get("state") != cv.State {
 		http.Error(w, "invalid authentication state", http.StatusBadRequest)
 		return
 	}
@@ -381,9 +389,14 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid authentication state", http.StatusBadRequest)
 		return
 	}
+	if len(r.URL.Query()["code"]) != 1 || r.URL.Query().Get("code") == "" || len(r.URL.Query()["error"]) != 0 {
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	token, err := a.oauth.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(pending.verifier))
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.client)
+	token, err := a.oauth.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(pending.verifier), oauth2.SetAuthURLParam("resource", "https://ampcode.com/api/v2"))
 	if err != nil {
 		// Never log provider errors: they can include credentials or token responses.
 		slog.Warn("browser authentication failed", "reason", "token_exchange")
@@ -402,29 +415,47 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	if idToken.Nonce != pending.nonce {
+	if idToken.Nonce != pending.nonce || (idToken.AccessTokenHash != "" && idToken.VerifyAccessToken(token.AccessToken) != nil) {
 		slog.Warn("browser authentication failed", "reason", "nonce")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	if idToken.Subject == "" || (!a.allowDomainMembers && idToken.Subject != a.owner) {
-		slog.Warn("browser authentication failed", "reason", "owner")
+	ampID, err := a.actor(ctx, token.AccessToken)
+	if err != nil || idToken.Subject == "" {
+		slog.Warn("browser authentication failed", "reason", "actor")
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	if a.hostedDomain != "" {
-		var claims struct {
-			HostedDomain  string `json:"hd"`
-			EmailVerified bool   `json:"email_verified"`
-		}
-		if err := idToken.Claims(&claims); err != nil || claims.HostedDomain != a.hostedDomain || (a.allowDomainMembers && !claims.EmailVerified) {
-			slog.Warn("browser authentication failed", "reason", "hosted_domain")
-			http.Error(w, "authentication failed", http.StatusUnauthorized)
-			return
-		}
+	subject, err := a.loginAccount(ctx, ampID, token)
+	if err != nil || subject == "" {
+		http.Error(w, "account unavailable", http.StatusServiceUnavailable)
+		return
 	}
-	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: idToken.Subject, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
+	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: subject, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.actorURL, nil)
+	if err != nil || accessToken == "" {
+		return "", errors.New("missing actor token")
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+	res, err := a.client.Do(req)
+	if err != nil {
+		return "", errors.New("actor unavailable")
+	}
+	defer res.Body.Close()
+	var actor struct {
+		Actor     struct{ Type, ID string }
+		Workspace struct{ ID string }
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+	if err != nil || len(body) > 64<<10 || res.StatusCode != http.StatusOK || json.Unmarshal(body, &actor) != nil || actor.Actor.Type != "user" || strings.TrimSpace(actor.Actor.ID) == "" || actor.Workspace.ID != a.workspaceID {
+		return "", errors.New("invalid actor or workspace")
+	}
+	return actor.Actor.ID, nil
 }
 
 func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
@@ -500,3 +531,6 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en" class="login"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Gateway sign in</title><link rel="stylesheet" href="/assets/ui.css"></head><body><main><span class="badge">DEMO MODE</span><h1>Owner sign in</h1><p>This demo uses a local password.</p>{{if .}}<p class="error">{{.}}</p>{{end}}<form method="post" action="/login"><label for="password">Password</label><input id="password" name="password" type="password" required autofocus><button type="submit">Sign in</button></form></main></body></html>`))
+
+var ampLoginPage = template.Must(template.New("amp-login").Parse(`<!doctype html>
+<html lang="en" class="login"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gateway sign in</title><link rel="stylesheet" href="/assets/ui.css"></head><body><main><h1>Gateway sign in</h1><p>Use your Amp workspace account. Your connections, approvals and history stay private to you.</p><a class="button primary" href="/auth/amp/login">Login with Amp</a></main></body></html>`))

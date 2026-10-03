@@ -22,11 +22,13 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"golang.org/x/oauth2"
 )
 
 type deploymentConfig struct {
 	gateway.Config
 	AmpLoginClientID string
+	AmpWorkspaceID   string
 }
 
 type accountConfig struct {
@@ -75,11 +77,27 @@ type accountRegistry struct {
 
 func newRegistry(ctx context.Context, primary *accountRuntime, config accountConfig, open func(accountConfig) (*accountRuntime, error)) (*accountRegistry, error) {
 	identity, _ := json.Marshal([]string{config.Config.Issuer, config.Config.HostedDomain})
-	key := fmt.Sprintf("account-links/v1/%x", sha256.Sum256(identity))
+	legacyKey := fmt.Sprintf("account-links/v1/%x", sha256.Sum256(identity))
+	const key = "amp-accounts/v1"
 	r := &accountRegistry{ctx: ctx, primary: primary, config: config, key: key, links: map[string]string{}, users: map[string]*accountRuntime{}, subjects: map[string]*accountRuntime{}, open: open}
 	raw, err := primary.store.LoadToken(ctx, key)
 	if err != nil {
 		return nil, err
+	}
+	if len(raw) == 0 {
+		raw, err = primary.store.LoadToken(ctx, legacyKey)
+		if err != nil {
+			return nil, err
+		}
+		if len(raw) == 0 {
+			entries, err := os.ReadDir(config.Config.Database + ".accounts")
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, err
+			}
+			if len(entries) > 0 {
+				return nil, errors.New("account databases exist without their registry; restore legacy Issuer/HostedDomain and complete primary database")
+			}
+		}
 	}
 	if len(raw) != 0 {
 		if err := json.Unmarshal(raw, &r.links); err != nil || r.links == nil {
@@ -118,6 +136,15 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 		}
 		r.users[ampID], r.subjects[subject] = account, account
 	}
+	// Commit the fixed registry key only after every legacy database opened.
+	raw, err = json.Marshal(r.links)
+	if err == nil {
+		err = primary.store.SaveToken(ctx, key, raw)
+	}
+	if err != nil {
+		r.close()
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -125,6 +152,37 @@ func (r *accountRegistry) current(subject string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.links[subject]
+}
+
+// login resolves Amp IDs through existing bindings before creating accounts.
+// Legacy subjects remain storage identities, never authentication credentials.
+func (r *accountRegistry) login(ctx context.Context, ampID string, token *oauth2.Token) (string, error) {
+	r.mu.RLock()
+	subject := ""
+	for sub, id := range r.links {
+		if id == ampID {
+			subject = sub
+			break
+		}
+	}
+	r.mu.RUnlock()
+	if subject == "" {
+		subject = "amp:" + ampID
+		if err := r.link(ctx, subject, ampID); err != nil {
+			return "", err
+		}
+	}
+	r.mu.RLock()
+	account := r.users[ampID]
+	r.mu.RUnlock()
+	raw, err := json.Marshal(token)
+	if err == nil {
+		err = account.store.SaveToken(ctx, "amp-api-oauth/v1", raw)
+	}
+	if err != nil {
+		return "", err
+	}
+	return subject, nil
 }
 
 func (r *accountRegistry) link(ctx context.Context, subject, ampID string) error {

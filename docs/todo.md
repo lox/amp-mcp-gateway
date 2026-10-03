@@ -24,9 +24,9 @@ separate copies of this matrix in each document.
 | Native integrations | Partial | Integrations UI and Fly.io prototype store an encrypted scoped parent token and expose a governed short-lived token request. One-use, caller-bound redemption locally attenuates the token to at most 15 minutes. Real Fly validation and additional providers remain. |
 | Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | Chrome integration | Partial | Manifest V3 extension reverse-connects one selected HTTP(S) tab for snapshots, screenshots and policy-controlled interaction. Pairing is memory/session-only; multiple tabs and durable device pairing are not implemented. |
-| OIDC login | Implemented | Google Workspace browser login is shared by hosted-domain members; the bootstrap owner remains exact-subject bound. Existing single-owner login was validated live; shared-host linking has only local coverage. Demo/legacy bearer retained. |
-| Multiple users / workloads | Partial | Workspace members self-link Google subjects to stable Amp actor IDs on one host, then receive isolated databases, providers and state. No email matching, manual Amp IDs, unlink/reassignment, automatic offboarding, shared connections or delegation. Production rollout remains unverified. |
-| On-behalf-of attribution | Partial | Verified Amp subject, user, workspace, project, thread visibility and multiplayer context stored separately from Google approval actor; no delegation chain or model attestation. |
+| OIDC login | Implemented | Direct Amp login verifies a user actor in the allowed workspace. Per-account encrypted OAuth token retention; live consent/refresh issuance unverified. Demo and portal workflows retained. |
+| Multiple users / workloads | Partial | Amp users resolve through existing identity bindings or receive isolated databases, providers and state. Legacy Google storage identities are preserved. No email matching, unlink/reassignment, automatic offboarding, shared connections or delegation. See the [migration contract](dev.md#amp-login-and-account-migration). |
+| On-behalf-of attribution | Partial | Verified Amp subject, user, workspace, project, thread visibility and multiplayer context stored separately from the account's approval subject; no delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. Connections can independently require an Amp-attested private, owner-only, non-multiplayer context on every discovery, call and result lookup. New tools inherit defaults after save; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, once/thread/project approve scopes, deny, ten-minute pending expiry, revocation and status polling. |
@@ -83,9 +83,10 @@ separate copies of this matrix in each document.
 - [x] Configure its app-scoped Fly secret and verify the first automatic deployment.
 - [ ] Add endpoint/credential editing and connection removal to the browser.
 - [x] Allow policy revocation without fetching the provider's tool list again.
-- [ ] Configure the Amp Login secret and deploy shared-host account linking.
-- [ ] Validate live Google login, Amp linking, restart persistence and workload routing.
-- [ ] Design unlink/reassignment and explicit offboarding; Google suspension alone
+- [x] Configure the Amp Login secret and deploy shared-host account linking.
+- [ ] Roll out direct Amp login and validate consent, refresh issuance, restart persistence and workload routing.
+- [ ] Add project-name lookup and token refresh using retained per-account credentials.
+- [ ] Design unlink/reassignment and explicit offboarding; workspace removal alone
       does not revoke existing sessions or linked Amp workload access.
 
 ## Later, only with evidence of need

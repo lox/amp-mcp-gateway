@@ -23,11 +23,12 @@ Keep dependencies deliberate; use the official MCP SDK rather than handwritten J
 - No tokens in logs, source, screenshots or tool results. `.local/` is disposable demo state.
 - Production UI uses OIDC; demo password login is explicitly opt-in and only for fake data.
 - One process/SQLite volume only. Do not remove the file lock or add replicas.
-- Linked accounts share the production hostname and Google browser authentication,
+- Accounts share the production hostname and Amp browser authentication,
   but have identity-bound databases and derived keys. Never share a catalogue,
   credential manager, browser pairing manager or worker between accounts.
-- Account links bind a verified Google subject to the stable Amp user ID returned
-  by Amp's actor API. Never infer links from email or accept a manually supplied ID.
+- Login requires a user actor in the configured Amp workspace. Resolve existing
+  Amp IDs through the registry before provisioning; legacy Google subjects and
+  issuers remain immutable storage identities. Never infer identity from email.
 
 ## Preview
 

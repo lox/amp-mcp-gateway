@@ -20,8 +20,8 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - Search an explicitly reviewed catalogue; do not expose newly discovered tools silently.
 - One owner per isolated linked account, one shared HTTPS origin, one process and
   one SQLite volume. Each user has a separate database. Persist intent before dispatch.
-- Google Workspace OIDC for shared browser authentication; Amp Login links each
-  Google subject to the stable user ID returned by Amp's actor API, and Amp Workload
+- Amp OIDC for shared browser authentication; the actor API verifies a user in the
+  allowed workspace and resolves their existing storage identity. Amp Workload
   Identity authenticates remote MCP calls. Do not match emails or accept manual IDs.
   Keep the signed thread link; neither
   model metadata nor account labels are authentication evidence. Demo retains bearer auth.
@@ -38,22 +38,19 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 
 ## Delivery slices
 
-### Shared-host account linking — implemented locally
+### Direct Amp login — implemented locally
 
-`AmpLoginClientID` enables Workspace members to authenticate on the configured
-host and link through **Sign in with Amp**. Amp's actor API supplies the stable Amp
-user ID. The existing top-level owner remains the bootstrap account with its current
-database and keys; additional links get derived keys and separate databases under
-`Database + ".accounts"`. Each account owns its catalogue, providers, Chrome pairing,
-Fly leases, approvals and history while sharing browser authentication, hostname
-and `/mcp` audience.
+Amp login replaces Google authentication and the separate linking step. Existing
+Google storage identities, database paths and derived keys remain unchanged;
+verified Amp actors resolve through the migrated registry before provisioning.
+Access and refresh tokens are encrypted per account. Project lookup and automatic
+refresh are deferred. See the [migration contract](dev.md#amp-login-and-account-migration)
+for configuration, scope and rollout requirements.
 
-Validation covers one-to-one linking, signed Google/Amp authentication, workload
-routing, resource isolation and restart persistence. Production secrets and deploy
-have not been configured, so live verification is blocked. Unlink, reassignment,
-offboarding automation, shared connections and multiple replicas are out of scope.
-Disabling Google only prevents future login; it does not revoke existing sessions
-or linked Amp workload access.
+Validation covers signed OAuth, explicit workspace admission, legacy migration,
+encrypted token isolation, workload routing and restart persistence. Live consent
+and refresh issuance still need verification. Unlink, reassignment, automatic
+offboarding, shared connections and multiple replicas remain out of scope.
 
 ### 1. Local vertical slice — complete
 
@@ -108,7 +105,7 @@ disposable private repository is a suggested starting point, subject to its curr
 MCP authentication support. Do not authorize or change a real account as part of
 documentation/setup work.
 
-### 3. Amp workload identity and Google browser login — implemented
+### 3. Amp workload identity and browser login — implemented
 
 Amp tokens authenticate `/mcp` against a fixed issuer, shared gateway-origin audience,
 `token_use=mcp` and the linked account's user ID. The signed subject and thread ID plus
@@ -122,14 +119,13 @@ and already claimed calls are unaffected. Amp-hosted remote MCP definitions send
 token directly, without a local bridge or stored gateway credential. Native credential
 redemption also accepts an orb-minted `token_use=exchanged` token with the same audience
 and exact thread identity because the automatic MCP token is not exposed to the shell.
-Google browser login requires the configured hosted-domain claim. Amp Login binds
-each Google subject to the stable actor ID; the bootstrap pair is configured
-explicitly. There is no delegation tree.
+Browser login uses the verified Amp actor in the configured workspace. Legacy
+storage subjects remain bound to their Amp IDs. There is no delegation tree.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
-tests, thread/project grant boundary and revocation tests, Google domain fixture
-tests, and a successful production call through an Amp-hosted remote MCP definition.
-A real Google browser login has also been validated. General client-facing MCP OAuth
+tests, thread/project grant boundary and revocation tests, signed Amp login fixtures,
+and a successful production call through an Amp-hosted remote MCP definition.
+General client-facing MCP OAuth
 discovery and scopes are deferred.
 
 ### 4. Authority, account identity and meaningful approvals
@@ -153,13 +149,13 @@ volume, separate environment secrets, Google login configuration and Amp workloa
 authentication. The tool catalogue is empty; startup now permits that state without
 fake connections. Live health, Amp discovery, unauthorized rejection, Google
 redirect and browser-login checks passed.
-The [dev guide](dev.md#fly-amp-clients-and-google-browser-login) covers registration
+The [dev guide](dev.md#fly-amp-browser-login-and-workload-clients) covers registration
 and deployment. Buildkite tests changes and deploys non-PR `main` builds serially;
 its app-scoped Fly secret is configured and deployment has passed. Tailscale is optional additional
 network protection, not authentication.
 
-The shared-host linking change is not deployed and its Amp Login secret is not
-configured. Its live Google/Amp linking checks remain blocked until rollout.
+Shared-host linking and its Amp secret are configured. The direct Amp-login
+replacement is not deployed; its live OAuth flow remains unverified.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection

@@ -14,7 +14,7 @@ func TestOIDCSourceAdmissionAndBrowserRetry(t *testing.T) {
 	mux := http.NewServeMux()
 	a.Register(mux)
 	login := func(source string, cookie *http.Cookie) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("GET", "/login", nil)
+		r := httptest.NewRequest("GET", "/auth/amp/login", nil)
 		r.RemoteAddr = source
 		// Forwarding headers are not trusted on a directly exposed listener.
 		r.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", len(a.states)))

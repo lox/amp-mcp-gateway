@@ -18,13 +18,13 @@ import (
 	"syscall"
 	"time"
 
-	"ampcode.com/lox/amp-mcp-gateway/internal/amplink"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
+	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -88,25 +88,26 @@ func run() error {
 	if cfg.Listen != "" {
 		*listen = cfg.Listen
 	}
-	shared := deployment.AmpLoginClientID != ""
-	if shared && (*demoMode || *portalAuth) {
-		return errors.New("Amp account linking requires production Google Workspace authentication")
-	}
-	if shared && (cfg.Issuer != "https://accounts.google.com" || cfg.HostedDomain == "" || cfg.AmpUserID == "") {
-		return errors.New("Amp account linking requires Google Workspace OIDC, HostedDomain, and the primary AmpUserID")
+	shared := !*demoMode && !*portalAuth
+	if shared && (deployment.AmpLoginClientID == "" || deployment.AmpWorkspaceID == "" || cfg.AmpUserID == "") {
+		return errors.New("production requires AmpLoginClientID, AmpWorkspaceID and the primary AmpUserID")
 	}
 	if *portalAuth {
 		if err := validatePortalAuth(cfg, *listen, *demoMode); err != nil {
 			return err
 		}
 	}
-	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, Issuer: cfg.Issuer, ClientID: cfg.ClientID, OwnerSubject: cfg.OwnerSubject, HostedDomain: cfg.HostedDomain, SessionKey: secrets.SessionKey, Demo: *demoMode}
-	if !*demoMode {
-		authCfg.ClientSecret = os.Getenv("GATEWAY_OIDC_SECRET")
-	}
+	var registry *accountRegistry
+	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, OwnerSubject: cfg.OwnerSubject, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	if shared {
-		authCfg.AllowDomainMembers = true
-		identity, _ := json.Marshal([]string{cfg.Issuer, cfg.ClientID, cfg.HostedDomain})
+		authCfg.ClientID = deployment.AmpLoginClientID
+		authCfg.ClientSecret = os.Getenv("GATEWAY_AMP_OIDC_SECRET")
+		authCfg.WorkspaceID = deployment.AmpWorkspaceID
+		authCfg.Login = func(ctx context.Context, id string, token *oauth2.Token) (string, error) {
+			return registry.login(ctx, id, token)
+		}
+		// A new namespace invalidates all former Google browser sessions.
+		identity, _ := json.Marshal([]string{"amp-login/v1", deployment.AmpLoginClientID, deployment.AmpWorkspaceID})
 		var err error
 		authCfg.SessionKey, err = accountKey(secrets.SessionKey, "browser-session", identity)
 		if err != nil {
@@ -148,7 +149,6 @@ func run() error {
 	defer primary.store.Close()
 	accounts := []*accountRuntime{primary}
 	handler := primary.handler
-	var registry *accountRegistry
 	if shared {
 		registry, err = newRegistry(ctx, primary, primaryConfig, func(config accountConfig) (*accountRuntime, error) {
 			return newAccount(ctx, config, authCfg, nil)
@@ -158,14 +158,7 @@ func run() error {
 		}
 		defer registry.close()
 		accounts = nil
-		link, err := amplink.New(ctx, amplink.Config{
-			BaseURL: cfg.BaseURL, ClientID: deployment.AmpLoginClientID,
-			ClientSecret: os.Getenv("GATEWAY_AMP_OIDC_SECRET"), Current: registry.current, Link: registry.link,
-		})
-		if err != nil {
-			return err
-		}
-		handler = sharedAccountHandler(sharedAuth, registry, link)
+		handler = sharedAccountHandler(sharedAuth, registry)
 	}
 	if shared {
 		host, err := accountHost(cfg.BaseURL)
@@ -293,12 +286,10 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	return &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}, nil
 }
 
-func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry, link http.Handler) http.Handler {
+func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry) http.Handler {
 	mux := http.NewServeMux()
 	auth.Register(mux)
-	mux.Handle("/account", auth.Require(link))
-	mux.Handle("/auth/amp/link", auth.Require(link))
-	mux.Handle("/auth/amp/callback", auth.Require(link))
+	mux.Handle("GET /account", auth.Require(http.HandlerFunc(registry.account)))
 	mux.Handle("/mcp", http.HandlerFunc(registry.workload))
 	mux.Handle("POST /leases/{id}", http.HandlerFunc(registry.workload))
 	mux.Handle("/browser/connect", browserbridge.SocketRouter(registry.browserManager))
