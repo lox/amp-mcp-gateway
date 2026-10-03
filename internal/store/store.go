@@ -515,6 +515,7 @@ func (s *Store) Claim(ctx context.Context) (Operation, error) {
 			if err := tx.Commit(); err != nil {
 				return o, err
 			}
+			s.signalReady() // A denied head does not prove the rest of the queue is empty.
 			return Operation{}, sql.ErrNoRows
 		}
 	}

@@ -69,17 +69,42 @@ func (g *Gateway) AmpHandlers(ctx context.Context) (http.Handler, http.Handler, 
 	if g.cfg.AmpUserID == "" {
 		return nil, nil, errors.New("AmpUserID is required for workload authentication")
 	}
-	audience, err := CanonicalOrigin(g.cfg.BaseURL)
+	v, err := NewAmpVerifier(ctx, g.cfg.BaseURL)
 	if err != nil {
 		return nil, nil, err
+	}
+	return v.Handlers(g)
+}
+
+// AmpVerifier shares discovery and JWKS caching across accounts on one origin.
+type AmpVerifier struct {
+	audience string
+	verifier *oidc.IDTokenVerifier
+}
+
+// NewAmpVerifier discovers Amp once for a deployment. Account identity checks
+// remain in each handler; the shared verifier only authenticates the token.
+func NewAmpVerifier(ctx context.Context, baseURL string) (*AmpVerifier, error) {
+	audience, err := CanonicalOrigin(baseURL)
+	if err != nil {
+		return nil, err
 	}
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
 	provider, err := oidc.NewProvider(ctx, ampIssuer)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	verifier := provider.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{"RS256"}})
-	return g.ampAuthenticated(verifier, g.mcpHandler(), false), g.ampAuthenticated(verifier, http.HandlerFunc(g.redeemLease), true), nil
+	return &AmpVerifier{audience: audience, verifier: verifier}, nil
+}
+
+// Handlers builds account-specific MCP and lease handlers for this origin.
+func (v *AmpVerifier) Handlers(g *Gateway) (http.Handler, http.Handler, error) {
+	audience, err := CanonicalOrigin(g.cfg.BaseURL)
+	if err != nil || audience != v.audience || g.cfg.AmpUserID == "" {
+		return nil, nil, errors.New("workload handlers require the verifier's origin and an AmpUserID")
+	}
+	return g.ampAuthenticated(v.verifier, g.mcpHandler(), false), g.ampAuthenticated(v.verifier, http.HandlerFunc(g.redeemLease), true), nil
 }
 
 // CanonicalOrigin returns the HTTPS origin used for Amp audiences and account routing.

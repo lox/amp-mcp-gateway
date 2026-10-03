@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -19,6 +20,7 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 )
 
 type deploymentConfig struct {
@@ -27,9 +29,31 @@ type deploymentConfig struct {
 }
 
 type accountConfig struct {
-	Config  gateway.Config
-	Secrets demo.Secrets
-	auth    *browserauth.Auth
+	Config   gateway.Config
+	Secrets  demo.Secrets
+	auth     *browserauth.Auth
+	verifier *gateway.AmpVerifier
+}
+
+// Bind before catalogue/configuration loading can mutate the account. Once a
+// database is bound, disabling linking must not allow its identity to change.
+func bindAccountIdentity(ctx context.Context, s *store.Store, cfg gateway.Config) error {
+	const key = "gateway-account-identity/v1"
+	identity, _ := json.Marshal([]string{cfg.Issuer, cfg.OwnerSubject, cfg.AmpUserID})
+	stored, err := s.LoadToken(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(stored) != 0 {
+		if !bytes.Equal(stored, identity) {
+			return errors.New("database account identity cannot be reassigned")
+		}
+		return nil
+	}
+	if cfg.AccountLink {
+		return s.SaveToken(ctx, key, identity)
+	}
+	return nil
 }
 
 // accountRegistry serializes one-to-one linking and owns all account runtimes.
@@ -157,7 +181,7 @@ func (r *accountRegistry) userConfig(subject, ampID string) (accountConfig, erro
 		BaseURL: c.BaseURL, OwnerSubject: subject, AmpUserID: ampID,
 		Database: filepath.Join(c.Database+".accounts", hex.EncodeToString(id[:])+".db"),
 		Issuer:   c.Issuer, ClientID: c.ClientID, HostedDomain: c.HostedDomain, AccountLink: true,
-	}, Secrets: demo.Secrets{EncryptionKey: key, SessionKey: r.config.Secrets.SessionKey}, auth: r.config.auth}, nil
+	}, Secrets: demo.Secrets{EncryptionKey: key, SessionKey: r.config.Secrets.SessionKey}, auth: r.config.auth, verifier: r.config.verifier}, nil
 }
 
 func (r *accountRegistry) browser(w http.ResponseWriter, req *http.Request) {

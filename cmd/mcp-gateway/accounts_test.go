@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
@@ -167,5 +169,43 @@ func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("slow runtime creation blocked existing account lookup")
+	}
+}
+
+func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
+	secrets := accountSecrets()
+	cfg := gateway.Config{Database: filepath.Join(t.TempDir(), "primary.db"), Issuer: "google", OwnerSubject: "original-subject", AmpUserID: "original-amp", AccountLink: true}
+	s, err := store.Open(cfg.Database, secrets.EncryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bindAccountIdentity(t.Context(), s, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveToken(t.Context(), "private-provider", []byte("original-credential")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, linking := range []bool{true, false} {
+		changed := cfg
+		changed.OwnerSubject, changed.AmpUserID, changed.AccountLink = "new-subject", "new-amp", linking
+		_, err := newAccount(t.Context(), accountConfig{Config: changed, Secrets: secrets}, browserauth.Config{}, nil)
+		if err == nil || !strings.Contains(err.Error(), "identity cannot be reassigned") {
+			t.Fatalf("reassigned existing data (linking=%v): %v", linking, err)
+		}
+	}
+	s, err = store.Open(cfg.Database, secrets.EncryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cfg.ClientID = "rotated-client"
+	if err := bindAccountIdentity(t.Context(), s, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := s.LoadToken(t.Context(), "private-provider"); err != nil || string(raw) != "original-credential" {
+		t.Fatal("rejected reassignment changed existing credentials")
 	}
 }

@@ -136,6 +136,10 @@ func run() error {
 	if shared {
 		primaryConfig.Config.AccountLink = true
 		primaryConfig.auth = sharedAuth
+		primaryConfig.verifier, err = gateway.NewAmpVerifier(ctx, cfg.BaseURL)
+		if err != nil {
+			return err
+		}
 	}
 	primary, err := newAccount(ctx, primaryConfig, authCfg, consent)
 	if err != nil {
@@ -228,6 +232,9 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 			s.Close()
 		}
 	}()
+	if err := bindAccountIdentity(ctx, s, cfg); err != nil {
+		return nil, err
+	}
 	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
 		return nil, fmt.Errorf("load saved catalogue: %w", err)
 	}
@@ -258,7 +265,11 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	auth.Register(mux)
 	var mcpHandler, leaseHandler http.Handler
 	if cfg.AmpUserID != "" {
-		mcpHandler, leaseHandler, err = g.AmpHandlers(ctx)
+		if config.verifier != nil {
+			mcpHandler, leaseHandler, err = config.verifier.Handlers(g)
+		} else {
+			mcpHandler, leaseHandler, err = g.AmpHandlers(ctx)
+		}
 		if err != nil {
 			return nil, err
 		}

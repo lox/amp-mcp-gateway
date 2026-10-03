@@ -825,8 +825,11 @@ OIDC response and calls `/api/v2/actor` to obtain the stable user ID. Email addr
 are neither compared nor used as identifiers, and there is no manual Amp ID field.
 
 The top-level `OwnerSubject`, `AmpUserID`, `Database`, encryption key and existing
-primary data remain the bootstrap account. A newly linked Google subject receives
-its own encrypted database under `Database + ".accounts"` (for example
+primary data remain the bootstrap account. On first enabling linking, the database
+is permanently bound to its issuer, Google subject and Amp ID. Later identity
+changes fail startup, even if linking is disabled; do not repurpose the database.
+A newly linked Google subject receives its own encrypted database under
+`Database + ".accounts"` (for example
 `/data/gateway.db.accounts/`), derived storage key, catalogue, providers, OAuth
 state, workers, Chrome pairing manager, Fly leases, approvals and audit history.
 Users do not share connections or credentials. They do share the process, disk,
@@ -850,8 +853,10 @@ Sign-out clears the browser cookie but cannot revoke a copied cookie; sessions l
 up to 12 hours. Resource admission limits apply separately per account, while CPU,
 memory and total disk remain shared. Multiple replicas remain unsupported.
 
-Account workers wake after committed submissions/approvals and drain ready work
-on startup. Idle expiration sweeps run once per minute per account; expiration
+Workload discovery and JWKS caching are shared across the deployment; exact user
+authorization remains account-specific. Account workers wake after committed
+submissions/approvals and drain ready work on startup. Idle expiration sweeps run
+once per minute per account; expiration
 still prevents dispatch at claim time. One user may hold one pending Amp login
 attempt, replaced on retry, so repeated starts cannot fill the global state limit.
 

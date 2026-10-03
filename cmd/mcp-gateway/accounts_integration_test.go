@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,12 +45,15 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	var issuer string
+	var discoveries, keyFetches atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/.well-known/openid-configuration":
+			discoveries.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"issuer": "https://ampcode.com/api/workload-identity", "jwks_uri": issuer + "/keys", "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token"})
 		case "/keys":
+			keyFetches.Add(1)
 			_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
 		default:
 			http.NotFound(w, r)
@@ -63,6 +67,10 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 
 	secrets := accountSecrets()
 	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: filepath.Join(t.TempDir(), "gateway.db"), OwnerSubject: "google-alice", AmpUserID: "amp-alice", Issuer: "browser-issuer", ClientID: "browser-client", HostedDomain: "example.com"}, Secrets: secrets}
+	base.verifier, err = gateway.NewAmpVerifier(t.Context(), base.Config.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	authCfg := browserauth.Config{Demo: true, DemoPassword: "fixture", OwnerSubject: "google-alice"}
 	primary, err := newAccount(t.Context(), base, authCfg, nil)
 	if err != nil {
@@ -105,6 +113,9 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 	}
 	if got := request(mint("amp-bob", base.Config.BaseURL)); got != http.StatusOK {
 		t.Fatalf("valid linked token: %d", got)
+	}
+	if discoveries.Load() != 1 || keyFetches.Load() != 1 {
+		t.Fatalf("accounts did not share discovery/JWKS: %d/%d", discoveries.Load(), keyFetches.Load())
 	}
 	now := time.Now()
 	private := store.Operation{ID: "alice-private", Subject: "google-alice", AmpUserID: "amp-alice", AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", Private: true, Status: "succeeded", Digest: "alice-secret-digest", Result: json.RawMessage(`{"secret":"alice-private-result"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
