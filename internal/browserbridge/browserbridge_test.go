@@ -409,10 +409,15 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 
 func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	m, _ := browserManager(t)
+	m.AccountLink = true
 	h := m.UI(nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
 	body := w.Body.String()
+	header, rest, _ := strings.Cut(body, "</header>")
+	if !strings.Contains(header, `popovertarget="user-panel"`) || !strings.Contains(header, `href="/account"`) || strings.Contains(rest, `href="/account"`) {
+		t.Fatal("Chrome account navigation must appear only in the header user menu")
+	}
 	if w.Code != http.StatusOK || !strings.Contains(body, `action="/integrations/chrome/pair"`) || !strings.Contains(body, `href="/integrations"`) || !strings.Contains(body, `data-browser-state="not-paired"`) {
 		t.Fatalf("Chrome integration page is missing its integration routes: status=%d body=%s", w.Code, w.Body.String())
 	}

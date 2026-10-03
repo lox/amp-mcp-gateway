@@ -283,7 +283,7 @@ var connectionID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,60}$`)
 func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	mux.HandleFunc("GET /policy-proposals/{ticket}", g.reviewPolicies)
 	mux.HandleFunc("POST /policy-proposals/{ticket}/{decision}", func(w http.ResponseWriter, r *http.Request) { g.decidePolicies(w, r, m) })
-	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, nil, "") })
+	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, r, nil, "") })
 	mux.HandleFunc("POST /connections", func(w http.ResponseWriter, r *http.Request) { g.addConnection(w, r, m) })
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/discover", func(w http.ResponseWriter, r *http.Request) { g.discoverTools(w, r, m) })
@@ -315,11 +315,11 @@ func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	})
 }
 
-func (g *Gateway) addPage(w http.ResponseWriter, values map[string]string, message string) {
+func (g *Gateway) addPage(w http.ResponseWriter, r *http.Request, values map[string]string, message string) {
 	if values == nil {
 		values = map[string]string{"auth": "oauth"}
 	}
-	g.render(w, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -335,7 +335,7 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 	fail := func(message string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(400)
-		g.addPage(w, values, message)
+		g.addPage(w, r, values, message)
 	}
 	if !connectionID.MatchString(values["id"]) {
 		fail("Use 1–60 letters, numbers, dashes or underscores for the connection name.")
@@ -425,7 +425,7 @@ func (g *Gateway) connectionSettings(w http.ResponseWriter, r *http.Request, m *
 		return
 	}
 	connection["Health"] = m.Health(r.Context(), id)
-	g.render(w, map[string]any{"ConnectionSettings": true, "Connection": connection, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"ConnectionSettings": true, "Connection": connection, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.Manager, id string, tools []Tool, ticket, message string, saved bool) {
@@ -451,7 +451,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		schema, _ := json.Marshal(tool.InputSchema)
 		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID], "Suggestion": draft.Suggestions[tool.ID]})
 	}
-	g.render(w, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
 }
 
 func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {

@@ -856,6 +856,12 @@ workspace-owned projects only, not personal projects. ID tokens cannot authorize
 data reads. Test real consent, refresh issuance and project reads before rollout;
 signed local fixtures do not establish those live provider behaviors.
 
+The user menu displays the Amp profile name and HTTPS picture URL from verified
+OIDC claims or subject-matched UserInfo. These display-only fields are stored in
+the signed browser cookie and refreshed at login; they never authorize access.
+Existing sessions show a generic identity until the next sign-in. Missing photos
+use a generic avatar. The browser loads photos directly without a referrer.
+
 Accounts share process, disk, hostname and the session-cookie boundary, not
 catalogues, credentials, workers, Chrome pairing, approvals or history. Workload
 discovery/JWKS are shared but exact user authorization remains account-specific.

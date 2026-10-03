@@ -37,6 +37,22 @@ const (
 )
 
 type subjectKey struct{}
+type profileKey struct{}
+
+// Profile is display-only identity metadata, never an authorization input.
+type Profile struct {
+	Name    string `json:"name,omitempty"`
+	Picture string `json:"picture,omitempty"`
+}
+
+// User returns display metadata from the authenticated session.
+func User(ctx context.Context) Profile {
+	p, _ := ctx.Value(profileKey{}).(Profile)
+	if p.Name == "" {
+		p.Name = "Signed in"
+	}
+	return p
+}
 
 // Config configures owner authentication. Demo mode is deliberately separate
 // from OIDC mode and requires both Demo and DemoPassword.
@@ -75,6 +91,7 @@ type Auth struct {
 
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
+	provider *oidc.Provider
 	client   *http.Client
 
 	mu     sync.Mutex
@@ -90,9 +107,10 @@ type pendingState struct {
 }
 
 type cookieValue struct {
-	Subject string `json:"s"`
-	State   string `json:"t,omitempty"`
-	Expires int64  `json:"e"`
+	Subject string   `json:"s"`
+	State   string   `json:"t,omitempty"`
+	Expires int64    `json:"e"`
+	Profile *Profile `json:"p,omitempty"`
 }
 
 // New validates c and initializes OIDC discovery in production mode.
@@ -172,6 +190,7 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "offline_access", "amp.api:workspace.projects:view"},
 	}
 	a.verifier = provider.Verifier(&oidc.Config{ClientID: c.ClientID})
+	a.provider = provider
 	return a, nil
 }
 
@@ -209,8 +228,8 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, a.owner)))
 			return
 		}
-		sub, ok := a.sessionSubject(r)
-		if !ok || (a.demo && sub != a.owner) {
+		session, ok := a.session(r)
+		if !ok || (a.demo && session.Subject != a.owner) {
 			if r.Header.Get("HX-Request") == "true" || r.Header.Get("Accept") == "text/event-stream" {
 				// Never follow login/OIDC inside a fragment or EventSource request.
 				w.Header().Set("HX-Redirect", "/login")
@@ -221,7 +240,11 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey{}, sub)))
+		ctx := context.WithValue(r.Context(), subjectKey{}, session.Subject)
+		if session.Profile != nil {
+			ctx = context.WithValue(ctx, profileKey{}, *session.Profile)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -252,12 +275,12 @@ func Subject(ctx context.Context) string {
 	return s
 }
 
-func (a *Auth) sessionSubject(r *http.Request) (string, bool) {
+func (a *Auth) session(r *http.Request) (cookieValue, bool) {
 	value, ok := a.readSignedCookie(r, sessionCookie)
 	if !ok || value.Subject == "" || value.State != "" {
-		return "", false
+		return cookieValue{}, false
 	}
-	return value.Subject, true
+	return value, true
 }
 
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
@@ -440,8 +463,53 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "account unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: subject, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
+	profile := a.displayProfile(ctx, idToken, token, ampID)
+	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: subject, Profile: &profile, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *Auth) displayProfile(ctx context.Context, id *oidc.IDToken, token *oauth2.Token, ampID string) Profile {
+	var claims struct {
+		Name, Picture, Email string
+	}
+	_ = id.Claims(&claims)
+	if claims.Name == "" || claims.Picture == "" {
+		// Optional profile enrichment must not prevent login. Match the OIDC
+		// subject before accepting any UserInfo fields.
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if info, err := a.provider.UserInfo(ctx, oauth2.StaticTokenSource(token)); err == nil && info.Subject == id.Subject {
+			var extra struct{ Name, Picture, Email string }
+			if info.Claims(&extra) == nil {
+				if claims.Name == "" {
+					claims.Name = extra.Name
+				}
+				if claims.Picture == "" {
+					claims.Picture = extra.Picture
+				}
+				if claims.Email == "" {
+					claims.Email = extra.Email
+				}
+			}
+		}
+	}
+	name := strings.TrimSpace(claims.Name)
+	if name == "" {
+		name = strings.TrimSpace(claims.Email)
+	}
+	if name == "" || len(name) > 256 {
+		name = ampID
+	}
+	p := Profile{Name: name}
+	u, err := url.Parse(claims.Picture)
+	if err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && len(claims.Picture) <= 1024 {
+		p.Picture = u.String()
+	}
+	// Keep the signed cookie below browser limits, even for escaped claims.
+	if raw, _ := json.Marshal(p); len(raw) > 1536 {
+		p.Picture = ""
+	}
+	return p
 }
 
 func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
@@ -493,7 +561,7 @@ func (a *Auth) setSignedCookie(w http.ResponseWriter, name string, value cookieV
 
 func (a *Auth) readSignedCookie(r *http.Request, name string) (cookieValue, bool) {
 	cookie, err := r.Cookie(name)
-	if err != nil || len(cookie.Value) > 1024 {
+	if err != nil || len(cookie.Value) > 4096 {
 		return cookieValue{}, false
 	}
 	parts := strings.Split(cookie.Value, ".")

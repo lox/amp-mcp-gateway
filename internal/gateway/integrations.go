@@ -70,7 +70,7 @@ func (g *Gateway) flyIntegrationPage(w http.ResponseWriter, r *http.Request) {
 		policy = tool.Policy
 	}
 	g.mu.RUnlock()
-	g.render(w, map[string]any{
+	g.render(w, r, map[string]any{
 		"FlyIntegration": true, "Configured": configured, "Account": integration.Account,
 		"Policy": policy, "Saved": r.URL.Query().Get("saved") == "1", "Owner": g.cfg.OwnerSubject,
 	})
@@ -91,7 +91,7 @@ func (g *Gateway) saveFlyIntegration(w http.ResponseWriter, r *http.Request, m *
 	fail := func(message string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
-		g.render(w, map[string]any{"FlyIntegration": true, "Configured": configured, "Account": account, "Policy": policy, "Error": message, "Owner": g.cfg.OwnerSubject})
+		g.render(w, r, map[string]any{"FlyIntegration": true, "Configured": configured, "Account": account, "Policy": policy, "Error": message, "Owner": g.cfg.OwnerSubject})
 	}
 	if len(account) > 200 {
 		fail("Account label must be 200 characters or fewer.")

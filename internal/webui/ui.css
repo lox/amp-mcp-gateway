@@ -26,10 +26,66 @@
   --color-negative-ink: #9c3724;
 }
 @layer components {
+  :where(html.dashboard, html.chrome) .user-menu {
+    @apply ml-auto flex-none;
+  }
+  :where(html.dashboard) .topbar:has(.notification-trigger:not([hidden])) .user-menu {
+    @apply ml-0;
+  }
+  :where(html.dashboard, html.chrome) .topbar .user-menu-trigger {
+    anchor-name: --user-menu-trigger;
+    @apply flex items-center gap-2 min-h-10 p-[5px_8px];
+  }
+  :where(html.dashboard, html.chrome) .user-avatar {
+    @apply relative grid place-items-center size-7 rounded-full overflow-hidden flex-none;
+    background: #edf1f8;
+  }
+  :where(html.dashboard, html.chrome) .user-avatar img {
+    @apply absolute inset-0 size-full object-cover;
+  }
+  :where(html.dashboard, html.chrome) .user-name {
+    @apply max-w-[180px] truncate;
+  }
+  :where(html.dashboard, html.chrome) .user-identity {
+    @apply m-0 p-[10px_12px] text-[13px] font-semibold;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard, html.chrome) .user-menu-trigger svg {
+    @apply size-5;
+  }
+  :where(html.dashboard, html.chrome) .user-panel {
+    position: fixed;
+    inset: 76px 16px auto auto;
+    @apply m-0 w-[180px] max-w-[calc(100vw-32px)] p-2 rounded-[4px] bg-surface text-ink;
+    border: 1px solid #dcdde1;
+    box-shadow: 0 6px 20px #15244320;
+  }
+  :where(html.dashboard, html.chrome) .user-panel a,
+  :where(html.dashboard, html.chrome) .topbar .user-panel button {
+    @apply block box-border w-full min-h-10 p-[10px_12px] text-left text-ink no-underline rounded-[3px];
+    border: 0;
+    background: transparent;
+    font: 13px ui-monospace, monospace;
+  }
+  :where(html.dashboard, html.chrome) .user-panel a:hover,
+  :where(html.dashboard, html.chrome) .topbar .user-panel button:hover {
+    background: #edf1f8;
+  }
+  :where(html.dashboard, html.chrome) .user-panel :focus-visible {
+    outline: 3px solid #2866cb;
+    outline-offset: -3px;
+  }
+  @supports (top: anchor(bottom)) {
+    :where(html.dashboard, html.chrome) .user-panel {
+      position-anchor: --user-menu-trigger;
+      top: calc(anchor(bottom) + 10px);
+      right: anchor(right);
+    }
+  }
   /* dashboard */
   :where(html.dashboard) .topbar .notification-trigger {
     anchor-name: --notification-trigger;
-    @apply grid place-items-center size-10 p-[9px] flex-none;
+    @apply grid place-items-center size-10 p-[9px] flex-none ml-auto;
   }
   :where(html.dashboard) .notification-trigger svg {
     @apply size-5;
@@ -825,10 +881,6 @@
   :where(html.dashboard) .product-name {
     @apply text-muted text-[13px];
   }
-  :where(html.dashboard) .topbar .owner {
-    @apply ml-auto text-muted text-[12px];
-    overflow-wrap: anywhere;
-  }
   :where(html.dashboard) .topbar button {
     font:
       12px ui-monospace,
@@ -1051,9 +1103,8 @@
     :where(html.dashboard) .topbar {
       @apply flex-wrap gap-3;
     }
-    :where(html.dashboard) .topbar .owner {
-      order: 3;
-      @apply w-full m-0;
+    :where(html.dashboard, html.chrome) .user-name {
+      display: none;
     }
     :where(html.dashboard) .topbar form {
       @apply ml-auto;

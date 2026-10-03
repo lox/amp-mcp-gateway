@@ -675,7 +675,7 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 			return
 		}
 	}
-	g.render(w, data)
+	g.render(w, r, data)
 }
 func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 	o, err := g.store.Get(r.Context(), r.PathValue("id"))
@@ -740,7 +740,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	g.render(w, data)
+	g.render(w, r, data)
 }
 
 func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
@@ -761,8 +761,9 @@ func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func (g *Gateway) render(w http.ResponseWriter, data map[string]any) {
+func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {
 	data["AccountLink"] = g.cfg.AccountLink
+	data["User"] = browserauth.User(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := page.Execute(w, data); err != nil {
 		slog.Error("render page", "error", err)

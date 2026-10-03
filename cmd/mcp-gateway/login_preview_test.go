@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -27,6 +28,11 @@ import (
 // AMP_LOGIN_PREVIEW=1 keeps this signed local fixture on loopback :8095 for
 // browser inspection. No production credentials, configuration or endpoints.
 func TestAmpLoginBrowserRoundTrip(t *testing.T) {
+	avatar := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#d9e7f7"/><circle cx="32" cy="25" r="12" fill="#47678a"/><ellipse cx="32" cy="60" rx="24" ry="20" fill="#47678a"/></svg>`)
+	}))
+	defer avatar.Close()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +60,7 @@ func TestAmpLoginBrowserRoundTrip(t *testing.T) {
 	})
 	idpMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		raw, err := jwt.Signed(signer).Claims(map[string]any{"iss": idp.URL, "sub": "fixture-oidc-user", "aud": "fixture-client", "exp": time.Now().Add(time.Hour).Unix(), "nonce": r.Form.Get("code")}).Serialize()
+		raw, err := jwt.Signed(signer).Claims(map[string]any{"iss": idp.URL, "sub": "fixture-oidc-user", "aud": "fixture-client", "exp": time.Now().Add(time.Hour).Unix(), "nonce": r.Form.Get("code"), "name": "Alice Example", "picture": avatar.URL}).Serialize()
 		if err != nil {
 			http.Error(w, "fixture signing failed", 500)
 			return
@@ -105,7 +111,18 @@ func TestAmpLoginBrowserRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	body, err := io.ReadAll(res.Body)
 	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, rest, _ := strings.Cut(string(body), "</header>")
+	if !strings.Contains(header, "Alice Example") || !strings.Contains(header, `src="`+avatar.URL+`"`) {
+		t.Fatal("authenticated profile missing from account header")
+	}
+	if !strings.Contains(header, `popovertarget="user-panel"`) || !strings.Contains(header, `href="/account"`) || strings.Contains(rest, `href="/account"`) {
+		t.Fatal("account navigation must appear only in the header user menu")
+	}
 	if res.StatusCode != 200 || res.Request.URL.Path != "/account" {
 		t.Fatalf("login ended at %s (%d)", res.Request.URL.Path, res.StatusCode)
 	}

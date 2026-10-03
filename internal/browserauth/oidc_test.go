@@ -29,7 +29,7 @@ func TestAmpHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"valid", "valid access hash", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
+	for _, scenario := range []string{"valid", "valid access hash", "valid userinfo", "valid mismatched userinfo", "valid unavailable userinfo", "valid oversized profile", "valid unsafe picture", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
 		t.Run(scenario, func(t *testing.T) {
 			var issuer, nonce, challenge string
 			mux := http.NewServeMux()
@@ -38,7 +38,7 @@ func TestAmpHandshake(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(v)
 			}
 			mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-				write(w, map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"}})
+				write(w, map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "userinfo_endpoint": issuer + "/userinfo", "id_token_signing_alg_values_supported": []string{"RS256"}})
 			})
 			mux.HandleFunc("GET /keys", func(w http.ResponseWriter, r *http.Request) {
 				write(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
@@ -53,8 +53,16 @@ func TestAmpHandshake(t *testing.T) {
 					http.Error(w, "sensitive provider response", 400)
 					return
 				}
-				claims := map[string]any{"iss": issuer, "sub": "oidc-subject-not-an-amp-id", "aud": "client", "exp": time.Now().Add(time.Hour).Unix(), "nonce": nonce}
+				claims := map[string]any{"iss": issuer, "sub": "oidc-subject-not-an-amp-id", "aud": "client", "exp": time.Now().Add(time.Hour).Unix(), "nonce": nonce, "name": "Alice Example", "picture": "https://images.example/alice.png"}
+				if strings.Contains(scenario, "userinfo") {
+					delete(claims, "name")
+					delete(claims, "picture")
+				}
 				switch scenario {
+				case "valid oversized profile":
+					claims["name"], claims["picture"] = strings.Repeat("x", 5000), "https://images.example/"+strings.Repeat("x", 5000)
+				case "valid unsafe picture":
+					claims["picture"] = "javascript:alert(1)"
 				case "valid access hash":
 					hash := sha256.Sum256([]byte("access-secret"))
 					claims["at_hash"] = base64.RawURLEncoding.EncodeToString(hash[:16])
@@ -76,6 +84,20 @@ func TestAmpHandshake(t *testing.T) {
 					delete(response, "id_token")
 				}
 				write(w, response)
+			})
+			mux.HandleFunc("GET /userinfo", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer access-secret" {
+					t.Error("userinfo did not use access token")
+				}
+				if scenario == "valid unavailable userinfo" {
+					http.Error(w, "unavailable", 503)
+					return
+				}
+				sub := "oidc-subject-not-an-amp-id"
+				if scenario == "valid mismatched userinfo" {
+					sub = "other-person"
+				}
+				write(w, map[string]string{"sub": sub, "name": "Alice Example", "picture": "https://images.example/alice.png"})
 			})
 			mux.HandleFunc("GET /actor", func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer access-secret" {
@@ -141,7 +163,7 @@ func TestAmpHandshake(t *testing.T) {
 			}
 			w := callback()
 			want := http.StatusUnauthorized
-			success := scenario == "valid" || scenario == "valid access hash"
+			success := strings.HasPrefix(scenario, "valid")
 			if success {
 				want = http.StatusSeeOther
 			}
@@ -166,10 +188,25 @@ func TestAmpHandshake(t *testing.T) {
 				}
 				r := httptest.NewRequest("GET", "/", nil)
 				r.AddCookie(c)
-				sub, ok := a.sessionSubject(r)
-				if !ok || sub != "legacy-google-subject" {
+				session, ok := a.session(r)
+				if !ok || session.Subject != "legacy-google-subject" {
 					t.Fatal("lost legacy identity")
 				}
+				if len(c.String()) > 4096 {
+					t.Fatal("profile exceeded browser cookie limit")
+				}
+				wantProfile := Profile{Name: "Alice Example", Picture: "https://images.example/alice.png"}
+				if scenario == "valid mismatched userinfo" || scenario == "valid unavailable userinfo" || scenario == "valid oversized profile" {
+					wantProfile = Profile{Name: "amp-user"}
+				}
+				if scenario == "valid unsafe picture" {
+					wantProfile.Picture = ""
+				}
+				a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					if got := User(r.Context()); got != wantProfile {
+						t.Fatalf("profile = %#v, want %#v", got, wantProfile)
+					}
+				})).ServeHTTP(httptest.NewRecorder(), r)
 			}
 			if strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "sensitive") {
 				t.Fatal("leaked sensitive error")

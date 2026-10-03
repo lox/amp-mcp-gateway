@@ -245,5 +245,5 @@ func (g *Gateway) renderAudit(w http.ResponseWriter, r *http.Request, fragment s
 		}
 		return
 	}
-	g.render(w, data)
+	g.render(w, r, data)
 }
