@@ -62,8 +62,8 @@ the browser, and inspect the durable outcome. Use disposable bearer/OAuth fixtur
 so development needs no real credentials.
 
 Evidence: SDK integration tests, race tests, browser approval/denial checks,
-OAuth refresh and restart persistence. The README screenshots show this slice.
-The fixture write echoes text; it is not a real notes integration.
+OAuth refresh and restart persistence. Dashboard screenshots live under
+`docs/images/`. The fixture write echoes text; it is not a real notes integration.
 
 ### 2. One real integration and normal-client usage — next
 
