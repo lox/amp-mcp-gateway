@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -103,6 +104,12 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 		if err != nil {
 			r.close()
 			return nil, err
+		}
+		// Only new links may create databases. A partial restore must not
+		// silently replace a persisted account with empty state.
+		if _, err := os.Stat(cfg.Config.Database); err != nil {
+			r.close()
+			return nil, fmt.Errorf("open saved account database (restore the complete account data before restarting): %w", err)
 		}
 		account, err := open(cfg)
 		if err != nil {

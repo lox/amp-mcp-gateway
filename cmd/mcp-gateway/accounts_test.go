@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,6 +114,20 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 	}
 	if err := restarted.link(t.Context(), "google-other", "amp-bob"); err == nil {
 		t.Fatal("restored Amp identity was not unique")
+	}
+	restarted.close()
+	if err := os.Remove(child.Config.Database); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := newRegistry(t.Context(), primary, base, r.open)
+	if restored != nil {
+		restored.close()
+	}
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "restore") {
+		t.Fatalf("missing linked database did not require recovery: %v", err)
+	}
+	if _, err := os.Stat(child.Config.Database); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing linked database was recreated: %v", err)
 	}
 }
 
