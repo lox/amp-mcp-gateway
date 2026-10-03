@@ -103,6 +103,7 @@ func run() error {
 		authCfg.ClientID = deployment.AmpLoginClientID
 		authCfg.ClientSecret = os.Getenv("GATEWAY_AMP_OIDC_SECRET")
 		authCfg.WorkspaceID = deployment.AmpWorkspaceID
+		authCfg.APIBaseURL = deployment.AmpAPIBaseURL
 		authCfg.Login = func(ctx context.Context, id string, token *oauth2.Token) (string, error) {
 			return registry.login(ctx, id, token)
 		}

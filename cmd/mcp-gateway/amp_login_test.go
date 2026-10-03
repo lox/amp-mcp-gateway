@@ -79,6 +79,22 @@ func TestAmpLoginMigratesLegacyAccountsWithoutRekeying(t *testing.T) {
 	if raw, err := primaryStore.LoadToken(ctx, "amp-accounts/v1"); err != nil || len(raw) != 0 {
 		t.Fatal("failed migration published a new registry")
 	}
+	for _, key := range []string{legacyKey, "amp-accounts/v1"} {
+		if err := primaryStore.SaveToken(ctx, key, []byte(`{"google-alice":"amp-alice"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if partial, err := newRegistry(ctx, primary, base, open); err == nil {
+			partial.close()
+			t.Fatal("stale non-empty registry orphaned Bob's database")
+		}
+		var restore []byte
+		if key == legacyKey {
+			restore = []byte(`{"google-alice":"amp-alice","google-bob":"amp-bob"}`)
+		}
+		if err := primaryStore.SaveToken(ctx, key, restore); err != nil {
+			t.Fatal(err)
+		}
+	}
 	r, err := newRegistry(ctx, primary, base, open)
 	if err != nil {
 		t.Fatal(err)

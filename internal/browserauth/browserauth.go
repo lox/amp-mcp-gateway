@@ -47,6 +47,7 @@ type Config struct {
 	ClientSecret string
 	OwnerSubject string
 	WorkspaceID  string
+	APIBaseURL   string // Defaults to https://ampcode.com/api/v2; custom workspace API origins are supported.
 	ActorURL     string // Local fixture override; production uses the Amp actor API.
 	Login        func(context.Context, string, *oauth2.Token) (string, error)
 	SessionKey   string
@@ -147,7 +148,15 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		c.Issuer = "https://auth.ampcode.com"
 	}
 	if a.actorURL == "" {
-		a.actorURL = "https://ampcode.com/api/v2/actor"
+		if c.APIBaseURL == "" {
+			c.APIBaseURL = "https://ampcode.com/api/v2"
+		}
+		api, err := url.Parse(c.APIBaseURL)
+		if err != nil || api.Scheme != "https" || api.Hostname() == "" || api.User != nil || strings.TrimSuffix(api.Path, "/") != "/api/v2" || api.RawPath != "" || api.RawQuery != "" || api.ForceQuery || api.Fragment != "" {
+			return nil, errors.New("browserauth: APIBaseURL must be an HTTPS /api/v2 URL without credentials, query or fragment")
+		}
+		api.Path = "/api/v2/actor"
+		a.actorURL = api.String()
 	}
 	a.client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	ctx = oidc.ClientContext(ctx, a.client)

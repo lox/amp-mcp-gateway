@@ -180,3 +180,42 @@ func TestAmpHandshake(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomWorkspaceAPIBase(t *testing.T) {
+	var issuer string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys"})
+	}))
+	defer idp.Close()
+	issuer = idp.URL
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/actor" || r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Error("wrong actor request")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"actor":{"type":"user","id":"custom-user"},"workspace":{"id":"custom-workspace"}}`))
+	}))
+	defer api.Close()
+	cfg := Config{BaseURL: "https://gateway.example", Issuer: issuer, APIBaseURL: api.URL + "/api/v2/", ClientID: "client", ClientSecret: "fixture", WorkspaceID: "custom-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(context.Context, string, *oauth2.Token) (string, error) { return "", nil }}
+	a, err := New(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.client = api.Client() // Trust only this fixture's TLS certificate.
+	if id, err := a.actor(t.Context(), "fixture-token"); err != nil || id != "custom-user" {
+		t.Fatalf("custom API actor = %q, %v", id, err)
+	}
+	w := httptest.NewRecorder()
+	a.login(w, httptest.NewRequest("GET", "/auth/amp/login", nil))
+	location, _ := url.Parse(w.Header().Get("Location"))
+	if location.Query().Get("resource") != "https://ampcode.com/api/v2" {
+		t.Fatal("custom domain changed OAuth resource")
+	}
+	for _, invalid := range []string{"http://workspace.example/api/v2", "https://user:secret@workspace.example/api/v2", "https://workspace.example/other", "https://workspace.example/api/v2?token=x", "https://workspace.example/api/v2#fragment", "https:///api/v2"} {
+		cfg.APIBaseURL = invalid
+		if _, err := New(t.Context(), cfg); err == nil {
+			t.Fatalf("accepted invalid API base %q", invalid)
+		}
+	}
+}

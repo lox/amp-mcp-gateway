@@ -29,6 +29,7 @@ type deploymentConfig struct {
 	gateway.Config
 	AmpLoginClientID string
 	AmpWorkspaceID   string
+	AmpAPIBaseURL    string
 }
 
 type accountConfig struct {
@@ -89,15 +90,6 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 		if err != nil {
 			return nil, err
 		}
-		if len(raw) == 0 {
-			entries, err := os.ReadDir(config.Config.Database + ".accounts")
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, err
-			}
-			if len(entries) > 0 {
-				return nil, errors.New("account databases exist without their registry; restore legacy Issuer/HostedDomain and complete primary database")
-			}
-		}
 	}
 	if len(raw) != 0 {
 		if err := json.Unmarshal(raw, &r.links); err != nil || r.links == nil {
@@ -107,6 +99,16 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 	owner, user := config.Config.OwnerSubject, config.Config.AmpUserID
 	if old := r.links[owner]; old != "" && old != user {
 		return nil, errors.New("configured owner identity conflicts with saved link")
+	}
+	entries, err := os.ReadDir(config.Config.Database + ".accounts")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	unreferenced := make(map[string]bool)
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".db") {
+			unreferenced[entry.Name()] = true
+		}
 	}
 	r.links[owner] = user
 	r.users[user], r.subjects[owner] = primary, primary
@@ -129,12 +131,17 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 			r.close()
 			return nil, fmt.Errorf("open saved account database (restore the complete account data before restarting): %w", err)
 		}
+		delete(unreferenced, filepath.Base(cfg.Config.Database))
 		account, err := open(cfg)
 		if err != nil {
 			r.close()
 			return nil, err
 		}
 		r.users[ampID], r.subjects[subject] = account, account
+	}
+	if len(unreferenced) != 0 {
+		r.close()
+		return nil, errors.New("account databases are missing from the registry; restore legacy Issuer/HostedDomain and the complete primary database")
 	}
 	// Commit the fixed registry key only after every legacy database opened.
 	raw, err = json.Marshal(r.links)

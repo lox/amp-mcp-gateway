@@ -544,6 +544,10 @@ To configure a deployment:
    installation use `OwnerSubject=amp:<AmpUserID>` and `Issuer=https://auth.ampcode.com`.
    For existing installations, follow the [migration requirements](#amp-login-and-account-migration)
    instead: do not replace legacy storage identities with these new-install values.
+   If your workspace requires a custom domain, set `AmpAPIBaseURL` to
+   `https://YOUR-WORKSPACE-DOMAIN/api/v2`. It defaults to `https://ampcode.com/api/v2`
+   and must be HTTPS with no credentials, query or fragment. This changes the
+   actor endpoint only; the OAuth issuer and resource remain Amp's fixed URLs.
 3. Enable `amp.api:workspace.projects:view` on the OAuth application. Login requests
    `openid profile email offline_access amp.api:workspace.projects:view` with
    `resource=https://ampcode.com/api/v2`. Confirm refresh-token issuance in a real
@@ -825,8 +829,9 @@ The new session-key namespace invalidates old Google sessions.
 
 Startup restores legacy subject-to-Amp-ID links and opens every existing child
 database with its original path and derived key before saving a fixed registry
-key. Missing account databases or a missing registry alongside existing account
-files fail startup rather than creating empty replacements. Never change
+key. Missing account databases, or any account database omitted from the selected
+registry (including a stale, non-empty restore), fail startup rather than creating
+empty replacements. Never change
 `Issuer`, `OwnerSubject` or `AmpUserID` on
 bound data. Direct login looks up the verified Amp ID first, preserving all legacy
 approval subjects, connections, credentials, policies and history. New users get
