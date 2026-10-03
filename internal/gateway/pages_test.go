@@ -9,6 +9,7 @@ import (
 
 func TestFocusedPages(t *testing.T) {
 	g, s, _ := fixture(t)
+	g.cfg.AccountLink = true
 	g.cfg.Connections = append(g.cfg.Connections, upstream.Connection{ID: "browser", Account: "Selected Chrome tab", Browser: true})
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
@@ -35,6 +36,10 @@ func TestFocusedPages(t *testing.T) {
 			body := w.Body.String()
 			if w.Code != 200 || !strings.Contains(body, tc.want) || strings.Contains(body, tc.absent) || !strings.HasSuffix(body, "</body></html>") {
 				t.Fatalf("incorrect page: status=%d, want=%q, absent=%q", w.Code, tc.want, tc.absent)
+			}
+			header, rest, _ := strings.Cut(body, "</header>")
+			if !strings.Contains(header, `popovertarget="user-panel"`) || !strings.Contains(header, `href="/account"`) || strings.Contains(rest, `href="/account"`) {
+				t.Fatal("account navigation must appear only in the header user menu")
 			}
 		})
 	}

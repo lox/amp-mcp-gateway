@@ -240,6 +240,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err != nil {
 		return nil, err
 	}
+	browser.AccountLink = cfg.AccountLink
 	g, err := gateway.New(cfg, s, browser)
 	if err != nil {
 		return nil, err

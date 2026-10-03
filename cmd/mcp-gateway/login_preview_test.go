@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -105,7 +106,15 @@ func TestAmpLoginBrowserRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	body, err := io.ReadAll(res.Body)
 	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, rest, _ := strings.Cut(string(body), "</header>")
+	if !strings.Contains(header, `popovertarget="user-panel"`) || !strings.Contains(header, `href="/account"`) || strings.Contains(rest, `href="/account"`) {
+		t.Fatal("account navigation must appear only in the header user menu")
+	}
 	if res.StatusCode != 200 || res.Request.URL.Path != "/account" {
 		t.Fatalf("login ended at %s (%d)", res.Request.URL.Path, res.StatusCode)
 	}
