@@ -120,7 +120,7 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /assets/ui.css", webui.Stylesheet)
 	mux.HandleFunc("GET /account", h.account)
-	mux.HandleFunc("POST /auth/amp/link", h.start)
+	mux.HandleFunc("GET /auth/amp/link", h.start)
 	mux.HandleFunc("GET /auth/amp/callback", h.callback)
 	return http.NewCrossOriginProtection().Handler(mux), nil
 }
@@ -136,6 +136,8 @@ func (h *handler) account(w http.ResponseWriter, r *http.Request) {
 	_ = accountPage.Execute(w, struct{ AmpID string }{AmpID: h.current(subject)})
 }
 
+// start only initiates authentication, like /login. A navigation link (not a
+// form submission) can follow OIDC redirects without weakening form-action CSP.
 func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	subject := h.subject(r.Context())
 	if subject == "" {
@@ -281,4 +283,4 @@ func randomString() (string, error) {
 var accountPage = template.Must(template.New("account").Parse(`<!doctype html>
 <html lang="en" class="dashboard"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amp MCP Gateway · Account</title><link rel="stylesheet" href="/assets/ui.css"></head>
 <body><a class="skip" href="#main">Skip to content</a><header class="topbar"><a class="brand" href="/account"><span class="brand-mark" aria-hidden="true"></span>gateway<span class="brand-slash" aria-hidden="true">/</span></a><span class="product-name">Account settings</span><form method="post" action="/logout"><button>Sign out</button></form></header>
-<div class="shell"><aside class="sidebar"><nav aria-label="Main navigation">{{if .AmpID}}<a href="/operations"><span class="nav-symbol" aria-hidden="true">↗</span>Operations</a><a href="/connections"><span class="nav-symbol" aria-hidden="true">⊞</span>Connections</a><a href="/integrations"><span class="nav-symbol" aria-hidden="true">◇</span>Integrations</a><a href="/audit"><span class="nav-symbol" aria-hidden="true">≡</span>Audit</a>{{end}}<a href="/account" aria-current="page"><span class="nav-symbol" aria-hidden="true">@</span>Account</a></nav></aside><main id="main"><h1>Account</h1><p class="sub">Connect your authenticated gateway account to your Amp identity.</p><section class="card">{{if .AmpID}}<h2>Amp account</h2><p><span class="badge succeeded">Connected</span></p><dl><dt>Amp ID</dt><dd><code>{{.AmpID}}</code></dd></dl><p class="help">Account links cannot be changed here.</p>{{else}}<h2>Link Amp</h2><p>Sign in with Amp to verify and link your identity.</p><form method="post" action="/auth/amp/link"><button class="primary" type="submit">Sign in with Amp</button></form>{{end}}</section></main></div></body></html>`))
+<div class="shell"><aside class="sidebar"><nav aria-label="Main navigation">{{if .AmpID}}<a href="/operations"><span class="nav-symbol" aria-hidden="true">↗</span>Operations</a><a href="/connections"><span class="nav-symbol" aria-hidden="true">⊞</span>Connections</a><a href="/integrations"><span class="nav-symbol" aria-hidden="true">◇</span>Integrations</a><a href="/audit"><span class="nav-symbol" aria-hidden="true">≡</span>Audit</a>{{end}}<a href="/account" aria-current="page"><span class="nav-symbol" aria-hidden="true">@</span>Account</a></nav></aside><main id="main"><h1>Account</h1><p class="sub">Connect your authenticated gateway account to your Amp identity.</p><section class="card">{{if .AmpID}}<h2>Amp account</h2><p><span class="badge succeeded">Connected</span></p><dl><dt>Amp ID</dt><dd><code>{{.AmpID}}</code></dd></dl><p class="help">Account links cannot be changed here.</p>{{else}}<h2>Link Amp</h2><p>Sign in with Amp to verify and link your identity.</p><a class="button primary" href="/auth/amp/link">Sign in with Amp</a>{{end}}</section></main></div></body></html>`))

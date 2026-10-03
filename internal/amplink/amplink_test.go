@@ -100,7 +100,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) begin(t *testing.T) (string, *http.Cookie) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	f.handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/auth/amp/link", nil))
+	f.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/auth/amp/link", nil))
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("start status = %d: %s", w.Code, w.Body.String())
 	}
@@ -138,7 +138,7 @@ func TestSignedOAuthHandshakeLinksActor(t *testing.T) {
 		t.Fatalf("replay status = %d", replay.Code)
 	}
 	start := httptest.NewRecorder()
-	f.handler.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/auth/amp/link", nil))
+	f.handler.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/auth/amp/link", nil))
 	if start.Header().Get("Location") != "/account" || len(start.Result().Cookies()) != 0 {
 		t.Fatal("already linked user created another pending link")
 	}
@@ -185,20 +185,15 @@ func TestCallbackRejectsSwappedSubjectWrongStateNonceAndActor(t *testing.T) {
 	}
 }
 
-func TestAccountPageAndCrossOriginPOST(t *testing.T) {
+func TestAccountPageUsesNavigationForLogin(t *testing.T) {
 	f := newFixture(t)
 	w := httptest.NewRecorder()
 	f.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/account", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Sign in with Amp") || strings.Contains(w.Body.String(), `name="amp`) {
 		t.Fatalf("account page = %d %q", w.Code, w.Body.String())
 	}
-	cross := httptest.NewRequest(http.MethodPost, "/auth/amp/link", nil)
-	cross.Header.Set("Origin", "https://evil.example")
-	cross.Header.Set("Sec-Fetch-Site", "cross-site")
-	w = httptest.NewRecorder()
-	f.handler.ServeHTTP(w, cross)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("cross-origin status = %d", w.Code)
+	if !strings.Contains(w.Body.String(), `<a class="button primary" href="/auth/amp/link">`) || strings.Contains(w.Body.String(), `action="/auth/amp/link"`) {
+		t.Fatal("form-action CSP would block cross-origin login redirects")
 	}
 }
 
