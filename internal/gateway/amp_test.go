@@ -132,7 +132,7 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submission actor: %v %v", events, err)
 	}
 	w = httptest.NewRecorder()
-	g.render(w, map[string]any{"Operation": o, "Owner": "owner"})
+	g.render(w, httptest.NewRequest("GET", "/", nil), map[string]any{"Operation": o, "Owner": "owner"})
 	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") || !strings.Contains(w.Body.String(), "workspace-123") || !strings.Contains(w.Body.String(), "project-456") || !strings.Contains(w.Body.String(), "Thread visibility") || !strings.Contains(w.Body.String(), "Multiplayer") || !strings.Contains(w.Body.String(), "Non-owner influence") {
 		t.Fatal("missing identity link")
 	}

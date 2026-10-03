@@ -29,12 +29,26 @@
   :where(html.dashboard, html.chrome) .user-menu {
     @apply ml-auto flex-none;
   }
-  :where(html.dashboard) .owner ~ .user-menu {
+  :where(html.dashboard) .topbar:has(.notification-trigger:not([hidden])) .user-menu {
     @apply ml-0;
   }
   :where(html.dashboard, html.chrome) .topbar .user-menu-trigger {
     anchor-name: --user-menu-trigger;
-    @apply grid place-items-center size-10 p-[9px];
+    @apply flex items-center gap-2 min-h-10 p-[5px_8px];
+  }
+  :where(html.dashboard, html.chrome) .user-avatar {
+    @apply relative grid place-items-center size-7 rounded-full overflow-hidden flex-none;
+    background: #edf1f8;
+  }
+  :where(html.dashboard, html.chrome) .user-avatar img {
+    @apply absolute inset-0 size-full object-cover;
+  }
+  :where(html.dashboard, html.chrome) .user-name {
+    @apply max-w-[180px] truncate;
+  }
+  :where(html.dashboard, html.chrome) .user-identity {
+    @apply m-0 p-[10px_12px] text-[13px] font-semibold;
+    overflow-wrap: anywhere;
   }
   :where(html.dashboard, html.chrome) .user-menu-trigger svg {
     @apply size-5;
@@ -71,7 +85,7 @@
   /* dashboard */
   :where(html.dashboard) .topbar .notification-trigger {
     anchor-name: --notification-trigger;
-    @apply grid place-items-center size-10 p-[9px] flex-none;
+    @apply grid place-items-center size-10 p-[9px] flex-none ml-auto;
   }
   :where(html.dashboard) .notification-trigger svg {
     @apply size-5;
@@ -867,10 +881,6 @@
   :where(html.dashboard) .product-name {
     @apply text-muted text-[13px];
   }
-  :where(html.dashboard) .topbar .owner {
-    @apply ml-auto text-muted text-[12px];
-    overflow-wrap: anywhere;
-  }
   :where(html.dashboard) .topbar button {
     font:
       12px ui-monospace,
@@ -1093,12 +1103,8 @@
     :where(html.dashboard) .topbar {
       @apply flex-wrap gap-3;
     }
-    :where(html.dashboard) .topbar .owner {
-      order: 3;
-      @apply w-full m-0;
-    }
-    :where(html.dashboard) .owner ~ .user-menu {
-      @apply ml-auto;
+    :where(html.dashboard, html.chrome) .user-name {
+      display: none;
     }
     :where(html.dashboard) .topbar form {
       @apply ml-auto;

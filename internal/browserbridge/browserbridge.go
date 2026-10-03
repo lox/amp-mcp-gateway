@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"ampcode.com/lox/amp-mcp-gateway/internal/webui"
 	"github.com/gorilla/websocket"
@@ -483,7 +484,7 @@ func (m *Manager) UI(enable func(context.Context) error) http.Handler {
 			return
 		}
 		if err := enable(r.Context()); err != nil {
-			m.render(w, browserPageData{Connections: m.statuses(), Error: err.Error()})
+			m.render(w, r, browserPageData{Connections: m.statuses(), Error: err.Error()})
 			return
 		}
 		http.Redirect(w, r, "/integrations/chrome", http.StatusSeeOther)
@@ -494,7 +495,7 @@ func (m *Manager) UI(enable func(context.Context) error) http.Handler {
 }
 
 func (m *Manager) browserPage(w http.ResponseWriter, r *http.Request) {
-	m.render(w, browserPageData{Connections: m.statuses()})
+	m.render(w, r, browserPageData{Connections: m.statuses()})
 }
 
 func (m *Manager) browserStatus(w http.ResponseWriter, _ *http.Request) {
@@ -549,7 +550,7 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 	if old != nil {
 		old.revoke()
 	}
-	m.render(w, browserPageData{Connections: m.statuses(), PairingCode: code, GatewayURL: m.baseURL, PairingConnection: connection})
+	m.render(w, r, browserPageData{Connections: m.statuses(), PairingCode: code, GatewayURL: m.baseURL, PairingConnection: connection})
 }
 
 func (m *Manager) revoke(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +578,7 @@ type browserStatus struct {
 
 type browserPageData struct {
 	AccountLink       bool
+	User              browserauth.Profile
 	Connections       []browserStatus
 	PairingCode       string
 	PairingConnection string
@@ -596,8 +598,9 @@ func (m *Manager) statuses() []browserStatus {
 	return statuses
 }
 
-func (m *Manager) render(w http.ResponseWriter, data browserPageData) {
+func (m *Manager) render(w http.ResponseWriter, r *http.Request, data browserPageData) {
 	data.AccountLink = m.AccountLink
+	data.User = browserauth.User(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := browserPage.Execute(w, data); err != nil {
 		http.Error(w, "render pairing page", http.StatusInternalServerError)
@@ -605,7 +608,7 @@ func (m *Manager) render(w http.ResponseWriter, data browserPageData) {
 }
 
 var browserPage = template.Must(template.New("browser").Parse(webui.UserMenu + `<!doctype html>
-<html lang="en" class="chrome"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amp MCP Gateway · Chrome</title><link rel="stylesheet" href="/assets/ui.css"></head><body><a class="skip" href="#main">Skip to content</a><header class="topbar"><a class="brand" href="/approvals"><span class="brand-mark" aria-hidden="true"></span>gateway<span class="brand-slash" aria-hidden="true">/</span></a><span class="product-name">MCP control panel</span>{{template "user-menu" .AccountLink}}</header><div class="shell"><aside class="sidebar"><nav aria-label="Main navigation"><a href="/approvals"><span class="nav-symbol" aria-hidden="true">↗</span>Approvals</a><a href="/connections"><span class="nav-symbol" aria-hidden="true">⊞</span>Connections</a><a href="/integrations" aria-current="page"><span class="nav-symbol" aria-hidden="true">◇</span>Integrations</a><a href="/audit"><span class="nav-symbol" aria-hidden="true">≡</span>Audit</a></nav></aside><main id="main"><a href="/integrations">← Integrations</a><h1>Chrome</h1><p class="sub">Pair one explicitly selected tab with the gateway. The extension connects outbound, and you can disconnect it here at any time.</p>
+<html lang="en" class="chrome"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amp MCP Gateway · Chrome</title><link rel="stylesheet" href="/assets/ui.css"></head><body><a class="skip" href="#main">Skip to content</a><header class="topbar"><a class="brand" href="/approvals"><span class="brand-mark" aria-hidden="true"></span>gateway<span class="brand-slash" aria-hidden="true">/</span></a><span class="product-name">MCP control panel</span>{{template "user-menu" .}}</header><div class="shell"><aside class="sidebar"><nav aria-label="Main navigation"><a href="/approvals"><span class="nav-symbol" aria-hidden="true">↗</span>Approvals</a><a href="/connections"><span class="nav-symbol" aria-hidden="true">⊞</span>Connections</a><a href="/integrations" aria-current="page"><span class="nav-symbol" aria-hidden="true">◇</span>Integrations</a><a href="/audit"><span class="nav-symbol" aria-hidden="true">≡</span>Audit</a></nav></aside><main id="main"><a href="/integrations">← Integrations</a><h1>Chrome</h1><p class="sub">Pair one explicitly selected tab with the gateway. The extension connects outbound, and you can disconnect it here at any time.</p>
 {{if .PairingCode}}<div class="card"><h2>Pair the extension</h2><strong>Gateway URL</strong><code class="code">{{.GatewayURL}}</code><strong>Pairing code for {{.PairingConnection}}</strong><code class="code">{{.PairingCode}}</code><p class="sub">Paste both values into the extension. The code expires in ten minutes if unused and is shown only on this page.</p></div>{{end}}
 {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{range .Connections}}<div class="card" data-browser-connection="{{.ID}}" data-browser-state="{{if .Connected}}connected{{else if .Paired}}offline{{else}}not-paired{{end}}"><div class="row"><div><strong>{{.Account}}</strong><p><code>{{.ID}}</code> · {{if .Connected}}<span class="badge connected">connected</span>{{else if .Paired}}<span class="badge">offline</span>{{else}}<span class="badge">not paired</span>{{end}}</p>{{if .TabTitle}}<p class="sub">{{.TabTitle}}<br><span class="url">{{.TabURL}}</span></p>{{end}}</div>{{if or .Paired .Connected}}<form method="post" action="/integrations/chrome/revoke"><input type="hidden" name="connection" value="{{.ID}}"><button class="danger">Disconnect</button></form>{{else}}<form method="post" action="/integrations/chrome/pair"><input type="hidden" name="connection" value="{{.ID}}"><button>Create pairing code</button></form>{{end}}</div></div>{{else}}<div class="card"><h2>Enable Chrome</h2><p class="sub">Add the governed browser tools to this gateway. Viewing is allowed directly; click, type and navigation require approval.</p><form method="post" action="/integrations/chrome/enable"><button>Enable Chrome</button></form></div>{{end}}
 <footer>One explicitly selected HTTP(S) tab · outbound extension connection · revocable at any time</footer></main></div><script>
