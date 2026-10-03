@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,6 +130,24 @@ func TestAmpLoginMigratesLegacyAccountsWithoutRekeying(t *testing.T) {
 			t.Fatal("OAuth tokens crossed accounts or were not retained")
 		}
 	}
+	for _, tc := range []struct{ refresh, want string }{
+		{"", "bob-refresh-secret"},
+		{"rotated-refresh-secret", "rotated-refresh-secret"},
+		{"", "rotated-refresh-secret"},
+	} {
+		incoming := &oauth2.Token{AccessToken: "bob-new-access", RefreshToken: tc.refresh}
+		if _, err := r.login(ctx, "amp-bob", incoming); err != nil {
+			t.Fatal(err)
+		}
+		if incoming.RefreshToken != tc.refresh {
+			t.Fatal("login mutated caller's token")
+		}
+		raw, err := r.users["amp-bob"].store.LoadToken(ctx, "amp-api-oauth/v1")
+		var saved oauth2.Token
+		if err != nil || json.Unmarshal(raw, &saved) != nil || saved.AccessToken != "bob-new-access" || saved.RefreshToken != tc.want {
+			t.Fatal("reauthentication lost credentials")
+		}
+	}
 	r.close()
 	r, err = newRegistry(ctx, primary, base, open)
 	if err != nil {
@@ -150,5 +169,98 @@ func TestAmpLoginMigratesLegacyAccountsWithoutRekeying(t *testing.T) {
 		if bytes.Contains(raw, []byte("bob-access-secret")) || bytes.Contains(raw, []byte("bob-refresh-secret")) {
 			t.Fatal("OAuth token stored in plaintext")
 		}
+	}
+}
+
+func TestAccountProvisioningRecoversInterruptedCreation(t *testing.T) {
+	for _, createFile := range []bool{false, true} {
+		t.Run(fmt.Sprintf("database-created-%t", createFile), func(t *testing.T) {
+			ctx := t.Context()
+			base := accountConfig{Config: gateway.Config{Database: filepath.Join(t.TempDir(), "gateway.db"), Issuer: "legacy", OwnerSubject: "primary", AmpUserID: "amp-primary", AccountLink: true}, Secrets: accountSecrets()}
+			s, err := store.Open(base.Config.Database, base.Secrets.EncryptionKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			primary := &accountRuntime{store: s}
+			open := func(c accountConfig) (*accountRuntime, error) {
+				child, err := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
+				if err != nil {
+					return nil, err
+				}
+				if err := bindAccountIdentity(ctx, child, c.Config); err != nil {
+					child.Close()
+					return nil, err
+				}
+				return &accountRuntime{store: child}, nil
+			}
+			r, err := newRegistry(ctx, primary, base, func(c accountConfig) (*accountRuntime, error) {
+				marker, err := s.LoadToken(ctx, provisioningKey)
+				if err != nil || string(marker) != `["amp:child","child"]` {
+					t.Fatal("database creation preceded durable provisioning intent")
+				}
+				if createFile {
+					child, err := open(c)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := child.store.SaveToken(ctx, "sentinel", []byte("preserved")); err != nil {
+						t.Fatal(err)
+					}
+					child.store.Close()
+				}
+				return nil, errors.New("simulated interruption")
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.link(ctx, "amp:child", "child"); err == nil {
+				t.Fatal("ignored provisioning failure")
+			}
+			if err := r.link(ctx, "amp:other", "other"); err == nil {
+				t.Fatal("overwrote pending provisioning intent")
+			}
+			r.close()
+			r, err = newRegistry(ctx, primary, base, open)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.current("amp:child") != "child" {
+				t.Fatal("restart did not finish provisioning")
+			}
+			if createFile {
+				if raw, err := r.users["child"].store.LoadToken(ctx, "sentinel"); err != nil || string(raw) != "preserved" {
+					t.Fatal("recovery replaced existing database")
+				}
+			}
+			if raw, err := s.LoadToken(ctx, provisioningKey); err != nil || len(raw) != 0 {
+				t.Fatal("recovery left provisioning pending")
+			}
+			r.close()
+			// A crash after registry publication but before marker cleanup must
+			// not allow recreation of a now-committed missing database.
+			if err := s.SaveToken(ctx, provisioningKey, []byte(`["amp:child","child"]`)); err != nil {
+				t.Fatal(err)
+			}
+			r, err = newRegistry(ctx, primary, base, open)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := r.userConfig("amp:child", "child")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.close()
+			if err := s.SaveToken(ctx, provisioningKey, []byte(`["amp:child","child"]`)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(cfg.Config.Database); err != nil {
+				t.Fatal(err)
+			}
+			if bad, err := newRegistry(ctx, primary, base, open); err == nil {
+				bad.close()
+				t.Fatal("provisioning marker allowed replacement of a committed database")
+			}
+		})
 	}
 }

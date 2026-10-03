@@ -831,7 +831,10 @@ Startup restores legacy subject-to-Amp-ID links and opens every existing child
 database with its original path and derived key before saving a fixed registry
 key. Missing account databases, or any account database omitted from the selected
 registry (including a stale, non-empty restore), fail startup rather than creating
-empty replacements. Never change
+empty replacements. New-account creation records a durable provisioning marker
+before opening its database; startup finishes only that marked creation after an
+interruption. A provisioning error blocks further new accounts until restart,
+without disrupting existing account routing. Never change
 `Issuer`, `OwnerSubject` or `AmpUserID` on
 bound data. Direct login looks up the verified Amp ID first, preserving all legacy
 approval subjects, connections, credentials, policies and history. New users get
@@ -844,6 +847,7 @@ not by running an old binary against newly provisioned accounts.
 
 OAuth access and refresh tokens (when issued), token type and expiry are encrypted
 server-side in that user's account database before issuing a browser session.
+Reauthentication preserves the previous refresh token when Amp omits a new one.
 They are never placed in browser cookies or tool results. This change retains
 tokens for later Amp API consumers; it does not implement project-name lookup or
 automatic refresh. The [Amp API contract](https://ampcode.com/api/external) supports

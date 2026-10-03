@@ -64,6 +64,7 @@ func bindAccountIdentity(ctx context.Context, s *store.Store, cfg gateway.Config
 // Only the OAuth callback calls link; unverified workload hints never create state.
 type accountRegistry struct {
 	linkMu   sync.Mutex // Serialize creation without blocking existing-account routing.
+	tokenMu  sync.Mutex // Serialize OAuth token read/modify/write across callbacks.
 	mu       sync.RWMutex
 	ctx      context.Context
 	primary  *accountRuntime
@@ -75,6 +76,8 @@ type accountRegistry struct {
 	open     func(accountConfig) (*accountRuntime, error)
 	start    func(*accountRuntime)
 }
+
+const provisioningKey = "amp-account-provisioning/v1"
 
 func newRegistry(ctx context.Context, primary *accountRuntime, config accountConfig, open func(accountConfig) (*accountRuntime, error)) (*accountRegistry, error) {
 	identity, _ := json.Marshal([]string{config.Config.Issuer, config.Config.HostedDomain})
@@ -99,6 +102,26 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 	owner, user := config.Config.OwnerSubject, config.Config.AmpUserID
 	if old := r.links[owner]; old != "" && old != user {
 		return nil, errors.New("configured owner identity conflicts with saved link")
+	}
+	pending, err := primary.store.LoadToken(ctx, provisioningKey)
+	if err != nil {
+		return nil, err
+	}
+	creating := ""
+	if len(pending) != 0 {
+		var identity []string
+		if json.Unmarshal(pending, &identity) != nil || len(identity) != 2 || identity[0] == "" || identity[1] == "" {
+			return nil, errors.New("invalid account provisioning marker")
+		}
+		subject, ampID := identity[0], identity[1]
+		if old := r.links[subject]; old != "" {
+			if old != ampID {
+				return nil, errors.New("account provisioning marker conflicts with saved link")
+			}
+		} else {
+			creating = subject
+			r.links[subject] = ampID
+		}
 	}
 	entries, err := os.ReadDir(config.Config.Database + ".accounts")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -127,7 +150,7 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 		}
 		// Only new links may create databases. A partial restore must not
 		// silently replace a persisted account with empty state.
-		if _, err := os.Stat(cfg.Config.Database); err != nil {
+		if _, err := os.Stat(cfg.Config.Database); err != nil && !(subject == creating && errors.Is(err, os.ErrNotExist)) {
 			r.close()
 			return nil, fmt.Errorf("open saved account database (restore the complete account data before restarting): %w", err)
 		}
@@ -147,6 +170,9 @@ func newRegistry(ctx context.Context, primary *accountRuntime, config accountCon
 	raw, err = json.Marshal(r.links)
 	if err == nil {
 		err = primary.store.SaveToken(ctx, key, raw)
+	}
+	if err == nil && len(pending) != 0 {
+		err = primary.store.SaveToken(ctx, provisioningKey, nil)
 	}
 	if err != nil {
 		r.close()
@@ -182,7 +208,23 @@ func (r *accountRegistry) login(ctx context.Context, ampID string, token *oauth2
 	r.mu.RLock()
 	account := r.users[ampID]
 	r.mu.RUnlock()
-	raw, err := json.Marshal(token)
+	r.tokenMu.Lock()
+	defer r.tokenMu.Unlock()
+	retained := *token
+	if retained.RefreshToken == "" {
+		raw, err := account.store.LoadToken(ctx, "amp-api-oauth/v1")
+		if err != nil {
+			return "", err
+		}
+		var previous oauth2.Token
+		if len(raw) != 0 {
+			if err := json.Unmarshal(raw, &previous); err != nil {
+				return "", err
+			}
+			retained.RefreshToken = previous.RefreshToken
+		}
+	}
+	raw, err := json.Marshal(&retained)
 	if err == nil {
 		err = account.store.SaveToken(ctx, "amp-api-oauth/v1", raw)
 	}
@@ -218,6 +260,22 @@ func (r *accountRegistry) link(ctx context.Context, subject, ampID string) error
 	if err != nil {
 		return err
 	}
+	// Record intent before creating a file. Startup can finish this exact
+	// account without treating arbitrary unreferenced databases as new users.
+	pending, err := r.primary.store.LoadToken(ctx, provisioningKey)
+	if err != nil {
+		return err
+	}
+	if len(pending) != 0 {
+		return errors.New("account provisioning interrupted; restart to recover before creating another account")
+	}
+	pending, err = json.Marshal([]string{subject, ampID})
+	if err != nil {
+		return err
+	}
+	if err := r.primary.store.SaveToken(ctx, provisioningKey, pending); err != nil {
+		return err
+	}
 	account, err := r.open(cfg)
 	if err != nil {
 		return err
@@ -226,6 +284,9 @@ func (r *accountRegistry) link(ctx context.Context, subject, ampID string) error
 	raw, err := json.Marshal(next)
 	if err == nil {
 		err = r.primary.store.SaveToken(ctx, r.key, raw)
+	}
+	if err == nil {
+		err = r.primary.store.SaveToken(ctx, provisioningKey, nil)
 	}
 	if err != nil {
 		account.store.Close()

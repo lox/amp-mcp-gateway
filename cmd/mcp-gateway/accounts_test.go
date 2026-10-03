@@ -157,9 +157,15 @@ func TestRegistryStopsLinkingAfterShutdown(t *testing.T) {
 
 func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
+	s, err := store.Open(filepath.Join(t.TempDir(), "primary.db"), accountSecrets().EncryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
 	r := &accountRegistry{
 		ctx: t.Context(), config: accountConfig{Secrets: accountSecrets()},
-		links: map[string]string{"existing": "amp-existing"}, users: map[string]*accountRuntime{},
+		primary: &accountRuntime{store: s},
+		links:   map[string]string{"existing": "amp-existing"}, users: map[string]*accountRuntime{},
 		open: func(accountConfig) (*accountRuntime, error) {
 			close(entered)
 			<-release
