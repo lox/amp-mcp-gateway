@@ -6,7 +6,7 @@
 @source "../gateway/page.go";
 @source "../gateway/audit.html";
 @source "../browserauth/browserauth.go";
-@source "../amplink/amplink.go";
+@source "../../cmd/mcp-gateway/account_page.go";
 @source "../browserbridge/browserbridge.go";
 @theme {
   /* Keep the original pixel spacing independent of the 14px dashboard font. */
@@ -1239,7 +1239,8 @@
   }
   :where(html.login) label,
   :where(html.login) input,
-  :where(html.login) button {
+  :where(html.login) button,
+  :where(html.login) a.button {
     @apply block w-full box-border;
   }
   :where(html.login) label {
@@ -1250,13 +1251,14 @@
     border: 1px solid #aaa;
     @apply rounded-[8px];
   }
-  :where(html.login) button {
+  :where(html.login) button,
+  :where(html.login) a.button {
     @apply p-[.8rem];
     border: 0;
     @apply rounded-[8px];
     background: #22543d;
     color: white;
-    @apply font-bold;
+    @apply font-bold text-center no-underline;
   }
   :where(html.login) .error {
     color: #a11;

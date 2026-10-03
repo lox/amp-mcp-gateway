@@ -1,14 +1,13 @@
 package browserauth
 
 import (
-	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"log/slog"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,223 +16,206 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
+	"golang.org/x/oauth2"
 )
 
-func TestOIDCRealHandshakeAndClaims(t *testing.T) {
+func TestAmpHandshake(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []struct {
-		name          string
-		hostedDomain  string
-		claimDomain   string
-		claimSubject  string
-		domainMembers bool
-		verified      bool
-		wantSuccess   bool
-		wantReason    string
-	}{
-		{name: "generic OIDC without domain", claimSubject: "owner-123", wantSuccess: true},
-		{name: "valid hosted domain", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "owner-123", wantSuccess: true},
-		{name: "missing hosted domain claim", hostedDomain: "example.com", claimSubject: "owner-123", wantReason: "hosted_domain"},
-		{name: "wrong hosted domain claim", hostedDomain: "example.com", claimDomain: "other.example", claimSubject: "owner-123", wantReason: "hosted_domain"},
-		{name: "same domain wrong owner", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", wantReason: "owner"},
-		{name: "verified domain member", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", domainMembers: true, verified: true, wantSuccess: true},
-		{name: "unverified domain member", hostedDomain: "example.com", claimDomain: "example.com", claimSubject: "other-owner", domainMembers: true, wantReason: "hosted_domain"},
-		{name: "member wrong domain", hostedDomain: "example.com", claimDomain: "foreign.example", claimSubject: "other-owner", domainMembers: true, verified: true, wantReason: "hosted_domain"},
-		{name: "wrong nonce", claimSubject: "owner-123", wantReason: "nonce"},
-		{name: "wrong audience", claimSubject: "owner-123", wantReason: "id_token_verification"},
-		{name: "expired", claimSubject: "owner-123", wantReason: "id_token_verification"},
-		{name: "exchange rejected", wantReason: "token_exchange"},
-		{name: "missing ID token", wantReason: "missing_id_token"},
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "fixture"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var logs bytes.Buffer
-			previousLogger := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			defer slog.SetDefault(previousLogger)
+	for _, scenario := range []string{"valid", "valid access hash", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
+		t.Run(scenario, func(t *testing.T) {
 			var issuer, nonce, challenge string
 			mux := http.NewServeMux()
-			mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+			write := func(w http.ResponseWriter, v any) {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"}})
+				_ = json.NewEncoder(w).Encode(v)
+			}
+			mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+				write(w, map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"}})
 			})
 			mux.HandleFunc("GET /keys", func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
+				write(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
 			})
 			mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
-				if tt.name == "exchange rejected" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					w.Write([]byte(`{"error":"invalid_client","error_description":"sensitive-provider-response"}`))
-					return
-				}
-				if tt.name == "missing ID token" {
-					w.Header().Set("Content-Type", "application/json")
-					w.Write([]byte(`{"access_token":"fixture-access","token_type":"Bearer"}`))
-					return
-				}
-				r.ParseForm()
+				_ = r.ParseForm()
 				sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
-				if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
-					t.Error("missing or invalid PKCE verifier")
-					http.Error(w, "invalid", 400)
+				if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge || r.Form.Get("resource") != "https://ampcode.com/api/v2" {
+					t.Error("bad PKCE/resource")
+				}
+				if scenario == "exchange rejected" {
+					http.Error(w, "sensitive provider response", 400)
 					return
 				}
-				claims := map[string]any{"iss": issuer, "sub": tt.claimSubject, "aud": "gateway", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
-				claims["email_verified"] = tt.verified
-				if tt.claimDomain != "" {
-					claims["hd"] = tt.claimDomain
-				}
-				switch tt.name {
+				claims := map[string]any{"iss": issuer, "sub": "oidc-subject-not-an-amp-id", "aud": "client", "exp": time.Now().Add(time.Hour).Unix(), "nonce": nonce}
+				switch scenario {
+				case "valid access hash":
+					hash := sha256.Sum256([]byte("access-secret"))
+					claims["at_hash"] = base64.RawURLEncoding.EncodeToString(hash[:16])
+				case "wrong access hash":
+					claims["at_hash"] = "wrong"
 				case "wrong nonce":
-					claims["nonce"] = "other-nonce"
+					claims["nonce"] = "wrong"
 				case "wrong audience":
-					claims["aud"] = "other-client"
+					claims["aud"] = "wrong"
 				case "expired":
 					claims["exp"] = time.Now().Add(-time.Hour).Unix()
 				}
-				signer, e := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "fixture"))
+				raw, e := jwt.Signed(signer).Claims(claims).Serialize()
 				if e != nil {
 					t.Error(e)
-					return
 				}
-				payload, _ := json.Marshal(claims)
-				signed, e := signer.Sign(payload)
-				if e != nil {
-					t.Error(e)
-					return
+				response := map[string]any{"access_token": "access-secret", "refresh_token": "refresh-secret", "token_type": "Bearer", "expires_in": 3600, "id_token": raw}
+				if scenario == "missing ID token" {
+					delete(response, "id_token")
 				}
-				raw, e := signed.CompactSerialize()
-				if e != nil {
-					t.Error(e)
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"access_token": "fixture-access", "token_type": "Bearer", "id_token": raw})
+				write(w, response)
 			})
-			idp := httptest.NewServer(mux)
-			defer idp.Close()
-			issuer = idp.URL
-			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ClientID: "gateway", ClientSecret: "fixture-secret", OwnerSubject: "owner-123", HostedDomain: tt.hostedDomain, SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32))})
+			mux.HandleFunc("GET /actor", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer access-secret" {
+					t.Error("actor did not use access token")
+				}
+				id, kind, workspace := "amp-user", "user", "allowed-workspace"
+				switch scenario {
+				case "wrong workspace":
+					workspace = "foreign-workspace"
+				case "missing workspace":
+					workspace = ""
+				case "machine actor":
+					kind = "m2m"
+				case "empty actor":
+					id = ""
+				case "actor failure":
+					http.Error(w, "secret", 500)
+					return
+				}
+				write(w, map[string]any{"actor": map[string]string{"type": kind, "id": id}, "workspace": map[string]string{"id": workspace}})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			issuer = server.URL
+			stored := false
+			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ActorURL: issuer + "/actor", ClientID: "client", ClientSecret: "secret", WorkspaceID: "allowed-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(_ context.Context, id string, token *oauth2.Token) (string, error) {
+				if scenario == "save failed" {
+					return "", errors.New("sensitive storage details")
+				}
+				if id != "amp-user" || token.AccessToken != "access-secret" || token.RefreshToken != "refresh-secret" {
+					t.Fatal("wrong identity or credentials")
+				}
+				stored = true
+				return "legacy-google-subject", nil
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The local signed provider stands in for Google. Constructor restrictions
-			// are checked separately; exercise the actual callback and session here.
-			a.allowDomainMembers = tt.domainMembers
 			app := http.NewServeMux()
 			a.Register(app)
 			login := httptest.NewRecorder()
-			app.ServeHTTP(login, httptest.NewRequest("GET", "/login", nil))
-			location, err := url.Parse(login.Header().Get("Location"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			nonce = location.Query().Get("nonce")
-			challenge = location.Query().Get("code_challenge")
-			if nonce == "" || challenge == "" {
-				t.Fatal("missing nonce/PKCE")
-			}
-			if got := location.Query().Get("hd"); got != tt.hostedDomain {
-				t.Fatalf("hosted domain hint = %q, want %q", got, tt.hostedDomain)
-			}
-			wantScope := "openid"
-			if tt.hostedDomain != "" {
-				wantScope = "openid email"
-			}
-			if got := location.Query().Get("scope"); got != wantScope {
-				t.Fatalf("scope = %q, want %q", got, wantScope)
+			app.ServeHTTP(login, httptest.NewRequest("GET", "/auth/amp/login", nil))
+			location, _ := url.Parse(login.Header().Get("Location"))
+			q := location.Query()
+			nonce, challenge = q.Get("nonce"), q.Get("code_challenge")
+			if nonce == "" || challenge == "" || q.Get("resource") != "https://ampcode.com/api/v2" || q.Get("scope") != "openid profile email offline_access amp.api:workspace.projects:view" || q.Get("redirect_uri") != "https://gateway.example/auth/amp/callback" {
+				t.Fatal("bad authorization parameters")
 			}
 			callback := func() *httptest.ResponseRecorder {
-				r := httptest.NewRequest("GET", "/auth/callback?state="+url.QueryEscape(location.Query().Get("state"))+"&code=fixture-code", nil)
+				state := q.Get("state")
+				if scenario == "swapped state" {
+					state = "other"
+				}
+				path := "/auth/amp/callback?state=" + url.QueryEscape(state) + "&code=fixture"
+				if scenario == "duplicate state" {
+					path += "&state=other"
+				}
+				r := httptest.NewRequest("GET", path, nil)
 				r.AddCookie(login.Result().Cookies()[0])
 				w := httptest.NewRecorder()
 				app.ServeHTTP(w, r)
 				return w
 			}
-			if tt.name == "generic OIDC without domain" {
-				for i := 1; i < 128; i++ {
-					w := httptest.NewRecorder()
-					r := httptest.NewRequest("GET", "/login", nil)
-					r.RemoteAddr = fmt.Sprintf("192.0.3.%d:1234", i)
-					app.ServeHTTP(w, r)
-					if w.Code != http.StatusSeeOther {
-						t.Fatalf("fill login capacity: status=%d", w.Code)
-					}
-				}
-				excess := httptest.NewRecorder()
-				app.ServeHTTP(excess, httptest.NewRequest("GET", "/login", nil))
-				if excess.Code != http.StatusServiceUnavailable {
-					t.Fatalf("full login capacity: status=%d", excess.Code)
-				}
-			}
-			res := callback()
+			w := callback()
 			want := http.StatusUnauthorized
-			if tt.wantSuccess {
+			success := scenario == "valid" || scenario == "valid access hash"
+			if success {
 				want = http.StatusSeeOther
 			}
-			if res.Code != want {
-				t.Fatalf("status %d: %s", res.Code, res.Body.String())
+			if scenario == "save failed" {
+				want = http.StatusServiceUnavailable
 			}
-			if tt.wantReason != "" && !strings.Contains(logs.String(), "reason="+tt.wantReason) {
-				t.Fatalf("missing failure reason %q: %s", tt.wantReason, logs.String())
+			if scenario == "swapped state" || scenario == "duplicate state" {
+				want = http.StatusBadRequest
 			}
-			for _, sensitive := range []string{"sensitive-provider-response", "fixture-access", "fixture-secret", "fixture-code", "owner-123", "other-owner", nonce, challenge} {
-				if strings.Contains(logs.String(), sensitive) {
-					t.Fatal("authentication logs contain sensitive data")
+			if w.Code != want {
+				t.Fatalf("got %d: %s", w.Code, w.Body)
+			}
+			if stored != success {
+				t.Fatal("invalid login saved account")
+			}
+			for _, c := range w.Result().Cookies() {
+				if c.Name != sessionCookie || c.MaxAge <= 0 {
+					continue
+				}
+				if !success || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode {
+					t.Fatal("unsafe session issuance")
+				}
+				r := httptest.NewRequest("GET", "/", nil)
+				r.AddCookie(c)
+				sub, ok := a.sessionSubject(r)
+				if !ok || sub != "legacy-google-subject" {
+					t.Fatal("lost legacy identity")
 				}
 			}
-			session := false
-			for _, c := range res.Result().Cookies() {
-				if c.Name == sessionCookie && c.MaxAge > 0 {
-					session = true
-					request := httptest.NewRequest("GET", "/", nil)
-					request.AddCookie(c)
-					accepted := false
-					a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-						accepted = Subject(r.Context()) == tt.claimSubject
-					})).ServeHTTP(httptest.NewRecorder(), request)
-					if !accepted {
-						t.Fatal("verified member session rejected or mapped to wrong subject")
-					}
-				}
-			}
-			if session != tt.wantSuccess {
-				t.Fatal("incorrect session issuance")
-			}
-			if tt.name == "generic OIDC without domain" {
-				fresh := httptest.NewRecorder()
-				app.ServeHTTP(fresh, httptest.NewRequest("GET", "/login", nil))
-				if fresh.Code != http.StatusSeeOther {
-					t.Fatalf("callback did not release login capacity: status=%d", fresh.Code)
-				}
+			if strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "sensitive") {
+				t.Fatal("leaked sensitive error")
 			}
 			if callback().Code != http.StatusBadRequest {
-				t.Fatal("OAuth state replay accepted")
+				t.Fatal("replayed callback accepted")
 			}
 		})
 	}
 }
 
-func TestNewRejectsDomainMembersOutsideGoogleWorkspace(t *testing.T) {
-	base := Config{BaseURL: "https://gateway.example", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), OwnerSubject: "owner", Issuer: "https://accounts.google.com", ClientID: "client", ClientSecret: "secret", HostedDomain: "example.com", AllowDomainMembers: true}
-	for name, mutate := range map[string]func(*Config){
-		"non-Google issuer": func(c *Config) { c.Issuer = "https://issuer.example" },
-		"empty domain":      func(c *Config) { c.HostedDomain = "" },
-		"demo": func(c *Config) {
-			c.Demo, c.DemoPassword = true, "demo-only"
-			c.Issuer, c.ClientID, c.ClientSecret, c.HostedDomain = "", "", "", ""
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := base
-			mutate(&cfg)
-			if _, err := New(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "domain membership requires Google Workspace") {
-				t.Fatalf("unsafe domain-member configuration returned %v", err)
-			}
-		})
+func TestCustomWorkspaceAPIBase(t *testing.T) {
+	var issuer string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "jwks_uri": issuer + "/keys"})
+	}))
+	defer idp.Close()
+	issuer = idp.URL
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/actor" || r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Error("wrong actor request")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"actor":{"type":"user","id":"custom-user"},"workspace":{"id":"custom-workspace"}}`))
+	}))
+	defer api.Close()
+	cfg := Config{BaseURL: "https://gateway.example", Issuer: issuer, APIBaseURL: api.URL + "/api/v2/", ClientID: "client", ClientSecret: "fixture", WorkspaceID: "custom-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(context.Context, string, *oauth2.Token) (string, error) { return "", nil }}
+	a, err := New(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.client = api.Client() // Trust only this fixture's TLS certificate.
+	if id, err := a.actor(t.Context(), "fixture-token"); err != nil || id != "custom-user" {
+		t.Fatalf("custom API actor = %q, %v", id, err)
+	}
+	w := httptest.NewRecorder()
+	a.login(w, httptest.NewRequest("GET", "/auth/amp/login", nil))
+	location, _ := url.Parse(w.Header().Get("Location"))
+	if location.Query().Get("resource") != "https://ampcode.com/api/v2" {
+		t.Fatal("custom domain changed OAuth resource")
+	}
+	for _, invalid := range []string{"http://workspace.example/api/v2", "https://user:secret@workspace.example/api/v2", "https://workspace.example/other", "https://workspace.example/api/v2?token=x", "https://workspace.example/api/v2#fragment", "https:///api/v2"} {
+		cfg.APIBaseURL = invalid
+		if _, err := New(t.Context(), cfg); err == nil {
+			t.Fatalf("accepted invalid API base %q", invalid)
+		}
 	}
 }

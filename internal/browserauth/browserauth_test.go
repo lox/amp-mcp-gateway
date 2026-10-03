@@ -177,7 +177,7 @@ func TestOIDCLoginCapacityAndExpiry(t *testing.T) {
 	attempt := 0
 	login := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/login", nil)
+		r := httptest.NewRequest(http.MethodGet, "/auth/amp/login", nil)
 		r.RemoteAddr = fmt.Sprintf("192.0.%d.%d:1234", attempt/256, attempt%256)
 		attempt++
 		mux.ServeHTTP(w, r)
@@ -229,7 +229,7 @@ func TestOIDCLoginConcurrentCapacity(t *testing.T) {
 	for i := range 256 {
 		workers.Go(func() {
 			w := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodGet, "/login", nil)
+			r := httptest.NewRequest(http.MethodGet, "/auth/amp/login", nil)
 			r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i)
 			mux.ServeHTTP(w, r)
 			results <- w.Code
