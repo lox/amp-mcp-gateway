@@ -197,6 +197,19 @@ func TestAccountPageUsesNavigationForLogin(t *testing.T) {
 	}
 }
 
+func TestLinkedAccountPageUsesApprovalsNavigation(t *testing.T) {
+	f := newFixture(t)
+	f.linkedSubject, f.linkedAmpID = f.subject, "amp-user-id"
+	w := httptest.NewRecorder()
+	f.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/account", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `<a href="/approvals"><span class="nav-symbol" aria-hidden="true">↗</span>Approvals</a>`) {
+		t.Fatalf("linked account navigation = %d %q", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `href="/operations"`) || strings.Contains(w.Body.String(), `>Operations</a>`) {
+		t.Fatal("linked account page retained legacy operations navigation")
+	}
+}
+
 func TestProductionStateCookieIsSecure(t *testing.T) {
 	// Production HTTPS behavior is covered directly because constructing another
 	// provider would add no protocol coverage.

@@ -16,7 +16,7 @@ func TestFocusedPages(t *testing.T) {
 	}
 	h, cookie := adminUI(t, g, m)
 	for _, tc := range []struct{ path, want, absent string }{
-		{"/operations", "Nothing needs your approval", "Add MCP"},
+		{"/approvals", "Nothing needs your approval", "Add MCP"},
 		{"/integrations", "Fly.io", "Nothing needs your approval"},
 		{"/integrations/fly", "Connect Fly.io", "Nothing needs your approval"},
 		{"/connections", "Add MCP", "Nothing needs your approval"},
@@ -38,8 +38,11 @@ func TestFocusedPages(t *testing.T) {
 			}
 		})
 	}
-	if w := formRequest(h, cookie, "GET", "/", nil); w.Code != 303 || w.Header().Get("Location") != "/operations" {
-		t.Fatal("home did not redirect to operations")
+	if w := formRequest(h, cookie, "GET", "/", nil); w.Code != 303 || w.Header().Get("Location") != "/approvals" {
+		t.Fatal("home did not redirect to approvals")
+	}
+	if w := formRequest(h, cookie, "GET", "/operations", nil); w.Code != 303 || w.Header().Get("Location") != "/approvals" {
+		t.Fatal("legacy operations route did not redirect to approvals")
 	}
 	if w := formRequest(h, cookie, "GET", "/operations?view=all", nil); w.Code != 303 || w.Header().Get("Location") != "/audit" {
 		t.Fatal("retired all-operations view did not redirect to audit")
@@ -66,7 +69,7 @@ func TestFocusedPages(t *testing.T) {
 	if w := formRequest(h, cookie, "POST", "/operations/"+first.ID+"/deny", nil); w.Code != 303 {
 		t.Fatal("could not deny request")
 	}
-	pending := formRequest(h, cookie, "GET", "/operations", nil).Body.String()
+	pending := formRequest(h, cookie, "GET", "/approvals", nil).Body.String()
 	if strings.Contains(pending, first.ID) || !strings.Contains(pending, second.ID) || strings.Contains(pending, "All operations") || strings.Contains(pending, "private-argument") {
 		t.Fatal("approvals view did not filter or exposed payloads")
 	}
@@ -84,7 +87,7 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	rememberReview := formRequest(h, cookie, "GET", "/operations/"+remembered.ID, nil).Body.String()
-	if !strings.Contains(rememberReview, `href="/operations" aria-current="page"`) || !strings.Contains(rememberReview, `href="/operations">← Approvals`) {
+	if !strings.Contains(rememberReview, `href="/approvals" aria-current="page"`) || !strings.Contains(rememberReview, `href="/approvals">← Approvals`) {
 		t.Fatal("pending request did not return to approvals")
 	}
 	for _, want := range []string{`name="remember" value="on"`, `name="breadth"`, `value="exact"`, `value="tool"`, `value="connection"`, `name="scope"`, `value="thread"`, `value="project"`, `name="expiry"`, `value="never"`, `value="1h"`, `value="24h"`, "Same tool + same arguments", "This thread", "Until revoked", "Approve & remember"} {

@@ -33,7 +33,7 @@ func TestPublicStylesheetDoesNotExposeAuthenticatedRoutes(t *testing.T) {
 	mux.Handle("/", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("unauthenticated request reached protected handler")
 	})))
-	for _, path := range []string{"/assets/ui.css", "/assets/live.js", "/assets/htmx-2.0.8.min.js", "/events", "/operations", "/integrations/chrome/status"} {
+	for _, path := range []string{"/assets/ui.css", "/assets/live.js", "/assets/htmx-2.0.8.min.js", "/events", "/approvals", "/operations", "/integrations/chrome/status"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
