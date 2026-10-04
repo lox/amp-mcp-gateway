@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -261,8 +260,6 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 			return nil, err
 		}
 	}
-	routingID := sha256.Sum256([]byte(cfg.AmpUserID))
-	browser.RoutingID = fmt.Sprintf("%x", routingID[:12])
 	mux := http.NewServeMux()
 	auth.Register(mux)
 	var mcpHandler, leaseHandler http.Handler

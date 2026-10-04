@@ -162,7 +162,7 @@ func migrateAccounts(ctx context.Context, sourceConfigPath, destinationDir, encr
 		if a.id == source.AmpUserID {
 			clean[registryKey], _ = json.Marshal(ids)
 		}
-		if err = importSnapshot(ctx, path, key, a.snapshot.Catalogue, clean); err != nil {
+		if err = importSnapshot(ctx, path, key, a.snapshot.Catalogue, clean, a.snapshot.BrowserPairings); err != nil {
 			return fmt.Errorf("import account %q: %w", a.id, err)
 		}
 	}
@@ -316,7 +316,7 @@ func cleanLegacyTokens(tokens map[string][]byte) map[string][]byte {
 	return clean
 }
 
-func importSnapshot(ctx context.Context, path, key string, catalogue []byte, tokens map[string][]byte) error {
+func importSnapshot(ctx context.Context, path, key string, catalogue []byte, tokens, pairings map[string][]byte) error {
 	s, err := store.Open(path, key)
 	if err != nil {
 		return err
@@ -327,6 +327,11 @@ func importSnapshot(ctx context.Context, path, key string, catalogue []byte, tok
 	for id, value := range tokens {
 		if err == nil {
 			err = s.SaveToken(ctx, id, value)
+		}
+	}
+	for id, value := range pairings {
+		if err == nil {
+			err = s.SaveBrowserPairing(ctx, id, value)
 		}
 	}
 	if closeErr := s.Close(); err == nil {
@@ -348,6 +353,15 @@ func importSnapshot(ctx context.Context, path, key string, catalogue []byte, tok
 		got, loadErr := verify.LoadToken(ctx, id)
 		if loadErr != nil || !bytes.Equal(got, value) {
 			return fmt.Errorf("token %q verification failed", id)
+		}
+	}
+	gotPairings, err := verify.LoadBrowserPairings(ctx)
+	if err != nil || len(gotPairings) != len(pairings) {
+		return errors.New("browser pairing verification failed")
+	}
+	for id, value := range pairings {
+		if !bytes.Equal(gotPairings[id], value) {
+			return fmt.Errorf("browser pairing %q verification failed", id)
 		}
 	}
 	return nil

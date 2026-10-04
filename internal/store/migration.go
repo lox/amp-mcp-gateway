@@ -14,8 +14,9 @@ import (
 // Snapshot contains the connection catalogue and provider tokens exported from
 // a legacy ledger. It deliberately excludes operations and audit history.
 type Snapshot struct {
-	Catalogue []byte
-	Tokens    map[string][]byte
+	Catalogue       []byte
+	Tokens          map[string][]byte
+	BrowserPairings map[string][]byte
 }
 
 // LegacySnapshotReader holds every legacy database lock it acquires until
@@ -105,6 +106,36 @@ func (r *LegacySnapshotReader) Read(ctx context.Context, path, key string) (Snap
 	}
 	if err := rows.Close(); err != nil {
 		return Snapshot{}, err
+	}
+	// Browser reconnect credentials were added during schema version 0.
+	var hasPairings bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='browser_pairings')").Scan(&hasPairings); err != nil {
+		return Snapshot{}, err
+	}
+	if hasPairings {
+		rows, err := tx.QueryContext(ctx, "SELECT id,payload FROM browser_pairings")
+		if err != nil {
+			return Snapshot{}, err
+		}
+		defer rows.Close()
+		snapshot.BrowserPairings = make(map[string][]byte)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id, &encrypted); err != nil {
+				return Snapshot{}, err
+			}
+			value, err := open("browser-pairing:"+id, encrypted)
+			if err != nil {
+				return Snapshot{}, errors.New("cannot decrypt legacy browser pairing: check encryption key and database integrity")
+			}
+			snapshot.BrowserPairings[id] = value
+		}
+		if err := rows.Err(); err != nil {
+			return Snapshot{}, err
+		}
+		if err := rows.Close(); err != nil {
+			return Snapshot{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Snapshot{}, err

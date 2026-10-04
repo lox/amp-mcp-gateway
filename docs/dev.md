@@ -831,7 +831,9 @@ for the migration window, then resume it after the configuration switch.
 3. Inspect `/data/amp-only/gateway.json`, `gateway.db`, and
    `gateway.db.accounts/`. The generated config uses bare `AmpUserID` identity and
    ID-derived child database paths and keys. It retains each account's catalogue,
-   provider credentials and Amp OAuth credentials. It converts the old rollback-only
+   provider credentials, Amp OAuth credentials and browser reconnect credentials.
+   Browser routing uses the stored credential hash, not an account identity prefix.
+   It converts the old rollback-only
    private-policy encoding and generated Fly tool policies without changing permissions. Preserved provider credentials
    keep their stored OAuth authentication method; do not assume migration changes it.
 4. Test startup, browser login, account routing, connection access and tool discovery

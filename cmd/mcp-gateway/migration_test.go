@@ -13,15 +13,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
+	"github.com/gorilla/websocket"
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 )
@@ -229,6 +234,84 @@ func TestMigrateAccountsEndToEnd(t *testing.T) {
 		if len(operations) != 0 || len(events) != 0 {
 			t.Fatalf("%s retained history: operations=%d events=%d", id, len(operations), len(events))
 		}
+	}
+}
+
+func TestMigrateBrowserReconnectCredentials(t *testing.T) {
+	f := makeMigrationFixture(t)
+	codes := make(map[string]string)
+	for _, id := range []string{"owner", "child"} {
+		path, key := f.primary, f.key
+		if id == "child" {
+			path, key = f.child, deriveLegacyKey(t, f.key, f.identities[id])
+		}
+		prefix := sha256.Sum256(f.identities[id])
+		codes[id] = fmt.Sprintf("%x.%s-reconnect-secret", prefix[:12], id)
+		hash := sha256.Sum256([]byte(codes[id]))
+		target := sha256.Sum256([]byte(`["install","share",42]`))
+		payload, err := json.Marshal(map[string]any{"hash": hash[:], "created": 1, "paired": true, "target": fmt.Sprintf("%x", target)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyBytes, _ := base64.StdEncoding.DecodeString(key)
+		block, _ := aes.NewCipher(keyBytes)
+		aead, _ := cipher.NewGCMWithRandomNonce(block)
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("CREATE TABLE browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO browser_pairings VALUES (?,?)", "browser", aead.Seal(nil, nil, payload, []byte("browser-pairing:browser"))); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := sourceBytes(t, f)
+	destination := filepath.Join(f.dir, "migrated")
+	if err := migrateAccounts(t.Context(), f.config, destination, f.key); err != nil {
+		t.Fatal(err)
+	}
+	assertSourceBytes(t, f, before)
+	registry := &accountRegistry{users: make(map[string]*accountRuntime)}
+	for _, id := range []string{"owner", "child"} {
+		path, key := filepath.Join(destination, "gateway.db"), f.key
+		if id == "child" {
+			hash := sha256.Sum256([]byte(id))
+			path, key = filepath.Join(path+".accounts", hex.EncodeToString(hash[:])+".db"), deriveCurrentKey(t, f.key, id)
+		}
+		s, err := store.Open(path, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		manager, err := browserbridge.New(t.Context(), "https://gateway.example", []upstream.Connection{{ID: "browser", Browser: true}}, nil, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry.users[id] = &accountRuntime{browser: manager}
+	}
+	server := httptest.NewServer(browserbridge.SocketRouter(registry.browserManager))
+	defer server.Close()
+	for id, code := range codes {
+		if registry.browserManager(code) != registry.users[id].browser || registry.browserManager(code+"tampered") != nil {
+			t.Fatalf("migrated credential routed to the wrong account: %s", id)
+		}
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), http.Header{"Origin": {"chrome-extension://extension-id"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ws.WriteJSON(map[string]any{"type": "hello", "pairing_code": code, "install_id": "install", "share_id": "share", "tab_id": 42}); err != nil {
+			t.Fatal(err)
+		}
+		var response map[string]string
+		if err := ws.ReadJSON(&response); err != nil || response["type"] != "paired" || response["reconnect_code"] != code {
+			t.Fatalf("migrated reconnect failed for %s: %v, %v", id, response, err)
+		}
+		ws.Close()
 	}
 }
 

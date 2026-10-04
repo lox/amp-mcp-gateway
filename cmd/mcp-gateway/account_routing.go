@@ -48,14 +48,10 @@ func (r *accountRegistry) workload(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *accountRegistry) browserManager(code string) *browserbridge.Manager {
-	id, _, ok := strings.Cut(code, ".")
-	if !ok {
-		return nil
-	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, account := range r.users {
-		if account.browser.RoutingID == id {
+		if account.browser.MatchesPairing(code) {
 			return account.browser
 		}
 	}
