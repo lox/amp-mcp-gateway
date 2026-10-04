@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -360,5 +361,55 @@ func TestMigratePrivateCatalogue(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte("PrivatePolicy")) || bytes.Contains(got, []byte("PrivateConnectionPolicies")) {
 		t.Fatal("rollback encoding retained")
+	}
+}
+
+func TestMigrateAccountsPreservesGeneratedFlyPolicy(t *testing.T) {
+	for _, policy := range []string{"allow", "deny"} {
+		t.Run(policy, func(t *testing.T) {
+			f := makeMigrationFixture(t)
+			f.catalogues["owner"] = []byte(fmt.Sprintf(`{"Integrations":[{"ID":"fly","Provider":"fly","Credential":"fixture-parent-token"}],"Tools":[{"ID":"fly.request_token","Connection":"fly","Name":"request_token","Policy":%q}],"ToolDefaults":{"fly":"require_approval"}}`, policy))
+			replaceRootRegistry(t, f, map[string]string{"owner-subject": "owner", "child-subject": "child"}, nil)
+			dest := filepath.Join(f.dir, "migrated")
+			if err := migrateAccounts(t.Context(), f.config, dest, f.key); err != nil {
+				t.Fatal(err)
+			}
+			s, err := store.Open(filepath.Join(dest, "gateway.db"), f.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var cfg gateway.Config
+			if err := gateway.LoadCatalogue(t.Context(), &cfg, s); err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Integrations) != 1 || cfg.Integrations[0].Policy != policy || cfg.Integrations[0].Credential != "fixture-parent-token" {
+				t.Fatal("migration changed native integration authority")
+			}
+		})
+	}
+}
+
+func TestPublishMigrationNeverReplacesExistingDirectory(t *testing.T) {
+	parent := t.TempDir()
+	stage, dest := filepath.Join(parent, "stage"), filepath.Join(parent, "dest")
+	if err := os.Mkdir(stage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "sentinel"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishMigration(stage, dest); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("exclusive publish = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "sentinel")); err != nil {
+		t.Fatal("failed publication moved source")
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("failed publication changed destination")
 	}
 }

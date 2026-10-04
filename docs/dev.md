@@ -812,7 +812,7 @@ for the migration window, then resume it after the configuration switch.
    `Database` must point to the backed-up primary database, and the backup must include
    the entire adjacent `Database + ".accounts"` directory. Retain the old config and
    all old keys unchanged. Do not migrate from live files.
-2. Choose a destination directory that does not exist, then run the new binary with
+2. On Linux or macOS, choose a destination directory that does not exist, then run the new binary with
    the same encryption key used by the source:
 
    ```sh
@@ -829,7 +829,7 @@ for the migration window, then resume it after the configuration switch.
    `gateway.db.accounts/`. The generated config uses bare `AmpUserID` identity and
    ID-derived child database paths and keys. It retains each account's catalogue,
    provider credentials and Amp OAuth credentials. It converts the old rollback-only
-   private-policy encoding without changing permissions. Preserved provider credentials
+   private-policy encoding and generated Fly tool policies without changing permissions. Preserved provider credentials
    keep their stored OAuth authentication method; do not assume migration changes it.
 4. Test startup, browser login, account routing, connection access and tool discovery
    against the migrated destination before switching deployment configuration.
@@ -853,7 +853,7 @@ backwards-compatibility path is supported. `GATEWAY_OIDC_SECRET` is no longer re
 browser login instead uses `AmpLoginClientID`, `AmpWorkspaceID`, optional
 `AmpAPIBaseURL`, and `GATEWAY_AMP_OIDC_SECRET`. These browser OIDC settings are
 separate from the removed gateway identity fields. The new session-key namespace
-invalidates old Google sessions.
+invalidates existing browser sessions; sign in again after migration.
 
 OAuth access and refresh tokens (when issued), token type and expiry are encrypted
 server-side in that user's account database before issuing a browser session.

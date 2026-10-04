@@ -318,3 +318,33 @@ func TestIdentityConfigurationInvalidatesApproval(t *testing.T) {
 		})
 	}
 }
+
+func TestDemoPrivateConnectionUsesFixtureThreadClaims(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.PrivateConnections = map[string]bool{"notes": true}
+	handler, _ := g.DemoHandlers("demo-private-token")
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "demo-private", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"demo-private-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	found, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "find_tools", Arguments: map[string]any{"query": "notes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(found)
+	if found.IsError || !strings.Contains(string(raw), "notes.write") {
+		t.Fatal("private demo tool was hidden")
+	}
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tools", Arguments: input("demo-private-request", "fixture")})
+	if err != nil || result.IsError {
+		t.Fatalf("private demo submission failed: %v", err)
+	}
+	op, err := s.Get(t.Context(), "demo-private-request")
+	if err != nil || !op.Private || !op.AmpThreadContext || op.AmpThreadVisibility != "private" || op.AmpThreadMultiplayer || op.AmpThreadNonOwnerCanInfluence {
+		t.Fatal("fixture lost private solo-thread context")
+	}
+}

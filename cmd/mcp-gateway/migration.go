@@ -17,7 +17,6 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -50,6 +49,7 @@ func migrateAccounts(ctx context.Context, sourceConfigPath, destinationDir, encr
 	if source.Database == "" || source.AmpUserID == "" || source.OwnerSubject == "" {
 		return errors.New("source is not a supported linked-account deployment")
 	}
+	migrateFlyPolicies(source.Integrations, source.Tools)
 	destinationDir, err = filepath.Abs(destinationDir)
 	if err != nil {
 		return fmt.Errorf("resolve destination: %w", err)
@@ -179,8 +179,8 @@ func migrateAccounts(ctx context.Context, sourceConfigPath, destinationDir, encr
 	if err = syncMigrationTree(stage); err != nil {
 		return fmt.Errorf("sync migration: %w", err)
 	}
-	if err = unix.Renameat2(unix.AT_FDCWD, stage, unix.AT_FDCWD, destinationDir, unix.RENAME_NOREPLACE); err != nil {
-		if errors.Is(err, unix.EEXIST) {
+	if err = publishMigration(stage, destinationDir); err != nil {
+		if errors.Is(err, os.ErrExist) {
 			return errors.New("migration destination already exists")
 		}
 		return fmt.Errorf("publish migration: %w", err)
@@ -239,10 +239,9 @@ func migrateCatalogue(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
 	}
-	if _, ok := fields["PrivateConnectionPolicies"]; !ok {
-		return raw, nil
-	}
+	_, hasPrivatePolicies := fields["PrivateConnectionPolicies"]
 	var old struct {
+		Integrations              []gateway.Integration
 		ToolDefaults              map[string]string
 		PrivateConnectionPolicies []struct{ ID, Default string }
 		Tools                     []struct {
@@ -272,11 +271,38 @@ func migrateCatalogue(raw []byte) ([]byte, error) {
 		}
 		tools = append(tools, tool.Tool)
 	}
-	delete(fields, "PrivateConnectionPolicies")
-	fields["PrivateConnections"], _ = json.Marshal(private)
-	fields["ToolDefaults"], _ = json.Marshal(old.ToolDefaults)
-	fields["Tools"], _ = json.Marshal(tools)
+	flyChanged := migrateFlyPolicies(old.Integrations, tools)
+	if !hasPrivatePolicies && !flyChanged {
+		return raw, nil
+	}
+	if hasPrivatePolicies {
+		delete(fields, "PrivateConnectionPolicies")
+		fields["PrivateConnections"], _ = json.Marshal(private)
+		fields["ToolDefaults"], _ = json.Marshal(old.ToolDefaults)
+		fields["Tools"], _ = json.Marshal(tools)
+	}
+	if flyChanged {
+		fields["Integrations"], _ = json.Marshal(old.Integrations)
+	}
 	return json.Marshal(fields)
+}
+
+// Version 0 could store native policy on a generated tool rather than its
+// integration. Preserve that choice, including explicit denials, once offline.
+func migrateFlyPolicies(integrations []gateway.Integration, tools []gateway.Tool) bool {
+	changed := false
+	for i := range integrations {
+		if integrations[i].ID != "fly" || integrations[i].Provider != "fly" || integrations[i].Policy != "" {
+			continue
+		}
+		for _, tool := range tools {
+			if tool.ID == "fly.request_token" && tool.Connection == "fly" && tool.Name == "request_token" && tool.Policy != "" {
+				integrations[i].Policy = tool.Policy
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func cleanLegacyTokens(tokens map[string][]byte) map[string][]byte {

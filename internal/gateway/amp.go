@@ -36,6 +36,15 @@ type ampIdentityKey struct{}
 
 const demoThreadID = "T-00000000-0000-0000-0000-000000000001"
 
+func demoIdentity(userID string) ampIdentity {
+	return ampIdentity{
+		Subject: "demo-fixture-workload", UserID: userID,
+		WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project",
+		ThreadID: demoThreadID, ThreadVisibility: "private",
+		ThreadMultiplayer: new(bool), ThreadNonOwnerCanInfluence: new(bool),
+	}
+}
+
 func withAmpIdentity(ctx context.Context, identity ampIdentity) context.Context {
 	return context.WithValue(ctx, ampIdentityKey{}, identity)
 }
@@ -89,11 +98,8 @@ func (g *Gateway) DemoHandlers(token string) (http.Handler, http.Handler) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			identity := ampIdentity{
-				Subject: "demo-fixture-workload", UserID: g.cfg.AmpUserID,
-				WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project",
-				ThreadID: demoThreadID, TokenUse: tokenUse,
-			}
+			identity := demoIdentity(g.cfg.AmpUserID)
+			identity.TokenUse = tokenUse
 			next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))
 		})
 	}

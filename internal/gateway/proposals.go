@@ -42,7 +42,7 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 	defer g.mu.Unlock()
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 	if g.cfg.Demo && identity.UserID == "" {
-		identity = ampIdentity{Subject: "demo-fixture-workload", UserID: g.cfg.AmpUserID, WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project", ThreadID: demoThreadID}
+		identity = demoIdentity(g.cfg.AmpUserID)
 	}
 	if identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID) {
 		return policyResult{}, errors.New("verified Amp identity required")

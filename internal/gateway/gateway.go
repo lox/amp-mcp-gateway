@@ -363,7 +363,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	defer g.mu.RUnlock()
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 	if g.cfg.Demo && identity.UserID == "" {
-		identity = ampIdentity{Subject: "demo-fixture-workload", UserID: g.cfg.AmpUserID, WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project", ThreadID: demoThreadID}
+		identity = demoIdentity(g.cfg.AmpUserID)
 	}
 	if identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID) {
 		return store.Operation{}, errors.New("verified Amp identity required")
