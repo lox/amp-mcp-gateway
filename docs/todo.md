@@ -85,7 +85,7 @@ separate copies of this matrix in each document.
 - [x] Allow policy revocation without fetching the provider's tool list again.
 - [x] Configure the Amp Login secret and deploy shared-host account linking.
 - [ ] Roll out direct Amp login and validate consent, refresh issuance, restart persistence and workload routing.
-- [ ] Add project-name lookup and token refresh using retained per-account credentials.
+- [x] Add project-name lookup and token refresh using retained per-account credentials.
 - [ ] Design unlink/reassignment and explicit offboarding; workspace removal alone
       does not revoke existing sessions or linked Amp workload access.
 

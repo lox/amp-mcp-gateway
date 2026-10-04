@@ -66,7 +66,7 @@ func TestAuditHistoryRenderingAndFilters(t *testing.T) {
 			t.Fatalf("incorrect filtered live fragment for %s", tc.query)
 		}
 		if tc.count == 3 {
-			for _, want := range []string{"Execution may already have happened.", "Allowed by policy", "notes.&lt;unsafe&gt;", "The upstream reported an error.", "/operations/audit-1", "Verified user", "amp:user_audit"} {
+			for _, want := range []string{"Execution may already have happened.", "Allowed by policy", "notes.&lt;unsafe&gt;", "The upstream reported an error.", "/operations/audit-1", "Verified Amp caller", "amp:user_audit"} {
 				if !strings.Contains(body, want) {
 					t.Fatalf("missing %q", want)
 				}

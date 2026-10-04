@@ -57,6 +57,8 @@ type Backend interface {
 
 // Gateway owns validated tools and execution policy.
 type Gateway struct {
+	// ProjectNames optionally enriches browser pages. Set before serving.
+	ProjectNames func(context.Context) browserauth.ProjectNames
 	mu           sync.RWMutex // catalogue publication, submission and discovery snapshots
 	cfg          Config
 	store        *store.Store
@@ -731,6 +733,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
+	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Header.Get("HX-Request") == "true" {
@@ -764,6 +767,17 @@ func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {
 	data["AccountLink"] = g.cfg.AccountLink
 	data["User"] = browserauth.User(r.Context())
+	data["ActorNames"] = g.actorNames(r)
+	data["AmpNames"] = browserauth.ProjectNames{}
+	op, _ := data["Operation"].(store.Operation)
+	needsProjects := op.Status == "pending" && op.AmpProjectID != ""
+	grants, _ := data["ApprovalGrants"].([]store.ApprovalGrant)
+	for _, grant := range grants {
+		needsProjects = needsProjects || grant.Scope == "project"
+	}
+	if g.ProjectNames != nil && needsProjects {
+		data["AmpNames"] = g.ProjectNames(r.Context())
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := page.Execute(w, data); err != nil {
 		slog.Error("render page", "error", err)

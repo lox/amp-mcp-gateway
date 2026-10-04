@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -207,11 +208,14 @@ func run() error {
 }
 
 type accountRuntime struct {
-	handler  http.Handler
-	store    *store.Store
-	gateway  *gateway.Gateway
-	upstream *upstream.Manager
-	browser  *browserbridge.Manager
+	handler    http.Handler
+	store      *store.Store
+	gateway    *gateway.Gateway
+	upstream   *upstream.Manager
+	browser    *browserbridge.Manager
+	tokenMu    sync.Mutex // OAuth writes and project cache, isolated per account.
+	names      browserauth.ProjectNames
+	namesUntil time.Time
 }
 
 func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.Config, consent http.Handler) (_ *accountRuntime, err error) {
@@ -285,7 +289,11 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
-	return &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}, nil
+	account := &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}
+	if cfg.AccountLink {
+		g.ProjectNames = func(ctx context.Context) browserauth.ProjectNames { return account.projectNames(ctx, auth) }
+	}
+	return account, nil
 }
 
 func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry) http.Handler {
