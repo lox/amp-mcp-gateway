@@ -874,13 +874,6 @@
     background: #ffcf4c;
     @apply rounded-full right-[-7px] bottom-[-5px];
   }
-  :where(html.dashboard) .brand-slash {
-    color: #68748a;
-    @apply font-normal;
-  }
-  :where(html.dashboard) .product-name {
-    @apply text-muted text-[13px];
-  }
   :where(html.dashboard) .topbar button {
     font:
       12px ui-monospace,
@@ -1055,9 +1048,6 @@
     }
     :where(html.dashboard) .topbar {
       @apply gap-4 p-[16px_20px];
-    }
-    :where(html.dashboard) .product-name {
-      @apply hidden;
     }
   }
   :where(html.dashboard) table {
@@ -1259,20 +1249,21 @@
 
   /* login */
   :where(html.login) body {
-    @apply m-0;
-    background: #f4f1ea;
-    color: #20231f;
+    @apply m-0 bg-canvas text-ink;
     font:
-      16px system-ui,
+      14px system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
       sans-serif;
     @apply grid;
     place-items: center;
     @apply min-h-[100vh];
   }
   :where(html.login) main {
-    background: white;
-    @apply box-border p-10 rounded-[16px];
-    box-shadow: 0 12px 40px #0002;
+    @apply box-border p-10 rounded-[4px] bg-surface;
+    border: 1px solid #dcdde1;
+    box-shadow: 0 6px 20px #15244320;
     @apply w-[min(27rem,calc(100%_-_2rem))];
   }
   @media (max-width: 480px) {
@@ -1281,38 +1272,52 @@
     }
   }
   :where(html.login) h1 {
-    @apply m-[.2rem_0];
+    @apply m-[.2rem_0] text-[32px] leading-[1.2] tracking-[-1.1px];
+  }
+  :where(html.login) p {
+    @apply leading-[1.6] text-muted;
   }
   :where(html.login) .badge {
-    color: #735c0f;
-    background: #fff1b8;
-    @apply p-[.25rem_.55rem] rounded-[99px] text-[.75rem] font-bold;
+    color: #6d5010;
+    @apply p-[5px_8px] rounded-[3px] bg-selected text-[12px];
+    font-family: ui-monospace, monospace;
   }
   :where(html.login) label,
   :where(html.login) input,
   :where(html.login) button,
   :where(html.login) a.button {
     @apply block w-full box-border;
+    font: inherit;
   }
   :where(html.login) label {
-    @apply mt-[1.5rem] font-semibold;
+    @apply mt-[1.5rem] font-semibold text-ink;
   }
   :where(html.login) input {
     @apply m-[.45rem_0_1rem] p-[.75rem];
-    border: 1px solid #aaa;
-    @apply rounded-[8px];
+    border: 1px solid var(--color-control);
+    @apply rounded-[3px] bg-surface text-ink;
   }
   :where(html.login) button,
   :where(html.login) a.button {
     @apply p-[.8rem];
-    border: 0;
-    @apply rounded-[8px];
-    background: #22543d;
+    border: 1px solid var(--color-ink);
+    @apply rounded-[3px] bg-ink;
     color: white;
-    @apply font-bold text-center no-underline;
+    @apply font-semibold text-center no-underline;
+  }
+  :where(html.login) button:hover,
+  :where(html.login) a.button:hover {
+    background: #293e64;
+  }
+  :where(html.login) input:focus-visible,
+  :where(html.login) button:focus-visible,
+  :where(html.login) a.button:focus-visible {
+    outline: 3px solid #2866cb;
+    @apply outline-offset-[3px];
   }
   :where(html.login) .error {
-    color: #a11;
+    @apply p-4 bg-negative text-negative-ink;
+    border-left: 3px solid #9c3724;
   }
 
   /* chrome */
@@ -1362,13 +1367,6 @@
     @apply absolute w-[17px] h-[17px];
     background: #ffcf4c;
     @apply rounded-full right-[-7px] bottom-[-5px];
-  }
-  :where(html.chrome) .brand-slash {
-    color: #68748a;
-    @apply font-normal;
-  }
-  :where(html.chrome) .product-name {
-    @apply text-muted text-[13px];
   }
   :where(html.chrome) .shell {
     @apply grid grid-cols-[190px_minmax(0,1fr)] min-h-[calc(100vh_-_76px)];
@@ -1493,9 +1491,6 @@
   @media (max-width: 600px) {
     :where(html.chrome) .topbar {
       @apply p-[16px_20px];
-    }
-    :where(html.chrome) .product-name {
-      @apply hidden;
     }
     :where(html.chrome) .card {
       @apply p-4;
