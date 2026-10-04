@@ -74,7 +74,7 @@ func (g *Gateway) EnableChrome(ctx context.Context, m *upstream.Manager) error {
 		changed = true
 	}
 	if changed {
-		if err := g.saveCatalogue(ctx, next, m, store.Event{Kind: "integration-saved", Actor: browserauth.Subject(ctx)}); err != nil {
+		if err := g.saveCatalogue(ctx, next, m, store.Event{Kind: "integration-saved", Actor: "amp:" + browserauth.Subject(ctx)}); err != nil {
 			return err
 		}
 	}

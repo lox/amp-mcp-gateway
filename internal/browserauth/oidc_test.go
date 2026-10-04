@@ -123,15 +123,15 @@ func TestAmpHandshake(t *testing.T) {
 			defer server.Close()
 			issuer = server.URL
 			stored := false
-			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ActorURL: issuer + "/actor", ClientID: "client", ClientSecret: "secret", WorkspaceID: "allowed-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(_ context.Context, id string, token *oauth2.Token) (string, error) {
+			a, err := New(t.Context(), Config{BaseURL: "https://gateway.example", Issuer: issuer, ActorURL: issuer + "/actor", ClientID: "client", ClientSecret: "secret", WorkspaceID: "allowed-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(_ context.Context, id string, token *oauth2.Token) error {
 				if scenario == "save failed" {
-					return "", errors.New("sensitive storage details")
+					return errors.New("sensitive storage details")
 				}
 				if id != "amp-user" || token.AccessToken != "access-secret" || token.RefreshToken != "refresh-secret" {
 					t.Fatal("wrong identity or credentials")
 				}
 				stored = true
-				return "legacy-google-subject", nil
+				return nil
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -189,8 +189,8 @@ func TestAmpHandshake(t *testing.T) {
 				r := httptest.NewRequest("GET", "/", nil)
 				r.AddCookie(c)
 				session, ok := a.session(r)
-				if !ok || session.Subject != "legacy-google-subject" {
-					t.Fatal("lost legacy identity")
+				if !ok || session.Subject != "amp-user" {
+					t.Fatal("lost canonical Amp identity")
 				}
 				if len(c.String()) > 4096 {
 					t.Fatal("profile exceeded browser cookie limit")
@@ -234,7 +234,7 @@ func TestCustomWorkspaceAPIBase(t *testing.T) {
 		_, _ = w.Write([]byte(`{"actor":{"type":"user","id":"custom-user"},"workspace":{"id":"custom-workspace"}}`))
 	}))
 	defer api.Close()
-	cfg := Config{BaseURL: "https://gateway.example", Issuer: issuer, APIBaseURL: api.URL + "/api/v2/", ClientID: "client", ClientSecret: "fixture", WorkspaceID: "custom-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(context.Context, string, *oauth2.Token) (string, error) { return "", nil }}
+	cfg := Config{BaseURL: "https://gateway.example", Issuer: issuer, APIBaseURL: api.URL + "/api/v2/", ClientID: "client", ClientSecret: "fixture", WorkspaceID: "custom-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(context.Context, string, *oauth2.Token) error { return nil }}
 	a, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)

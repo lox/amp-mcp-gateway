@@ -1,4 +1,4 @@
-# One process and hostname; Google Workspace users link their Amp identities in the UI.
+# One process and hostname; Amp workspace users have isolated accounts.
 app = "lox-mcp-gateway"
 primary_region = "syd"
 kill_signal = "SIGTERM"

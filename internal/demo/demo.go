@@ -58,7 +58,7 @@ func Start(ctx context.Context, baseURL, token string) (gateway.Config, http.Han
 	}
 	schema := map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "minLength": 1, "maxLength": 1000}}, "required": []any{"text"}, "additionalProperties": false}
 	browserConnection, browserTools := gateway.ChromeIntegration()
-	cfg := gateway.Config{OwnerSubject: "demo-owner", BaseURL: baseURL, Database: ".local/gateway.db", Connections: []upstream.Connection{
+	cfg := gateway.Config{AmpUserID: "demo-user", Demo: true, BaseURL: baseURL, Database: ".local/gateway.db", Connections: []upstream.Connection{
 		{ID: "reference", URL: endpoint + "/read", Account: "Disposable reference account", TokenEnv: "GATEWAY_DEMO_UPSTREAM_TOKEN"},
 		{ID: "notes", URL: endpoint + "/write", Account: "Disposable OAuth notes account", OAuth: &upstream.OAuthConfig{ClientID: "gateway-demo", AuthURL: baseURL + "/demo/authorize", TokenURL: endpoint + "/token", Scopes: []string{"notes:write"}}},
 		browserConnection,

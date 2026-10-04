@@ -72,7 +72,7 @@ func (g *Gateway) flyIntegrationPage(w http.ResponseWriter, r *http.Request) {
 	g.mu.RUnlock()
 	g.render(w, r, map[string]any{
 		"FlyIntegration": true, "Configured": configured, "Account": integration.Account,
-		"Policy": policy, "Saved": r.URL.Query().Get("saved") == "1", "Owner": g.cfg.OwnerSubject,
+		"Policy": policy, "Saved": r.URL.Query().Get("saved") == "1",
 	})
 }
 
@@ -91,7 +91,7 @@ func (g *Gateway) saveFlyIntegration(w http.ResponseWriter, r *http.Request, m *
 	fail := func(message string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
-		g.render(w, r, map[string]any{"FlyIntegration": true, "Configured": configured, "Account": account, "Policy": policy, "Error": message, "Owner": g.cfg.OwnerSubject})
+		g.render(w, r, map[string]any{"FlyIntegration": true, "Configured": configured, "Account": account, "Policy": policy, "Error": message})
 	}
 	if len(account) > 200 {
 		fail("Account label must be 200 characters or fewer.")
@@ -143,7 +143,7 @@ func (g *Gateway) removeFlyIntegration(w http.ResponseWriter, r *http.Request, m
 }
 
 func browserActor(r *http.Request) string {
-	return browserauth.Subject(r.Context())
+	return "amp:" + browserauth.Subject(r.Context())
 }
 
 func (g *Gateway) callIntegration(ctx operationContext, integration Integration, tool string, args map[string]any) (*mcp.CallToolResult, error) {
@@ -158,8 +158,8 @@ func (g *Gateway) callIntegration(ctx operationContext, integration Integration,
 	if err != nil || json.Unmarshal(raw, &input) != nil || input.DurationSeconds < 60 || input.DurationSeconds > int64(maxFlyTokenTTL.Seconds()) {
 		return nil, errors.New("invalid Fly.io token request")
 	}
-	var audience string
-	if g.cfg.AmpUserID != "" {
+	audience := ""
+	if !g.cfg.Demo {
 		audience, err = CanonicalOrigin(g.cfg.BaseURL)
 		if err != nil {
 			return nil, err

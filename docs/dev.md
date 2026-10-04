@@ -354,11 +354,9 @@ or block behavior, but are hidden and blocked unless Amp's token verifies a priv
 non-multiplayer thread where no non-owner can influence the call. A fresh token
 enforces this on each discovery, submission and result lookup. A call already
 admitted before multiplayer is enabled may still finish; running calls are never
-automatically cancelled. The stored catalogue encodes private connections as safe
-denials for older binaries, so a rollback starts successfully with those tools
-blocked rather than weakening access. Private results use a new stored field that
-older binaries do not return. The setting is hidden and rejected unless Amp Workload
-Identity is configured; legacy bearer calls have no thread claims to enforce it.
+automatically cancelled. Private connections are stored as an explicit connection
+restriction, independent of tool policy. Making a connection private also protects
+its earlier results. Production requests always require verified Amp workload identity.
 
 Fetching alone changes no live policies. Refresh keeps the default and exceptions
 you are editing, including if the fetch fails; changed definitions still trigger
@@ -452,12 +450,9 @@ bearer tokens, native integration credentials and OAuth client secrets as well a
 Adding a connection or saving policies atomically denies **all** pending/ready
 operations, recording `catalogue-changed` transitions. Running operations block
 the save until they finish. There is not yet a separate audit record for each
-configuration edit. Startup adds an empty `catalogue` table to existing databases;
-existing grants and pinned tools remain unchanged until a browser save. Rolling
-back to an older binary ignores the saved catalogue and uses file configuration,
-so do not treat a binary rollback as a safe policy rollback. The previous
-browser-onboarding binary rejects inherited (empty) policies at startup; after
-adopting defaults, roll forward rather than rolling back to that binary.
+configuration edit. Store version 1 does not open version 0 databases; use the
+[offline migration](#amp-login-and-account-migration). Do not treat a binary rollback
+as a policy rollback.
 
 ### Amp orbs
 
@@ -481,15 +476,14 @@ production authentication alternative. It requires:
 - `AMP_ORB=1` and `BaseURL` matching the service's `PUBLIC_URL` with its trailing
   slash removed. This keeps the MCP workload-token audience equal to the origin.
 - A literal loopback `Listen`, such as `127.0.0.1:<PORT>`.
-- Your exact `AmpUserID` and `OwnerSubject: "amp-portal:<AmpUserID>"`.
-- Empty `Issuer`, `ClientID` and `HostedDomain`; no `-demo` flag.
+- Your exact `AmpUserID`; no `-demo` flag.
 - A separate database and fresh encryption/session keys, never production data.
 
 Keep the portal private. The app requires `X-Amp-Authenticated: amp-user=yes`
 and an exact `X-Amp-User-ID` match on every browser request, from the loopback
 proxy and for the configured host. Missing identity returns 403; cookies cannot
 bypass it. OAuth callback/login is not used, and logout directs you to sign out
-of Amp. Browser actions are attributed to `amp-portal:<AmpUserID>`.
+of Amp. Browser actions are attributed to the bare `AmpUserID`.
 
 This relies on [Amp's portal identity headers](https://ampcode.com/docs/orbs/portals).
 They are not signed: all processes and agents inside the owning orb are trusted.
@@ -543,10 +537,9 @@ To configure a deployment:
    file. The maintainer's deployment uses `https://lox-mcp-gateway.fly.dev/auth/amp/callback`
    and client `client_01M3ZSYJJ8GF4TDDEAWBVC8CSM`; those are not self-hosting defaults.
 2. Copy `gateway.fly.example.json` to ignored `gateway.json`. Set `BaseURL`,
-   `AmpLoginClientID`, `AmpWorkspaceID` and the primary `AmpUserID`. For a new
-   installation use `OwnerSubject=amp:<AmpUserID>` and `Issuer=https://auth.ampcode.com`.
-   For existing installations, follow the [migration requirements](#amp-login-and-account-migration)
-   instead: do not replace legacy storage identities with these new-install values.
+   `AmpLoginClientID`, `AmpWorkspaceID` and the primary `AmpUserID`. The bare Amp
+   user ID is the account identity. Existing version 0 installations must complete
+   the [offline migration](#amp-login-and-account-migration) before using this config.
    If your workspace requires a custom domain, set `AmpAPIBaseURL` to
    `https://YOUR-WORKSPACE-DOMAIN/api/v2`. It defaults to `https://ampcode.com/api/v2`
    and must be HTTPS with no credentials, query or fragment. This changes the
@@ -572,7 +565,8 @@ export FLY_APP=your-app-name
 Use `fly secrets import --stage` with protected stdin for the three secret values
 too. `GATEWAY_CONFIG` is decoded by Fly into `/etc/gateway.json`; the encryption
 and session keys remain environment secrets, not files on the database volume.
-Do not set `GATEWAY_TOKEN`: setting `AmpUserID` disables shared-token MCP access.
+Do not set `GATEWAY_TOKEN` in production. It exists only for the disposable demo
+fixture; production has no bearer-token fallback.
 
 Once configuration is complete, create the volume and public addresses once:
 
@@ -655,10 +649,10 @@ as the audience, and rejects redirects. No gateway credential or OAuth sign-in i
 stored in Amp. This authentication mode does not apply to local MCP configuration.
 The local demo still uses `demo-client` and its disposable bearer token.
 
-The gateway verifies Amp's fixed issuer and signature, exact shared-host audience,
-expiry, `token_use=mcp`, a linked user ID and a thread ID. Stored operations include the
+The gateway verifies Amp's fixed workload-token issuer and signature, exact shared-host audience,
+expiry, `token_use=mcp`, the account's Amp user ID and a thread ID. Stored operations include the
 verified Amp subject, user and thread plus optional workspace and project claims;
-the account's immutable storage subject identifies the separate human approval. Model labels remain
+the bare Amp user ID identifies the separate human approval account. Model labels remain
 unverified. All threads owned by that Amp user can submit requests, but
 standing approval can be narrowed to one thread or one workspace/project. A valid
 Amp signature alone is not authorization.
@@ -686,7 +680,7 @@ before contacting the upstream, then records its outcome and audit event togethe
   audit actor `approval-grant-unavailable`. New consent cannot revive old queued
   calls. Revocation cannot cancel directly approved requests or calls already claimed.
 - Repeated or concurrent approvals cannot dispatch the same operation twice.
-- Changes to the pinned tool, policy, connection, owner, issuer or static upstream
+- Changes to the pinned tool, policy, connection, Amp user or static upstream
   credential invalidate queued requests when checked at execution.
 - Reconnecting OAuth denies **all** pending/ready requests conservatively and
   revokes standing approvals for that connection. Catalogue changes revoke all
@@ -732,12 +726,10 @@ results are never truncated or changed by presentation.
 
 ## Identity and audit boundaries
 
-With Amp authentication, “on behalf of” maps the verified Amp user to its immutable
-account subject (a legacy Google subject for migrated accounts). Signed workspace, project and thread IDs supply approval scope and
+With Amp authentication, “on behalf of” maps the verified Amp user to the account
+keyed by that bare Amp user ID. Signed workspace, project and thread IDs supply approval scope and
 audit context, not a delegation chain or proof of human consent. A standing grant
-also binds the exact tool and connection/configuration digest. Legacy bearer mode
-identifies only the configured owner, not the actual holder, and offers one-shot
-approval only.
+also binds the exact tool and connection/configuration digest.
 Browser approvals use the account resolved from the verified Amp actor;
 login checks issuer, audience, signature, expiry, nonce, actor type and allowed workspace.
 Model identity is explicitly client-reported and unverified; it never grants authority.
@@ -754,11 +746,6 @@ activity does not decrypt arguments or results. Summaries include connection,
 requester, initial standing-approval scope and its source request. Audit resolves
 the original approver from that source's recorded approval event, not the current
 grant or the new requester; missing attribution is shown as unavailable.
-On the first startup after an upgrade, missing or older-version summaries are
-backfilled one payload at a time,
-before restart recovery; original operation ciphertext is preserved. Subsequent
-startups inspect only the small summaries. Back up large ledgers before upgrading
-and allow time for this one-time migration.
 
 Audit filters request creation time and current outcome, not event time. The **In
 progress** outcome groups queued and running requests and searches all time so
@@ -782,7 +769,6 @@ metadata. The raw-events view retains global events that do not belong to a requ
    | --- | --- |
    | `GATEWAY_ENCRYPTION_KEY` | Random 32 bytes, standard base64; keep a backed-up copy |
    | `GATEWAY_SESSION_KEY` | Separate random 32 bytes, standard base64 |
-   | `GATEWAY_TOKEN` | Legacy/demo only when `AmpUserID` is absent; at least 32 characters |
    | `GATEWAY_AMP_OIDC_SECRET` | Amp Login OAuth client secret; required in production |
    | Connection `TokenEnv` / `ClientSecretEnv` | Upstream credentials |
 
@@ -801,13 +787,9 @@ the key is not a supported rotation procedure. Bound account identities cannot b
 changed or reassigned. Standing thread
 and project approvals can be revoked under **Approvals → Standing approvals**, but there is no Amp
 token introspection or way to stop a thread from submitting new pending requests.
-Legacy standing approvals expire one hour after their original creation, without
-an upgrade grace period; new approvals may explicitly have no expiry. Older queued
-grant-authorized calls lacking the exact consent source are denied at claim;
-submit a new request ID for fresh review.
-Do not roll back to a version without grant expiry/claim checks: it would restore
-the previous unbounded-grant behavior for stored active grants.
-In legacy mode, rotate the bearer token to revoke access. Rotate the session key
+Standing approvals expire after their selected duration or may explicitly have no
+expiry. Queued grant-authorized calls must retain the exact consent source;
+revocation or replacement of that consent prevents dispatch. Rotate the session key
 when changing OIDC configuration or revoking browser sessions. Sign-out clears the
 browser cookie but cannot revoke a copied session cookie; sessions otherwise last
 12 hours.
@@ -819,34 +801,64 @@ Production uses **Login with Amp**, callback `/auth/amp/callback`, and one share
 The TLS proxy must preserve the public `Host` matching `BaseURL`; other hosts
 return 404 except `/healthz`. Forwarded host headers are not trusted.
 
-Before upgrading an existing installation, back up the primary database, the
-entire `Database + ".accounts"` directory and unchanged master keys. Keep the
-existing `Issuer`, `OwnerSubject`, `AmpUserID`, `Database`, `ClientID` and
-`HostedDomain` configuration. These legacy identity fields are **storage and
-approval-binding metadata**, not login settings. Changing `ClientID` or
-`HostedDomain` invalidates existing approval digests even after migration;
-keep them unchanged. `GATEWAY_OIDC_SECRET` is no longer read.
-Set `AmpWorkspaceID` explicitly (the maintainer's workspace is
-`445a5890-186d-496e-8b9a-0483c1e23602`), retaining the registered Amp client ID and secret.
-The new session-key namespace invalidates old Google sessions.
+Store version 1 intentionally rejects version 0 databases. Migration is an explicit,
+offline and lossy operation; it is never run by startup or deployment. Do not make
+production changes until a migration has succeeded against a backup and the result
+has been tested.
 
-Startup restores legacy subject-to-Amp-ID links and opens every existing child
-database with its original path and derived key before saving a fixed registry
-key. Missing account databases, or any account database omitted from the selected
-registry (including a stale, non-empty restore), fail startup rather than creating
-empty replacements. New-account creation records a durable provisioning marker
-before opening its database; startup finishes only that marked creation after an
-interruption. A provisioning error blocks further new accounts until restart,
-without disrupting existing account routing. Never change
-`Issuer`, `OwnerSubject` or `AmpUserID` on
-bound data. Direct login looks up the verified Amp ID first, preserving all legacy
-approval subjects, connections, credentials, policies and history. New users get
-an `amp:<AmpID>` storage subject and their own database and runtime. No email
-matching, manual linking or account reassignment is supported.
+**Coordinate the first merge with a maintenance window:** Buildkite automatically
+deploys `main`. Do not let that deploy replace the running version 0 instance before
+the migrated data and generated configuration are ready. Pause automatic deployment
+for the migration window, then resume it after the configuration switch.
 
-The old registry is left intact for recovery, but new accounts are recorded only
-in the new registry. Roll back by restoring the complete pre-upgrade backup,
-not by running an old binary against newly provisioned accounts.
+1. Stop the old server and take a complete, consistent backup. The source config's
+   `Database` must point to the backed-up primary database, and the backup must include
+   the entire adjacent `Database + ".accounts"` directory. Retain the old config and
+   all old keys unchanged. Do not migrate from live files.
+2. On Linux or macOS, choose a destination directory that does not exist, then run the new binary with
+   the same encryption key used by the source:
+
+   ```sh
+   GATEWAY_ENCRYPTION_KEY=... bin/mcp-gateway \
+     -migrate-from /backup/gateway.json \
+     -migration-dir /data/amp-only
+   ```
+
+   The legacy source config is accepted only by this migration command. Its identity
+   fields describe the version 0 backup; they are not settings to copy into the new
+   production config. The command validates the complete account registry and fails
+   on missing, duplicate, mismatched or orphan account databases.
+3. Inspect `/data/amp-only/gateway.json`, `gateway.db`, and
+   `gateway.db.accounts/`. The generated config uses bare `AmpUserID` identity and
+   ID-derived child database paths and keys. It retains each account's catalogue,
+   provider credentials, Amp OAuth credentials and browser reconnect credentials.
+   Browser routing uses the stored credential hash, not an account identity prefix.
+   It converts the old rollback-only
+   private-policy encoding and generated Fly tool policies without changing permissions. Preserved provider credentials
+   keep their stored OAuth authentication method; do not assume migration changes it.
+4. Test startup, browser login, account routing, connection access and tool discovery
+   against the migrated destination before switching deployment configuration.
+   Standing grants are not copied and must be reapproved.
+
+Migration deliberately drops operation and audit history, pending approvals,
+standing grants and leases. This is an intentional audit/history reset, not a
+complete archival conversion. Preserve the stopped backup for any required historical
+record. The source is never modified, and a failed migration removes its staging
+output rather than replacing an existing destination.
+
+Rollback means stopping the new binary and restoring the old binary together with
+the complete old data, config and unchanged keys. Never point the new process at old
+state, run the old binary against migrated state, or allow the new process to write
+to the rollback copy. The single-process, single-SQLite-volume constraint remains.
+
+After migration, account registries contain Amp IDs only. The primary and child
+databases are bound to bare Amp user IDs, and new child paths and derived keys use
+those IDs. No email matching, manual linking, account reassignment or runtime
+backwards-compatibility path is supported. `GATEWAY_OIDC_SECRET` is no longer read;
+browser login instead uses `AmpLoginClientID`, `AmpWorkspaceID`, optional
+`AmpAPIBaseURL`, and `GATEWAY_AMP_OIDC_SECRET`. These browser OIDC settings are
+separate from the removed gateway identity fields. The new session-key namespace
+invalidates existing browser sessions; sign in again after migration.
 
 OAuth access and refresh tokens (when issued), token type and expiry are encrypted
 server-side in that user's account database before issuing a browser session.
@@ -873,7 +885,7 @@ the signed browser cookie and refreshed at login; they never authorize access.
 Existing sessions show a generic identity until the next sign-in. Missing photos
 use a generic avatar. The browser loads photos directly without a referrer.
 Audit views also display this profile's name for exact matches to the current
-account's owner subject or `amp:<AmpUserID>`. Original actor IDs remain visible,
+account's Amp user ID. Original actor IDs remain visible,
 including in live updates. Unknown actors and system events are not attributed
 to the signed-in user; no workspace-member directory access is requested.
 

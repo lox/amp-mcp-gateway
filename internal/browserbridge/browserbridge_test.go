@@ -257,21 +257,17 @@ func TestReconnectTargetUsesUnambiguousIdentityEncoding(t *testing.T) {
 	}
 }
 
-func TestSocketRouterRejectsPrefixTamperingAndReconnectKeepsPrefix(t *testing.T) {
+func TestSocketRouterMatchesWholeCredential(t *testing.T) {
 	first, _ := browserManager(t)
 	second, _ := browserManager(t)
-	first.RoutingID, second.RoutingID = "account-one", "account-two"
 	hash := sha256.Sum256([]byte("account-one.pairing-secret"))
 	first.pairings["browser"] = pairing{hash: hash, created: time.Now()}
+	second.pairings["browser"] = pairing{hash: sha256.Sum256([]byte("other-secret")), created: time.Now()}
 	selectManager := func(code string) *Manager {
-		prefix, _, ok := strings.Cut(code, ".")
-		if !ok {
-			return nil
-		}
-		if prefix == first.RoutingID {
+		if first.MatchesPairing(code) {
 			return first
 		}
-		if prefix == second.RoutingID {
+		if second.MatchesPairing(code) {
 			return second
 		}
 		return nil
@@ -294,12 +290,15 @@ func TestSocketRouterRejectsPrefixTamperingAndReconnectKeepsPrefix(t *testing.T)
 		return ws, paired, err
 	}
 	ws, paired, err := dial("account-one.pairing-secret")
-	if err != nil || paired.Type != "paired" || !strings.HasPrefix(paired.Reconnect, "account-one.") {
+	if err != nil || paired.Type != "paired" || paired.Reconnect == "" {
 		t.Fatalf("initial routed pairing = %#v, %v", paired, err)
 	}
 	ws.Close()
 
-	tampered := "account-two." + strings.TrimPrefix(paired.Reconnect, "account-one.")
+	if first.MatchesPairing("account-one.pairing-secret") || second.MatchesPairing(paired.Reconnect) {
+		t.Fatal("used pairing code or another account's reconnect credential matched")
+	}
+	tampered := "account-two." + paired.Reconnect
 	bad, _, err := dial(tampered)
 	if bad != nil {
 		bad.Close()
@@ -308,7 +307,7 @@ func TestSocketRouterRejectsPrefixTamperingAndReconnectKeepsPrefix(t *testing.T)
 		t.Fatal("reconnect credential accepted with another account prefix")
 	}
 	reconnected, next, err := dial(paired.Reconnect)
-	if err != nil || next.Type != "paired" || !strings.HasPrefix(next.Reconnect, "account-one.") {
+	if err != nil || next.Type != "paired" || next.Reconnect != paired.Reconnect {
 		t.Fatalf("routed reconnect = %#v, %v", next, err)
 	}
 	reconnected.Close()
@@ -502,7 +501,7 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 
 func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	m, _ := browserManager(t)
-	m.AccountLink = true
+	m.AccountPage = true
 	h := m.UI(nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))

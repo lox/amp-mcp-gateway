@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"net"
 	"net/http"
@@ -32,6 +33,17 @@ type ampIdentity struct {
 	TokenUse                   string `json:"token_use"`
 }
 type ampIdentityKey struct{}
+
+const demoThreadID = "T-00000000-0000-0000-0000-000000000001"
+
+func demoIdentity(userID string) ampIdentity {
+	return ampIdentity{
+		Subject: "demo-fixture-workload", UserID: userID,
+		WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project",
+		ThreadID: demoThreadID, ThreadVisibility: "private",
+		ThreadMultiplayer: new(bool), ThreadNonOwnerCanInfluence: new(bool),
+	}
+}
 
 func withAmpIdentity(ctx context.Context, identity ampIdentity) context.Context {
 	return context.WithValue(ctx, ampIdentityKey{}, identity)
@@ -74,6 +86,24 @@ func (g *Gateway) AmpHandlers(ctx context.Context) (http.Handler, http.Handler, 
 		return nil, nil, err
 	}
 	return v.Handlers(g)
+}
+
+// DemoHandlers exposes fake-fixture handlers only when demo mode was explicitly
+// configured. It must never be mounted by a production command.
+func (g *Gateway) DemoHandlers(token string) (http.Handler, http.Handler) {
+	wrap := func(next http.Handler, tokenUse string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !g.cfg.Demo || token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			identity := demoIdentity(g.cfg.AmpUserID)
+			identity.TokenUse = tokenUse
+			next.ServeHTTP(w, r.WithContext(withAmpIdentity(r.Context(), identity)))
+		})
+	}
+	return wrap(g.mcpHandler(), "mcp"), wrap(http.HandlerFunc(g.redeemLease), "exchanged")
 }
 
 // AmpVerifier shares discovery and JWKS caching across accounts on one origin.

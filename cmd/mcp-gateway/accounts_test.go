@@ -54,7 +54,7 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 	}
 	defer s.Close()
 	primary := &accountRuntime{store: s}
-	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: db, OwnerSubject: "google-primary", AmpUserID: "amp-primary", Issuer: "https://accounts.google.com", ClientID: "browser-client", HostedDomain: "example.com"}, Secrets: secrets}
+	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: db, AmpUserID: "amp-primary"}, Secrets: secrets}
 	var opened []accountConfig
 	r, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) {
 		opened = append(opened, c)
@@ -65,34 +65,27 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.close()
-	if err := r.link(t.Context(), "google-bob", "amp-bob"); err != nil {
+	if err := r.provision(t.Context(), "amp-bob"); err != nil {
 		t.Fatal(err)
 	}
 	if len(opened) != 1 {
 		t.Fatalf("opened %d accounts", len(opened))
 	}
 	child := opened[0]
-	if child.Config.Database == db || child.Secrets.EncryptionKey == secrets.EncryptionKey || child.Config.OwnerSubject != "google-bob" || child.Config.AmpUserID != "amp-bob" {
+	if child.Config.Database == db || child.Secrets.EncryptionKey == secrets.EncryptionKey || child.Config.AmpUserID != "amp-bob" {
 		t.Fatalf("linked account was not isolated: %#v", child.Config)
 	}
 	if child.Secrets.SessionKey != secrets.SessionKey || child.auth != base.auth {
 		t.Fatal("linked account did not retain the shared browser authentication boundary")
 	}
-	if err := r.link(t.Context(), "google-other", "amp-bob"); err == nil {
-		t.Fatal("duplicate Amp identity accepted")
-	}
-	if err := r.link(t.Context(), "google-bob", "amp-other"); err == nil {
-		t.Fatal("subject relink accepted")
-	}
-	childStore := r.subjects["google-bob"].store
-	_, err = childStore.Submit(t.Context(), store.Operation{ID: "bob-operation", Subject: "google-bob", Status: "pending", Digest: "bob-only", Created: 1})
+	childStore := r.users["amp-bob"].store
+	_, err = childStore.Submit(t.Context(), store.Operation{ID: "bob-operation", Status: "pending", Digest: "bob-only", Created: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.close()
 
 	opened = nil
-	base.Config.ClientID = "rotated-browser-client"
 	restarted, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) {
 		opened = append(opened, c)
 		child, openErr := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
@@ -102,18 +95,15 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.close()
-	if len(opened) != 1 || restarted.current("google-bob") != "amp-bob" {
-		t.Fatalf("restart did not restore unique linkage: opened=%d current=%q", len(opened), restarted.current("google-bob"))
+	if len(opened) != 1 || restarted.current("amp-bob") != "amp-bob" {
+		t.Fatalf("restart did not restore unique linkage: opened=%d current=%q", len(opened), restarted.current("amp-bob"))
 	}
-	op, err := restarted.subjects["google-bob"].store.Get(t.Context(), "bob-operation")
+	op, err := restarted.users["amp-bob"].store.Get(t.Context(), "bob-operation")
 	if err != nil || op.Digest != "bob-only" {
 		t.Fatalf("restart lost child state: operation=%#v err=%v", op, err)
 	}
 	if _, err := primary.store.Get(t.Context(), "bob-operation"); err == nil {
 		t.Fatal("child operation leaked into primary store")
-	}
-	if err := restarted.link(t.Context(), "google-other", "amp-bob"); err == nil {
-		t.Fatal("restored Amp identity was not unique")
 	}
 	restarted.close()
 	if err := os.Remove(child.Config.Database); err != nil {
@@ -150,7 +140,7 @@ func TestRegistryStopsLinkingAfterShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := &accountRegistry{ctx: ctx}
-	if err := r.link(context.Background(), "subject", "user"); err == nil {
+	if err := r.provision(context.Background(), "user"); err == nil {
 		t.Fatal("link accepted during shutdown")
 	}
 }
@@ -165,7 +155,7 @@ func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 	r := &accountRegistry{
 		ctx: t.Context(), config: accountConfig{Secrets: accountSecrets()},
 		primary: &accountRuntime{store: s},
-		links:   map[string]string{"existing": "amp-existing"}, users: map[string]*accountRuntime{},
+		users:   map[string]*accountRuntime{"existing": {}},
 		open: func(accountConfig) (*accountRuntime, error) {
 			close(entered)
 			<-release
@@ -173,7 +163,7 @@ func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 		},
 	}
 	done := make(chan error, 1)
-	go func() { done <- r.link(t.Context(), "new", "amp-new") }()
+	go func() { done <- r.provision(t.Context(), "amp-new") }()
 	<-entered
 	defer func() {
 		close(release)
@@ -185,7 +175,7 @@ func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 	go func() { routed <- r.current("existing") }()
 	select {
 	case got := <-routed:
-		if got != "amp-existing" {
+		if got != "existing" {
 			t.Fatal("existing link lost")
 		}
 	case <-time.After(time.Second):
@@ -195,7 +185,7 @@ func TestSlowLinkDoesNotBlockExistingAccountRouting(t *testing.T) {
 
 func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
 	secrets := accountSecrets()
-	cfg := gateway.Config{Database: filepath.Join(t.TempDir(), "primary.db"), Issuer: "google", OwnerSubject: "original-subject", AmpUserID: "original-amp", AccountLink: true}
+	cfg := gateway.Config{Database: filepath.Join(t.TempDir(), "primary.db"), AmpUserID: "original-amp", AccountPage: true}
 	s, err := store.Open(cfg.Database, secrets.EncryptionKey)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +201,7 @@ func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
 	}
 	for _, linking := range []bool{true, false} {
 		changed := cfg
-		changed.OwnerSubject, changed.AmpUserID, changed.AccountLink = "new-subject", "new-amp", linking
+		changed.AmpUserID, changed.AccountPage = "new-amp", linking
 		_, err := newAccount(t.Context(), accountConfig{Config: changed, Secrets: secrets}, browserauth.Config{}, nil)
 		if err == nil || !strings.Contains(err.Error(), "identity cannot be reassigned") {
 			t.Fatalf("reassigned existing data (linking=%v): %v", linking, err)
@@ -222,7 +212,6 @@ func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	cfg.ClientID = "rotated-client"
 	if err := bindAccountIdentity(t.Context(), s, cfg); err != nil {
 		t.Fatal(err)
 	}

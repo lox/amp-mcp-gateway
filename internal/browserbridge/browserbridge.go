@@ -45,10 +45,8 @@ type pairingStore interface {
 
 // Manager owns persisted browser pairing state and active extension connections.
 type Manager struct {
-	// RoutingID is a non-secret account selector, set only before serving requests.
-	RoutingID string
-	// AccountLink enables account navigation in the authenticated header.
-	AccountLink bool
+	// AccountPage enables account navigation in the authenticated header.
+	AccountPage bool
 	fallback    backend
 	baseURL     string
 	store       pairingStore
@@ -379,9 +377,6 @@ func (m *Manager) accept(ctx context.Context, hello wireMessage) (string, string
 			if err != nil {
 				return "", "", "", false, err
 			}
-			if m.RoutingID != "" {
-				reconnect = m.RoutingID + "." + reconnect
-			}
 			p.hash = sha256.Sum256([]byte(reconnect))
 		}
 		p.paired = true
@@ -395,6 +390,20 @@ func (m *Manager) accept(ctx context.Context, hello wireMessage) (string, string
 		return id, m.binding(id), reconnect, true, nil
 	}
 	return "", "", "", false, nil
+}
+
+// MatchesPairing selects the account owning an opaque pairing credential.
+// The socket handshake still checks expiry and the paired browser target.
+func (m *Manager) MatchesPairing(code string) bool {
+	hash := sha256.Sum256([]byte(code))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.pairings {
+		if subtle.ConstantTimeCompare(p.hash[:], hash[:]) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) install(c *client) {
@@ -600,9 +609,6 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pairing unavailable", http.StatusInternalServerError)
 		return
 	}
-	if m.RoutingID != "" {
-		code = m.RoutingID + "." + code
-	}
 	hash := sha256.Sum256([]byte(code))
 	p := pairing{hash: hash, created: m.now()}
 	m.mu.Lock()
@@ -650,7 +656,7 @@ type browserStatus struct {
 }
 
 type browserPageData struct {
-	AccountLink       bool
+	AccountPage       bool
 	User              browserauth.Profile
 	Connections       []browserStatus
 	PairingCode       string
@@ -672,7 +678,7 @@ func (m *Manager) statuses() []browserStatus {
 }
 
 func (m *Manager) render(w http.ResponseWriter, r *http.Request, data browserPageData) {
-	data.AccountLink = m.AccountLink
+	data.AccountPage = m.AccountPage
 	data.User = browserauth.User(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := browserPage.Execute(w, data); err != nil {

@@ -27,16 +27,16 @@
         <span class="when"><time datetime="{{iso $op.Created}}">{{stamp $op.Created $.Zone}}</time>{{with updated .Events}}<span class="secondary">Updated <time datetime="{{iso .}}">{{stamp . $.Zone}}</time></span>{{end}}</span>
         <span class="request-tool tool">{{$op.Tool}}<span class="secondary request-id" title="{{$op.ID}}">{{$op.ID}}</span></span>
         <span class="request-connection">{{$op.Connection}}<span class="secondary">{{$op.Account}}</span></span>
-        <span class="requester">{{if $op.AmpUserID}}{{with index $.ActorNames (printf "amp:%s" $op.AmpUserID)}}{{.}}{{else}}Amp caller{{end}}<span class="secondary">Verified Amp caller</span>{{else}}{{actor $op.Subject $.Owner $.ActorNames}}<span class="secondary">Token identity</span>{{end}}</span>
+        <span class="requester">{{with index $.ActorNames (printf "amp:%s" $op.AmpUserID)}}{{.}}{{else}}Amp caller{{end}}<span class="secondary">Verified Amp caller</span></span>
         <span class="outcome"><span class="badge {{$op.Status}}">{{status $op.Status}}</span></span>
       </summary>
       <div class="detail">
         <h2>Request timeline <span class="help">· oldest first</span></h2>
-        <ol class="timeline">{{$request := .}}{{range $i, $e := .Events}}<li><time datetime="{{iso $e.Time}}">{{stamp $e.Time $.Zone}}</time><strong>{{event $request $i}}</strong><small>{{if eq $i 0}}Requested by {{end}}{{actor $e.Actor $.Owner $.ActorNames}}</small><small class="identity">{{$e.Actor}} · event #{{$e.Sequence}} · {{$e.Kind}}</small></li>{{else}}<li>No recorded transitions.</li>{{end}}</ol>
+        <ol class="timeline">{{$request := .}}{{range $i, $e := .Events}}<li><time datetime="{{iso $e.Time}}">{{stamp $e.Time $.Zone}}</time><strong>{{event $request $i}}</strong><small>{{if eq $i 0}}Requested by {{end}}{{actor $e.Actor $.ActorNames}}</small><small class="identity">{{$e.Actor}} · event #{{$e.Sequence}} · {{$e.Kind}}</small></li>{{else}}<li>No recorded transitions.</li>{{end}}</ol>
         {{if $op.ApprovalScope}}<p class="notice"><strong>Standing {{$op.ApprovalScope}} approval.</strong> {{with .StandingApproval}}Originally approved by {{with index $.ActorNames .Actor}}{{.}} · {{end}}<span class="identity">{{.Actor}}</span> on <time datetime="{{iso .Time}}">{{stamp .Time $.Zone}}</time> · <a href="{{requestURL .Operation}}">Source request</a> · event #{{.Sequence}}.{{else}}Original approver unavailable in the recorded history.{{end}}</p>{{end}}
         {{if eq $op.Status "unknown"}}<p class="notice"><strong>Execution may already have happened.</strong> The upstream outcome is unconfirmed. Inspect the upstream before deciding what to do; this request will not be retried automatically.</p>{{end}}
         {{if eq $op.Status "failed"}}<p class="notice failure"><strong>The upstream reported an error.</strong> Open request details to inspect the result. A failed result does not guarantee that no side effects occurred.</p>{{end}}
-        <div class="detail-bottom"><span><span class="help">Request ID</span><br><span class="full-id">{{$op.ID}}</span><small class="secondary">Requested by <span class="identity">{{if $op.AmpUserID}}amp:{{$op.AmpUserID}}{{else}}{{$op.Subject}}{{end}}</span></small></span><a href="{{requestURL $op.ID}}">View request details →</a></div>
+        <div class="detail-bottom"><span><span class="help">Request ID</span><br><span class="full-id">{{$op.ID}}</span><small class="secondary">Requested by <span class="identity">amp:{{$op.AmpUserID}}</span></small></span><a href="{{requestURL $op.ID}}">View request details →</a></div>
       </div>
     </details>
     {{else}}<div class="empty"><h2>No matching requests</h2><p>Try a wider time range or clear your filters. Only persisted requests appear here.</p><a href="/audit?period=all">View all request history</a></div>{{end}}

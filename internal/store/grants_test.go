@@ -2,9 +2,7 @@ package store
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -84,32 +82,6 @@ func TestApprovalGrantExplicitExpiry(t *testing.T) {
 		}
 		if got := submitWithGrants(t, s, ampOperation("still-lasting", "lasting", "project", "binding")); got.Status != "ready" {
 			t.Fatal("indefinite grant expired")
-		}
-	})
-}
-
-func TestPersistedV1GrantRetainsExpiry(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s, _, _ := testStore(t)
-		o := ampOperation("legacy-source", "thread", "project", "binding")
-		submitWithGrants(t, s, o)
-		// Construct the old payload and key independently of today's grant builder.
-		rawKey, _ := json.Marshal([]string{"approval-grant-v1", "thread", o.Tool, "notes", "binding", "user-owner", "workspace-one", "project", "thread"})
-		hash := sha256.Sum256(rawKey)
-		id := hex.EncodeToString(hash[:])
-		payload, err := json.Marshal(map[string]any{"id": id, "scope": "thread", "tool": o.Tool, "connection": "notes", "binding": "binding", "amp_user_id": "user-owner", "amp_workspace_id": "workspace-one", "amp_project_id": "project", "amp_thread_id": "thread", "operation_id": o.ID, "created": time.Now().Unix()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.db.Exec("INSERT INTO approval_grants(id,active,created,payload) VALUES(?,1,?,?)", id, time.Now().Unix(), s.seal("approval-grant:"+id, payload)); err != nil {
-			t.Fatal(err)
-		}
-		if got := submitWithGrants(t, s, ampOperation("legacy-before", "thread", "project", "binding")); got.Status != "ready" {
-			t.Fatal("legacy consent not recognized")
-		}
-		time.Sleep(time.Hour)
-		if got := submitWithGrants(t, s, ampOperation("legacy-after", "thread", "project", "binding")); got.Status != "pending" {
-			t.Fatal("legacy consent became permanent")
 		}
 	})
 }
@@ -347,53 +319,6 @@ func TestApprovalGrantExpiresAtOneHour(t *testing.T) {
 				}
 			})
 		})
-	}
-}
-
-func TestLegacyGrantQueuedCallFailsClosed(t *testing.T) {
-	s, path, key := testStore(t)
-	source := submitWithGrants(t, s, ampOperation("source", "thread", "project", "binding"))
-	if err := s.Approve(t.Context(), source.ID, "owner", "thread"); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := s.Claim(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
-		t.Fatal(err)
-	}
-	queued := submitWithGrants(t, s, ampOperation("queued", "thread", "project", "binding"))
-	// The old writer persisted a grant ID but not its consent source.
-	queued.ApprovalGrantSource = ""
-	raw, err := encodeOperation(queued)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec("UPDATE operations SET payload=? WHERE id=?", s.seal("operation:"+queued.ID, raw), queued.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(path, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if _, err := s.Claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("legacy call dispatched: %v", err)
-	}
-	got, err := s.Get(t.Context(), queued.ID)
-	if err != nil || got.Status != "denied" {
-		t.Fatalf("legacy call not denied: %v %v", got, err)
-	}
-	fresh := submitWithGrants(t, s, ampOperation("fresh", "thread", "project", "binding"))
-	if fresh.Status != "ready" || fresh.ApprovalGrantSource != source.ID {
-		t.Fatal("live legacy grant did not authorize new call")
-	}
-	if _, err := s.Claim(t.Context()); err != nil {
-		t.Fatalf("new call could not dispatch: %v", err)
 	}
 }
 

@@ -21,10 +21,11 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - One owner per isolated linked account, one shared HTTPS origin, one process and
   one SQLite volume. Each user has a separate database. Persist intent before dispatch.
 - Amp OIDC for shared browser authentication; the actor API verifies a user in the
-  allowed workspace and resolves their existing storage identity. Amp Workload
+  allowed workspace and resolves their bare Amp user ID. Amp Workload
   Identity authenticates remote MCP calls. Do not match emails or accept manual IDs.
   Keep the signed thread link; neither
-  model metadata nor account labels are authentication evidence. Demo retains bearer auth.
+  model metadata nor account labels are authentication evidence. Only the disposable
+  demo fixture uses bearer authentication.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
 - Approve the immutable stored request once or create a revocable standing approval
   for exact arguments, a tool, or a connection in its verified Amp thread or project.
@@ -37,20 +38,6 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   and its data-handling requirements are acceptable.
 
 ## Delivery slices
-
-### Direct Amp login — implemented locally
-
-Amp login replaces Google authentication and the separate linking step. Existing
-Google storage identities, database paths and derived keys remain unchanged;
-verified Amp actors resolve through the migrated registry before provisioning.
-Access and refresh tokens are encrypted per account. Project lookup and automatic
-refresh are deferred. See the [migration contract](dev.md#amp-login-and-account-migration)
-for configuration, scope and rollout requirements.
-
-Validation covers signed OAuth, explicit workspace admission, legacy migration,
-encrypted token isolation, workload routing and restart persistence. Live consent
-and refresh issuance still need verification. Unlink, reassignment, automatic
-offboarding, shared connections and multiple replicas remain out of scope.
 
 ### 1. Local vertical slice — complete
 
@@ -120,7 +107,8 @@ token directly, without a local bridge or stored gateway credential. Native cred
 redemption also accepts an orb-minted `token_use=exchanged` token with the same audience
 and exact thread identity because the automatic MCP token is not exposed to the shell.
 Browser login uses the verified Amp actor in the configured workspace. Legacy
-storage subjects remain bound to their Amp IDs. There is no delegation tree.
+version 0 stores require the explicit lossy offline migration; version 1 account
+registries, paths and derived keys use bare Amp user IDs. There is no delegation tree.
 
 Evidence: signed-token rejection tests, MCP identity persistence and idempotency
 tests, thread/project grant boundary and revocation tests, signed Amp login fixtures,
@@ -142,20 +130,14 @@ may only narrow authority. Do not build a general policy language first.
 Acceptance: negative tests demonstrate that changed arguments, resource state,
 account or delegation cannot reuse an approval or exceed a mandate.
 
-### 5. Fly deployment — existing single-owner deployment
+### 5. Fly deployment
 
-An initial single-owner deployment runs on public Fly HTTPS with one Machine and
-volume, separate environment secrets, Google login configuration and Amp workload
-authentication. The tool catalogue is empty; startup now permits that state without
-fake connections. Live health, Amp discovery, unauthorized rejection, Google
-redirect and browser-login checks passed.
-The [dev guide](dev.md#fly-amp-browser-login-and-workload-clients) covers registration
-and deployment. Buildkite tests changes and deploys non-PR `main` builds serially;
-its app-scoped Fly secret is configured and deployment has passed. Tailscale is optional additional
-network protection, not authentication.
-
-Shared-host linking and its Amp secret are configured. The direct Amp-login
-replacement is not deployed; its live OAuth flow remains unverified.
+The [dev guide](dev.md#fly-amp-browser-login-and-workload-clients) defines the
+single-Machine, single-volume deployment. Amp browser login and workload identity
+replace gateway Google identity configuration. Version 0 production data must be
+migrated and tested offline before switching configuration; no production rollout
+is part of this refactor. Buildkite tests main and deploys it serially. Tailscale is
+optional additional network protection, not authentication.
 
 Before real operational use: test backup/restore, define key rotation and retention,
 bound unauthenticated traffic and upstream responses, and add health/connection

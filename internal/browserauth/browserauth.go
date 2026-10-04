@@ -61,11 +61,11 @@ type Config struct {
 	Issuer       string
 	ClientID     string
 	ClientSecret string
-	OwnerSubject string
+	AmpUserID    string
 	WorkspaceID  string
 	APIBaseURL   string // Defaults to https://ampcode.com/api/v2; custom workspace API origins are supported.
 	ActorURL     string // Local fixture override; production uses the Amp actor API.
-	Login        func(context.Context, string, *oauth2.Token) (string, error)
+	Login        func(context.Context, string, *oauth2.Token) error
 	SessionKey   string
 	DemoPassword string
 	Demo         bool
@@ -85,7 +85,7 @@ type Auth struct {
 	owner          string
 	workspaceID    string
 	actorURL       string
-	loginAccount   func(context.Context, string, *oauth2.Token) (string, error)
+	loginAccount   func(context.Context, string, *oauth2.Token) error
 	clientIPHeader string
 	portalUserID   string
 
@@ -129,7 +129,7 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		secure:         base.Scheme == "https",
 		demo:           c.Demo,
 		password:       c.DemoPassword,
-		owner:          c.OwnerSubject,
+		owner:          c.AmpUserID,
 		workspaceID:    c.WorkspaceID,
 		actorURL:       c.ActorURL,
 		loginAccount:   c.Login,
@@ -138,8 +138,8 @@ func New(ctx context.Context, c Config) (*Auth, error) {
 		now:            time.Now,
 	}
 	if c.PortalUserID != "" {
-		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.WorkspaceID != "" || base.Scheme != "https" || c.OwnerSubject != "amp-portal:"+c.PortalUserID {
-			return nil, errors.New("browserauth: portal mode requires HTTPS, an Amp portal owner and no OIDC/demo configuration")
+		if c.Demo || c.DemoPassword != "" || c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.WorkspaceID != "" || base.Scheme != "https" || c.AmpUserID != c.PortalUserID {
+			return nil, errors.New("browserauth: portal mode requires HTTPS, a matching Amp user ID and no OIDC/demo configuration")
 		}
 		a.portalUserID = c.PortalUserID
 		return a, nil
@@ -458,13 +458,12 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	subject, err := a.loginAccount(ctx, ampID, token)
-	if err != nil || subject == "" {
+	if err := a.loginAccount(ctx, ampID, token); err != nil {
 		http.Error(w, "account unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	profile := a.displayProfile(ctx, idToken, token, ampID)
-	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: subject, Profile: &profile, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
+	a.setSignedCookie(w, sessionCookie, cookieValue{Subject: ampID, Profile: &profile, Expires: a.now().Add(sessionTTL).Unix()}, sessionTTL)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

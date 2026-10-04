@@ -64,7 +64,7 @@ func TestAccountProjectNamesRefresh(t *testing.T) {
 			}))
 			defer server.Close()
 			issuer = server.URL
-			auth, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "https://gateway.example", Issuer: issuer, ActorURL: issuer + "/actor", ClientID: "client", ClientSecret: "fixture-secret", WorkspaceID: "workspace", SessionKey: accountSecrets().SessionKey, Login: func(context.Context, string, *oauth2.Token) (string, error) { return "owner", nil }})
+			auth, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "https://gateway.example", Issuer: issuer, ActorURL: issuer + "/actor", ClientID: "client", ClientSecret: "fixture-secret", WorkspaceID: "workspace", SessionKey: accountSecrets().SessionKey, Login: func(context.Context, string, *oauth2.Token) error { return nil }})
 			if err != nil {
 				t.Fatal(err)
 			}

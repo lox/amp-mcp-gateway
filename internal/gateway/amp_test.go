@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -124,7 +123,7 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submit %v %v", result, err)
 	}
 	o, err := s.Get(t.Context(), "amp-request-001")
-	if err != nil || o.AmpSubject == "" || o.AmpUserID != "user-owner" || o.AmpWorkspaceID != "workspace-123" || o.AmpProjectID != "project-456" || o.AmpThreadID != thread || !o.AmpThreadContext || o.AmpThreadVisibility != "private" || o.AmpThreadMultiplayer || o.AmpThreadNonOwnerCanInfluence || o.Subject != "owner" {
+	if err != nil || o.AmpSubject == "" || o.AmpUserID != "user-owner" || o.AmpWorkspaceID != "workspace-123" || o.AmpProjectID != "project-456" || o.AmpThreadID != thread || !o.AmpThreadContext || o.AmpThreadVisibility != "private" || o.AmpThreadMultiplayer || o.AmpThreadNonOwnerCanInfluence {
 		t.Fatalf("identity not persisted: %+v %v", o, err)
 	}
 	events, err := s.Events(t.Context())
@@ -149,6 +148,7 @@ func TestAmpIdentity(t *testing.T) {
 	if _, err := g.submit(ctx, input("amp-request-001", "verified caller")); err == nil {
 		t.Fatal("cross-project idempotency accepted")
 	}
+	g.cfg.Demo = false
 	if _, err := g.submit(t.Context(), input("amp-request-002", "no identity")); err == nil {
 		t.Fatal("missing verified identity accepted")
 	}
@@ -266,39 +266,6 @@ func TestMakingConnectionPrivateHidesEarlierResults(t *testing.T) {
 	}
 }
 
-func TestAmpRetryAcceptsOperationFromBeforeExpandedIdentity(t *testing.T) {
-	g, s, _ := fixture(t)
-	g.cfg.AmpUserID = "user-owner"
-	thread := "T-01a0b6d8-e50f-7723-941c-60bca63723ba"
-	args := map[string]any{"text": "created before upgrade"}
-	legacy := store.Operation{
-		ID:          "legacy-retry",
-		Tool:        "notes.write",
-		Connection:  "notes",
-		Account:     "test account",
-		Subject:     "owner",
-		AmpUserID:   "user-owner",
-		AmpThreadID: thread,
-		Arguments:   args,
-		Binding:     g.bindings["notes.write"],
-		Status:      "pending",
-		Created:     time.Now().Unix(),
-		Expires:     time.Now().Add(time.Minute).Unix(),
-	}
-	legacy.Digest = digest([]any{legacy.Tool, legacy.Arguments, legacy.Binding, legacy.Model, legacy.AmpUserID, legacy.AmpThreadID})
-	if _, err := s.Submit(t.Context(), legacy); err != nil {
-		t.Fatal(err)
-	}
-	identity := ampIdentity{Subject: "workspace:workspace-one:project:project-one:user:user-owner:thread:" + thread, UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: thread}
-	got, err := g.submit(withAmpIdentity(t.Context(), identity), input(legacy.ID, "created before upgrade"))
-	if err != nil || got.Digest != legacy.Digest {
-		t.Fatalf("legacy retry rejected: %+v, %v", got, err)
-	}
-	if _, err := g.submit(withAmpIdentity(t.Context(), identity), input(legacy.ID, "changed after upgrade")); err == nil {
-		t.Fatal("changed legacy retry accepted")
-	}
-}
-
 func TestAmpAudience(t *testing.T) {
 	for _, tc := range []struct {
 		base, want string
@@ -326,9 +293,7 @@ func TestAmpAudience(t *testing.T) {
 
 func TestIdentityConfigurationInvalidatesApproval(t *testing.T) {
 	for name, change := range map[string]func(*Config){
-		"Amp user":      func(c *Config) { c.AmpUserID = "different-user" },
-		"Google domain": func(c *Config) { c.HostedDomain = "different.example" },
-		"Google client": func(c *Config) { c.ClientID = "different-client" },
+		"Amp user": func(c *Config) { c.AmpUserID = "different-user" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			g, s, b := fixture(t)
@@ -351,5 +316,35 @@ func TestIdentityConfigurationInvalidatesApproval(t *testing.T) {
 				t.Fatal("dispatched stale approval")
 			}
 		})
+	}
+}
+
+func TestDemoPrivateConnectionUsesFixtureThreadClaims(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.PrivateConnections = map[string]bool{"notes": true}
+	handler, _ := g.DemoHandlers("demo-private-token")
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "demo-private", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"demo-private-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	found, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "find_tools", Arguments: map[string]any{"query": "notes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(found)
+	if found.IsError || !strings.Contains(string(raw), "notes.write") {
+		t.Fatal("private demo tool was hidden")
+	}
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tools", Arguments: input("demo-private-request", "fixture")})
+	if err != nil || result.IsError {
+		t.Fatalf("private demo submission failed: %v", err)
+	}
+	op, err := s.Get(t.Context(), "demo-private-request")
+	if err != nil || !op.Private || !op.AmpThreadContext || op.AmpThreadVisibility != "private" || op.AmpThreadMultiplayer || op.AmpThreadNonOwnerCanInfluence {
+		t.Fatal("fixture lost private solo-thread context")
 	}
 }

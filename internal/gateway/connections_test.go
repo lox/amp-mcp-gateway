@@ -20,7 +20,7 @@ import (
 
 func adminUI(t *testing.T, g *Gateway, m *upstream.Manager) (http.Handler, *http.Cookie) {
 	t.Helper()
-	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Demo: true, DemoPassword: "test-login", OwnerSubject: "owner"})
+	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Demo: true, DemoPassword: "test-login", AmpUserID: g.cfg.AmpUserID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func formRequest(h http.Handler, cookie *http.Cookie, method, path string, value
 	return w
 }
 
-func TestPrivatePoliciesPersistAsRollbackSafeDenies(t *testing.T) {
+func TestPrivatePoliciesRoundTrip(t *testing.T) {
 	c := catalogue{
 		Connections:        []upstream.Connection{{ID: "notes", URL: "https://example.com/mcp", NoAuth: true}},
 		Tools:              []Tool{{ID: "notes.allowed", Connection: "notes", Name: "allowed", Policy: "allow", InputSchema: map[string]any{"type": "object"}}, {ID: "notes.inherited", Connection: "notes", Name: "inherited", InputSchema: map[string]any{"type": "object"}}},
@@ -56,36 +56,12 @@ func TestPrivatePoliciesPersistAsRollbackSafeDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var legacy struct {
-		Tools        []Tool
-		ToolDefaults map[string]string
-	}
-	if err := json.Unmarshal(raw, &legacy); err != nil {
-		t.Fatal(err)
-	}
-	if legacy.Tools[0].Policy != "deny" || legacy.Tools[1].Policy != "deny" || legacy.ToolDefaults["notes"] != "deny" {
-		t.Fatalf("rollback would not fail closed: tools=%+v defaults=%+v", legacy.Tools, legacy.ToolDefaults)
-	}
-	for _, tool := range legacy.Tools {
-		if tool.Policy != "" && tool.Policy != "allow" && tool.Policy != "require_approval" && tool.Policy != "deny" {
-			t.Fatalf("rollback sees unsupported tool policy %q", tool.Policy)
-		}
-	}
-	for _, policy := range legacy.ToolDefaults {
-		if policy != "allow" && policy != "require_approval" && policy != "deny" {
-			t.Fatalf("rollback sees unsupported default policy %q", policy)
-		}
-	}
 	var restored catalogue
 	if err := json.Unmarshal(raw, &restored); err != nil {
 		t.Fatal(err)
 	}
 	if restored.Tools[0].Policy != "allow" || restored.Tools[1].Policy != "" || restored.ToolDefaults["notes"] != "require_approval" || !restored.PrivateConnections["notes"] {
 		t.Fatalf("private policies not restored: tools=%+v defaults=%+v", restored.Tools, restored.ToolDefaults)
-	}
-	preRelease, err := json.Marshal(persistedCatalogue{Tools: []persistedTool{{ID: "notes.allowed", Connection: "notes", Name: "allowed", Policy: "deny", Private: true, InputSchema: map[string]any{"type": "object"}}}, ToolDefaults: map[string]string{"notes": "deny"}, PrivateToolDefaults: []string{"notes"}})
-	if err != nil || json.Unmarshal(preRelease, &restored) != nil || !restored.PrivateConnections["notes"] || restored.Tools[0].Policy != "allow" || restored.ToolDefaults["notes"] != "allow" {
-		t.Fatalf("pre-release private policy not migrated: %+v, %v", restored, err)
 	}
 }
 
@@ -739,26 +715,27 @@ func TestConnectionPrivacyCanBeSavedIndependently(t *testing.T) {
 	}
 }
 
-func TestConnectionPrivacyRequiresWorkloadIdentity(t *testing.T) {
+func TestConnectionPrivacyUsesCanonicalAccountIdentity(t *testing.T) {
 	g, s, _ := fixture(t)
+	g.cfg.Demo = false
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h, cookie := adminUI(t, g, m)
 	w := formRequest(h, cookie, "GET", "/connections/notes/tools", nil)
-	if w.Code != 200 || strings.Contains(w.Body.String(), `<input type="checkbox" name="private_connection"`) {
-		t.Fatal("private setting shown without workload identity")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `<input type="checkbox" name="private_connection"`) {
+		t.Fatal("private setting hidden from canonical account owner")
 	}
 	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
 	values := url.Values{"ticket": {match[1]}, "private_connection": {"true"}, "default_policy": {"require_approval"}, "policy_0": {"inherit"}}
-	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 400 || g.cfg.privateConnection("notes") {
-		t.Fatal("forged private setting accepted without workload identity")
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", values); w.Code != 303 || !g.cfg.privateConnection("notes") {
+		t.Fatal("canonical account owner could not save private setting")
 	}
 	cfg := g.cfg
 	cfg.PrivateConnections = map[string]bool{"notes": true}
-	if _, err := New(cfg, s, g.backend); err == nil {
-		t.Fatal("private startup configuration accepted without workload identity")
+	if _, err := New(cfg, s, g.backend); err != nil {
+		t.Fatal("private startup configuration rejected for canonical account", err)
 	}
 }
 

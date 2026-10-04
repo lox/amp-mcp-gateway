@@ -87,11 +87,7 @@ func (s *Store) RedeemCredentialLease(ctx context.Context, id string, caller Cre
 		return CredentialLease{}, errors.New("credential lease belongs to another caller")
 	}
 	actor := lease.AmpUserID
-	if actor != "" {
-		actor = "amp:" + actor
-	} else {
-		actor = "gateway-client"
-	}
+	actor = "amp:" + actor
 	if lease.Integration != caller.Integration || subtle.ConstantTimeCompare([]byte(lease.CredentialDigest), []byte(caller.CredentialDigest)) != 1 {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM credential_leases WHERE id=?", id); err != nil {
 			return CredentialLease{}, err

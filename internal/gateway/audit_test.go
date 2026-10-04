@@ -20,7 +20,7 @@ import (
 func TestAuditHistoryRenderingAndFilters(t *testing.T) {
 	g, s, _ := fixture(t)
 	for i, status := range []string{"succeeded", "failed", "unknown"} {
-		o := store.Operation{ID: fmt.Sprintf("audit-%d", i), Tool: "notes.<unsafe>", Connection: "notes", Account: "Personal notes", Subject: "owner", Status: "ready", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix(), Arguments: map[string]any{"secret": "private-argument"}}
+		o := store.Operation{ID: fmt.Sprintf("audit-%d", i), Tool: "notes.<unsafe>", Connection: "notes", Account: "Personal notes", AmpUserID: "owner", Status: "ready", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix(), Arguments: map[string]any{"secret": "private-argument"}}
 		if i == 0 {
 			o.AmpUserID = "user_audit"
 		}
@@ -182,7 +182,7 @@ func TestAuditStandingApprovalAttribution(t *testing.T) {
 	for _, scope := range []string{"thread", "project"} {
 		t.Run(scope, func(t *testing.T) {
 			g, s, _ := fixture(t)
-			o := store.Operation{ID: "source", Tool: "notes.create", Connection: "notes", Subject: "owner", AmpUserID: "requester", AmpThreadID: "thread", AmpProjectID: "project", Binding: "binding", Status: "pending", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()}
+			o := store.Operation{ID: "source", Tool: "notes.create", Connection: "notes", AmpUserID: "requester", AmpThreadID: "thread", AmpProjectID: "project", Binding: "binding", Status: "pending", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()}
 			if _, err := s.Submit(t.Context(), o); err != nil {
 				t.Fatal(err)
 			}
@@ -229,7 +229,7 @@ func TestAuditStandingApprovalAttribution(t *testing.T) {
 
 func TestAuditRouteRequiresBrowserAuthentication(t *testing.T) {
 	g, s, _ := fixture(t)
-	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Demo: true, DemoPassword: "demo-only", OwnerSubject: "owner"})
+	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Demo: true, DemoPassword: "demo-only", AmpUserID: "owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
