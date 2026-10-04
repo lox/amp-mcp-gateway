@@ -771,9 +771,6 @@
     color: white;
     @apply font-extrabold text-[18px];
   }
-  :where(html.dashboard) .secret-mark {
-    background: #216442;
-  }
   :where(html.dashboard) .secret-list {
     @apply grid;
   }

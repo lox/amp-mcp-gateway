@@ -445,9 +445,9 @@ prevents accidental disclosure, not a malicious caller after approval.
 
 ## Thread and project secrets
 
-Open **Integrations → Secrets** and add a stable secret ID, a non-sensitive display
-name, the value, and an access policy. The value is stored inside the encrypted
-catalogue and is never rendered again. The ID publishes one governed tool named
+Open **Secrets** in the main navigation and add a stable secret ID, a
+non-sensitive display name, the value, and an access policy. The value is stored
+encrypted and is never rendered again. The ID publishes one governed tool named
 `<id>.request_secret`; for example, `github_token.request_secret` accepts:
 
 ```json

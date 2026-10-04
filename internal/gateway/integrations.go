@@ -86,9 +86,9 @@ func (g *Gateway) registerIntegrations(mux *http.ServeMux, m *upstream.Manager) 
 	mux.HandleFunc("GET /integrations/fly", g.flyIntegrationPage)
 	mux.HandleFunc("POST /integrations/fly", func(w http.ResponseWriter, r *http.Request) { g.saveFlyIntegration(w, r, m) })
 	mux.HandleFunc("POST /integrations/fly/remove", func(w http.ResponseWriter, r *http.Request) { g.removeFlyIntegration(w, r, m) })
-	mux.HandleFunc("GET /integrations/secrets", g.secretsPage)
-	mux.HandleFunc("POST /integrations/secrets", func(w http.ResponseWriter, r *http.Request) { g.saveSecret(w, r, m) })
-	mux.HandleFunc("POST /integrations/secrets/{id}/remove", func(w http.ResponseWriter, r *http.Request) { g.removeSecret(w, r, m) })
+	mux.HandleFunc("GET /secrets", g.secretsPage)
+	mux.HandleFunc("POST /secrets", func(w http.ResponseWriter, r *http.Request) { g.saveSecret(w, r, m) })
+	mux.HandleFunc("POST /secrets/{id}/remove", func(w http.ResponseWriter, r *http.Request) { g.removeSecret(w, r, m) })
 }
 
 func (g *Gateway) secretIntegrations() []Integration {
@@ -110,7 +110,7 @@ func (g *Gateway) secretsPage(w http.ResponseWriter, r *http.Request) {
 		views = append(views, map[string]string{"ID": secret.ID, "Name": secret.Account, "Policy": secret.Policy})
 	}
 	g.mu.RUnlock()
-	g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Saved": r.URL.Query().Get("saved") == "1"})
+	g.render(w, r, map[string]any{"SecretsPage": true, "Secrets": views, "Saved": r.URL.Query().Get("saved") == "1"})
 }
 
 func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -133,7 +133,7 @@ func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream
 			views = append(views, map[string]string{"ID": secret.ID, "Name": secret.Account, "Policy": secret.Policy})
 		}
 		g.mu.RUnlock()
-		g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Values": map[string]string{"ID": id, "Name": name, "Policy": policy}, "Error": message})
+		g.render(w, r, map[string]any{"SecretsPage": true, "Secrets": views, "Values": map[string]string{"ID": id, "Name": name, "Policy": policy}, "Error": message})
 	}
 	if !connectionID.MatchString(id) || id == flyIntegrationID {
 		fail("Use 1–60 letters, numbers, dashes or underscores for a non-reserved secret ID.")
@@ -182,7 +182,7 @@ func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream
 		fail(err.Error())
 		return
 	}
-	http.Redirect(w, r, "/integrations/secrets?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/secrets?saved=1", http.StatusSeeOther)
 }
 
 func (g *Gateway) removeSecret(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -202,7 +202,7 @@ func (g *Gateway) removeSecret(w http.ResponseWriter, r *http.Request, m *upstre
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	http.Redirect(w, r, "/integrations/secrets", http.StatusSeeOther)
+	http.Redirect(w, r, "/secrets", http.StatusSeeOther)
 }
 
 func (g *Gateway) flyIntegrationPage(w http.ResponseWriter, r *http.Request) {

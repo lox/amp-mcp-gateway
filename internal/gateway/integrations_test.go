@@ -155,14 +155,22 @@ func TestSecretAccessUsesStandingApprovalsAndIdentityBoundRedemption(t *testing.
 	h, cookie := adminUI(t, g, m)
 	secret := "fixture-secret-value\nwith-second-line"
 	values := url.Values{"id": {"deploy_key"}, "name": {"Deployment key"}, "value": {secret}, "policy": {"require_approval"}}
-	if w := formRequest(h, cookie, "POST", "/integrations/secrets", values); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/integrations/secrets?saved=1" {
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/secrets?saved=1" {
 		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
 	}
-	for _, path := range []string{"/integrations", "/integrations/secrets", "/approvals", "/audit"} {
+	for _, path := range []string{"/integrations", "/secrets", "/approvals", "/audit"} {
 		page := formRequest(h, cookie, "GET", path, nil)
 		if page.Code != http.StatusOK || strings.Contains(page.Body.String(), secret) {
 			t.Fatalf("secret exposed on %s", path)
 		}
+	}
+	secretsPage := formRequest(h, cookie, "GET", "/secrets", nil).Body.String()
+	if !strings.Contains(secretsPage, `<title>Amp MCP Gateway · Secrets</title>`) || !strings.Contains(secretsPage, `href="/secrets" aria-current="page"`) {
+		t.Fatal("Secrets is not presented as a top-level page")
+	}
+	integrationsPage := formRequest(h, cookie, "GET", "/integrations", nil).Body.String()
+	if strings.Contains(integrationsPage, "<h2>Secrets</h2>") {
+		t.Fatal("Secrets still appears in the Integrations catalogue")
 	}
 	restored := g.cfg
 	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0].Credential != secret {
@@ -251,7 +259,7 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 	}
 	h, cookie := adminUI(t, g, m)
 	values := url.Values{"id": {"api_key"}, "name": {"API key"}, "value": {"first-value"}, "policy": {"allow"}}
-	if w := formRequest(h, cookie, "POST", "/integrations/secrets", values); w.Code != http.StatusSeeOther {
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
 		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
 	}
 	integration, _ := g.integration("api_key")
@@ -264,7 +272,7 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	values.Set("value", "second-value")
-	if w := formRequest(h, cookie, "POST", "/integrations/secrets", values); w.Code != http.StatusSeeOther {
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
 		t.Fatalf("rotate secret: %d %s", w.Code, w.Body.String())
 	}
 	r := httptest.NewRequest("POST", redeemURL.Path, nil)
@@ -275,6 +283,13 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 	leaseMux.ServeHTTP(w, r)
 	if w.Code != http.StatusGone {
 		t.Fatalf("lease survived rotation: %d %s", w.Code, w.Body.String())
+	}
+	removed := formRequest(h, cookie, "POST", "/secrets/api_key/remove", nil)
+	if removed.Code != http.StatusSeeOther || removed.Header().Get("Location") != "/secrets" {
+		t.Fatalf("remove secret: %d %s", removed.Code, removed.Body.String())
+	}
+	if _, configured := g.integration("api_key"); configured {
+		t.Fatal("removed secret remains configured")
 	}
 }
 
