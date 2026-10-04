@@ -42,14 +42,22 @@ func run() error {
 	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	base := flag.String("base-url", "http://localhost:8080", "canonical browser origin")
 	clientIPHeader := flag.String("trusted-client-ip-header", "", "client IP header overwritten by trusted ingress; listener must not be directly reachable")
+	migrateFrom := flag.String("migrate-from", "", "configuration file for the offline legacy dataset")
+	migrationDir := flag.String("migration-dir", "", "destination directory for migrated account databases")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *migrateFrom != "" || *migrationDir != "" {
+		if *migrateFrom == "" || *migrationDir == "" {
+			return errors.New("-migrate-from and -migration-dir must be supplied together")
+		}
+		return migrateAccounts(ctx, *migrateFrom, *migrationDir, os.Getenv("GATEWAY_ENCRYPTION_KEY"))
+	}
 	var err error
 	var cfg gateway.Config
 	var deployment deploymentConfig
 	var consent http.Handler
-	secrets := demo.Secrets{EncryptionKey: os.Getenv("GATEWAY_ENCRYPTION_KEY"), SessionKey: os.Getenv("GATEWAY_SESSION_KEY"), GatewayToken: os.Getenv("GATEWAY_TOKEN")}
+	secrets := demo.Secrets{EncryptionKey: os.Getenv("GATEWAY_ENCRYPTION_KEY"), SessionKey: os.Getenv("GATEWAY_SESSION_KEY")}
 	if *demoMode {
 		if err := os.MkdirAll(".local", 0700); err != nil {
 			return err
@@ -75,16 +83,13 @@ func run() error {
 			return err
 		}
 		cfg = deployment.Config
-		if cfg.OwnerSubject == "" || cfg.BaseURL == "" || cfg.Database == "" {
-			return errors.New("OwnerSubject, BaseURL and Database are required")
+		if cfg.AmpUserID == "" || cfg.BaseURL == "" || cfg.Database == "" {
+			return errors.New("AmpUserID, BaseURL and Database are required")
 		}
 		u, err := url.Parse(cfg.BaseURL)
 		if err != nil || u.Scheme != "https" {
 			return errors.New("production BaseURL must use HTTPS behind your trusted TLS proxy")
 		}
-	}
-	if cfg.AmpUserID == "" && len(secrets.GatewayToken) < 32 {
-		return errors.New("GATEWAY_TOKEN must be at least 32 characters")
 	}
 	if cfg.Listen != "" {
 		*listen = cfg.Listen
@@ -99,17 +104,16 @@ func run() error {
 		}
 	}
 	var registry *accountRegistry
-	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, OwnerSubject: cfg.OwnerSubject, SessionKey: secrets.SessionKey, Demo: *demoMode}
+	authCfg := browserauth.Config{BaseURL: cfg.BaseURL, AmpUserID: cfg.AmpUserID, SessionKey: secrets.SessionKey, Demo: *demoMode}
 	if shared {
 		authCfg.ClientID = deployment.AmpLoginClientID
 		authCfg.ClientSecret = os.Getenv("GATEWAY_AMP_OIDC_SECRET")
 		authCfg.WorkspaceID = deployment.AmpWorkspaceID
 		authCfg.APIBaseURL = deployment.AmpAPIBaseURL
-		authCfg.Login = func(ctx context.Context, id string, token *oauth2.Token) (string, error) {
+		authCfg.Login = func(ctx context.Context, id string, token *oauth2.Token) error {
 			return registry.login(ctx, id, token)
 		}
-		// A new namespace invalidates all former Google browser sessions.
-		identity, _ := json.Marshal([]string{"amp-login/v1", deployment.AmpLoginClientID, deployment.AmpWorkspaceID})
+		identity, _ := json.Marshal([]string{"amp-login/v2", deployment.AmpLoginClientID, deployment.AmpWorkspaceID})
 		var err error
 		authCfg.SessionKey, err = accountKey(secrets.SessionKey, "browser-session", identity)
 		if err != nil {
@@ -137,7 +141,7 @@ func run() error {
 	}
 	primaryConfig := accountConfig{Config: cfg, Secrets: secrets}
 	if shared {
-		primaryConfig.Config.AccountLink = true
+		primaryConfig.Config.AccountPage = true
 		primaryConfig.auth = sharedAuth
 		primaryConfig.verifier, err = gateway.NewAmpVerifier(ctx, cfg.BaseURL)
 		if err != nil {
@@ -196,9 +200,9 @@ func run() error {
 	group.Go(func() error {
 		<-ctx.Done()
 		if registry != nil {
-			// Wait for an in-flight link before allowing the worker group to finish.
-			registry.linkMu.Lock()
-			registry.linkMu.Unlock()
+			// Finish any provisioning that can add workers before Wait returns.
+			registry.provisionMu.Lock()
+			registry.provisionMu.Unlock()
 		}
 		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
@@ -244,26 +248,25 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err != nil {
 		return nil, err
 	}
-	browser.AccountLink = cfg.AccountLink
+	browser.AccountPage = cfg.AccountPage
 	g, err := gateway.New(cfg, s, browser)
 	if err != nil {
 		return nil, err
 	}
 	auth := config.auth
 	if auth == nil {
-		authCfg.BaseURL, authCfg.OwnerSubject, authCfg.SessionKey = cfg.BaseURL, cfg.OwnerSubject, secrets.SessionKey
+		authCfg.BaseURL, authCfg.AmpUserID, authCfg.SessionKey = cfg.BaseURL, cfg.AmpUserID, secrets.SessionKey
 		auth, err = browserauth.New(ctx, authCfg)
 		if err != nil {
 			return nil, err
 		}
 	}
-	routingIdentity, _ := json.Marshal([]string{cfg.Issuer, cfg.OwnerSubject, cfg.AmpUserID})
-	routingID := sha256.Sum256(routingIdentity)
+	routingID := sha256.Sum256([]byte(cfg.AmpUserID))
 	browser.RoutingID = fmt.Sprintf("%x", routingID[:12])
 	mux := http.NewServeMux()
 	auth.Register(mux)
 	var mcpHandler, leaseHandler http.Handler
-	if cfg.AmpUserID != "" {
+	if !cfg.Demo {
 		if config.verifier != nil {
 			mcpHandler, leaseHandler, err = config.verifier.Handlers(g)
 		} else {
@@ -273,8 +276,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 			return nil, err
 		}
 	} else {
-		mcpHandler = g.MCP(secrets.GatewayToken)
-		leaseHandler = g.Leases(secrets.GatewayToken)
+		mcpHandler, leaseHandler = g.DemoHandlers(secrets.GatewayToken)
 	}
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
@@ -290,7 +292,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	account := &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}
-	if cfg.AccountLink {
+	if cfg.AccountPage {
 		g.ProjectNames = func(ctx context.Context) browserauth.ProjectNames { return account.projectNames(ctx, auth) }
 	}
 	return account, nil
@@ -321,8 +323,8 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func validatePortalAuth(cfg gateway.Config, listen string, demo bool) error {
 	address, err := netip.ParseAddrPort(listen)
-	if err != nil || !address.Addr().IsLoopback() || os.Getenv("AMP_ORB") != "1" || os.Getenv("PUBLIC_URL") == "" || strings.TrimSuffix(os.Getenv("PUBLIC_URL"), "/") != cfg.BaseURL || demo || cfg.AmpUserID == "" || cfg.OwnerSubject != "amp-portal:"+cfg.AmpUserID || cfg.Issuer != "" || cfg.ClientID != "" || cfg.HostedDomain != "" {
-		return errors.New("orb portal auth requires AMP_ORB=1, BaseURL matching PUBLIC_URL, literal loopback listen, AmpUserID, OwnerSubject=amp-portal:<AmpUserID>, and no OIDC/demo configuration")
+	if err != nil || !address.Addr().IsLoopback() || os.Getenv("AMP_ORB") != "1" || os.Getenv("PUBLIC_URL") == "" || strings.TrimSuffix(os.Getenv("PUBLIC_URL"), "/") != cfg.BaseURL || demo || cfg.AmpUserID == "" {
+		return errors.New("orb portal auth requires AMP_ORB=1, BaseURL matching PUBLIC_URL, literal loopback listen, AmpUserID, and no demo configuration")
 	}
 	return nil
 }

@@ -2,8 +2,6 @@
   "Listen": "[::]:8080",
   "BaseURL": "https://gateway.example.com",
   "Database": "/data/gateway.db",
-  "OwnerSubject": "amp:user_REPLACE_ME",
-  "Issuer": "https://auth.ampcode.com",
   "AmpUserID": "user_REPLACE_ME",
   "AmpLoginClientID": "REPLACE_WITH_YOUR_AMP_LOGIN_CLIENT_ID",
   "AmpWorkspaceID": "REPLACE_WITH_YOUR_AMP_WORKSPACE_ID",

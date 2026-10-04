@@ -409,7 +409,7 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 
 func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
 	m, _ := browserManager(t)
-	m.AccountLink = true
+	m.AccountPage = true
 	h := m.UI(nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))

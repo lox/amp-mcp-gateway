@@ -66,12 +66,12 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 	defer func() { http.DefaultTransport = original }()
 
 	secrets := accountSecrets()
-	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: filepath.Join(t.TempDir(), "gateway.db"), OwnerSubject: "google-alice", AmpUserID: "amp-alice", Issuer: "browser-issuer", ClientID: "browser-client", HostedDomain: "example.com"}, Secrets: secrets}
+	base := accountConfig{Config: gateway.Config{BaseURL: "https://gateway.example", Database: filepath.Join(t.TempDir(), "gateway.db"), AmpUserID: "amp-alice"}, Secrets: secrets}
 	base.verifier, err = gateway.NewAmpVerifier(t.Context(), base.Config.BaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authCfg := browserauth.Config{Demo: true, DemoPassword: "fixture", OwnerSubject: "google-alice"}
+	authCfg := browserauth.Config{Demo: true, DemoPassword: "fixture", AmpUserID: "google-alice"}
 	primary, err := newAccount(t.Context(), base, authCfg, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.close()
-	if err := r.link(t.Context(), "google-bob", "amp-bob"); err != nil {
+	if err := r.provision(t.Context(), "amp-bob"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,12 +118,12 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		t.Fatalf("accounts did not share discovery/JWKS: %d/%d", discoveries.Load(), keyFetches.Load())
 	}
 	now := time.Now()
-	private := store.Operation{ID: "alice-private", Subject: "google-alice", AmpUserID: "amp-alice", AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", Private: true, Status: "succeeded", Digest: "alice-secret-digest", Result: json.RawMessage(`{"secret":"alice-private-result"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
+	private := store.Operation{ID: "alice-private", AmpUserID: "amp-alice", AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", Private: true, Status: "succeeded", Digest: "alice-secret-digest", Result: json.RawMessage(`{"secret":"alice-private-result"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
 	if _, err := primary.store.Submit(t.Context(), private); err != nil {
 		t.Fatal(err)
 	}
 	bob := r.users["amp-bob"]
-	own := store.Operation{ID: "bob-own-operation", Subject: "google-bob", AmpUserID: "amp-bob", Status: "succeeded", Digest: "bob-digest", Result: json.RawMessage(`{"owner":"bob"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
+	own := store.Operation{ID: "bob-own-operation", AmpUserID: "amp-bob", Status: "succeeded", Digest: "bob-digest", Result: json.RawMessage(`{"owner":"bob"}`), Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
 	if _, err := bob.store.Submit(t.Context(), own); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 	browserRequest := func(subject, method, path string) *httptest.ResponseRecorder {
 		t.Helper()
 		auth, err := browserauth.New(t.Context(), browserauth.Config{
-			BaseURL: base.Config.BaseURL, OwnerSubject: subject, SessionKey: secrets.SessionKey,
+			BaseURL: base.Config.BaseURL, AmpUserID: subject, SessionKey: secrets.SessionKey,
 			Demo: true, DemoPassword: "fixture-password",
 		})
 		if err != nil {
@@ -196,13 +196,13 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		auth.Require(http.HandlerFunc(r.browser)).ServeHTTP(w, req)
 		return w
 	}
-	if w := browserRequest("google-alice", "GET", "/operations/alice-private"); w.Code != 200 || !strings.Contains(w.Body.String(), "alice-private-result") {
+	if w := browserRequest("amp-alice", "GET", "/operations/alice-private"); w.Code != 200 || !strings.Contains(w.Body.String(), "alice-private-result") {
 		t.Fatalf("owner browser lookup: %d %s", w.Code, w.Body.String())
 	}
-	if w := browserRequest("google-bob", "GET", "/operations/alice-private"); w.Code != 404 || strings.Contains(w.Body.String(), "alice-private-result") {
+	if w := browserRequest("amp-bob", "GET", "/operations/alice-private"); w.Code != 404 || strings.Contains(w.Body.String(), "alice-private-result") {
 		t.Fatalf("cross-account browser lookup: %d", w.Code)
 	}
-	if w := browserRequest("unlinked-subject", "GET", "/operations"); w.Code != 303 || w.Header().Get("Location") != "/account" {
+	if w := browserRequest("unlinked-amp", "GET", "/operations"); w.Code != 403 {
 		t.Fatal("unlinked browser was not sent to linking")
 	}
 	pendingAlice := private
@@ -210,13 +210,13 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 	if _, err := primary.store.Submit(t.Context(), pendingAlice); err != nil {
 		t.Fatal(err)
 	}
-	if w := browserRequest("google-bob", "POST", "/operations/alice-pending/approve"); w.Code < 400 {
+	if w := browserRequest("amp-bob", "POST", "/operations/alice-pending/approve"); w.Code < 400 {
 		t.Fatal("cross-account browser approval accepted")
 	}
 	if op, err := primary.store.Get(t.Context(), pendingAlice.ID); err != nil || op.Status != "pending" {
 		t.Fatal("foreign browser approval changed primary operation")
 	}
-	if w := browserRequest("google-alice", "POST", "/operations/alice-pending/approve"); w.Code != 303 {
+	if w := browserRequest("amp-alice", "POST", "/operations/alice-pending/approve"); w.Code != 303 {
 		t.Fatalf("owner browser approval failed: %d %s", w.Code, w.Body.String())
 	}
 	parts := strings.Split(bobToken, ".")

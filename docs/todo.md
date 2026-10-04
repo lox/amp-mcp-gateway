@@ -25,8 +25,8 @@ separate copies of this matrix in each document.
 | Connection UI | Partial | Add server, inline MCP connection tests, last-test/refresh/expiry and actionable health, fetch/review tools, defaults and bulk exceptions. No endpoint/credential editing, removal, verified account or continuous access monitoring yet. |
 | Chrome integration | Partial | Manifest V3 extension reverse-connects one selected HTTP(S) tab for snapshots, screenshots and policy-controlled interaction. Pairing is memory/session-only; multiple tabs and durable device pairing are not implemented. |
 | OIDC login | Implemented | Direct Amp login verifies a user actor in the allowed workspace. Per-account encrypted OAuth token retention; live consent/refresh issuance unverified. Demo and portal workflows retained. |
-| Multiple users / workloads | Partial | Amp users resolve through existing identity bindings or receive isolated databases, providers and state. Legacy Google storage identities are preserved. No email matching, unlink/reassignment, automatic offboarding, shared connections or delegation. See the [migration contract](dev.md#amp-login-and-account-migration). |
-| On-behalf-of attribution | Partial | Verified Amp subject, user, workspace, project, thread visibility and multiplayer context stored separately from the account's approval subject; no delegation chain or model attestation. |
+| Multiple users / workloads | Partial | Bare Amp user IDs key isolated databases, providers and state. Version 0 requires the explicit lossy offline migration. No email matching, reassignment, automatic offboarding, shared connections or delegation. See the [migration contract](dev.md#amp-login-and-account-migration). |
+| On-behalf-of attribution | Partial | Verified Amp subject, user, workspace, project, thread visibility and multiplayer context are stored; the bare Amp user ID selects the approval account. No delegation chain or model attestation. |
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. Connections can independently require an Amp-attested private, owner-only, non-multiplayer context on every discovery, call and result lookup. New tools inherit defaults after save; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, once/thread/project approve scopes, deny, ten-minute pending expiry, revocation and status polling. |
@@ -62,8 +62,7 @@ separate copies of this matrix in each document.
 - [x] Verify Amp workload issuer and reject wrong user/audience/signature/expiry/token use.
 - [x] Persist verified Amp user and thread link separately from model metadata.
 - [x] Accept Amp's short-lived MCP workload tokens directly from remote definitions.
-- [x] Register Google web client and configure exact owner subject plus hosted-domain restriction.
-- [x] Validate live Google login.
+- [x] Configure Amp browser login for an explicit workspace and user actor.
 - [ ] Validate a real provider call through production browser approval.
 - [ ] Add general client-facing OAuth discovery/scopes if non-orb clients need it.
 
@@ -83,8 +82,8 @@ separate copies of this matrix in each document.
 - [x] Configure its app-scoped Fly secret and verify the first automatic deployment.
 - [ ] Add endpoint/credential editing and connection removal to the browser.
 - [x] Allow policy revocation without fetching the provider's tool list again.
-- [x] Configure the Amp Login secret and deploy shared-host account linking.
-- [ ] Roll out direct Amp login and validate consent, refresh issuance, restart persistence and workload routing.
+- [ ] Test the offline version 0 to version 1 migration against a complete stopped backup before any production switch.
+- [ ] Roll out Amp-only identity and validate consent, refresh issuance, restart persistence and workload routing.
 - [x] Add project-name lookup and token refresh using retained per-account credentials.
 - [ ] Design unlink/reassignment and explicit offboarding; workspace removal alone
       does not revoke existing sessions or linked Amp workload access.

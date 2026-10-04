@@ -30,7 +30,7 @@ type ApprovalGrant struct {
 	Created        int64  `json:"created"`
 }
 
-// Expires returns zero for indefinite consent. Legacy grants retain one hour.
+// Expires returns zero for indefinite consent.
 func (g ApprovalGrant) Expires() time.Time {
 	if g.Expiry == "never" {
 		return time.Time{}
@@ -94,14 +94,7 @@ func approvalGrant(o Operation, options ApprovalOptions) (ApprovalGrant, error) 
 }
 
 func grantID(g ApprovalGrant) string {
-	version := "approval-grant-v2"
-	if g.Breadth == "" {
-		version = "approval-grant-v1"
-	}
-	raw, _ := json.Marshal([]any{version, g.Scope, g.Breadth, g.Tool, g.Connection, g.Binding, g.Arguments, g.AmpUserID, g.AmpWorkspaceID, g.AmpProjectID, g.AmpThreadID})
-	if version == "approval-grant-v1" {
-		raw, _ = json.Marshal([]any{version, g.Scope, g.Tool, g.Connection, g.Binding, g.AmpUserID, g.AmpWorkspaceID, g.AmpProjectID, g.AmpThreadID})
-	}
+	raw, _ := json.Marshal([]any{"approval-grant-v2", g.Scope, g.Breadth, g.Tool, g.Connection, g.Binding, g.Arguments, g.AmpUserID, g.AmpWorkspaceID, g.AmpProjectID, g.AmpThreadID})
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
@@ -109,19 +102,6 @@ func grantID(g ApprovalGrant) string {
 func approvalGrantIDs(o Operation) []string {
 	ids := []string{}
 	for _, scope := range []string{"thread", "project"} {
-		// Legacy grants were tool-wide and expire after one hour.
-		legacy := ApprovalGrant{Scope: scope, Tool: o.Tool, Connection: o.Connection, Binding: o.Binding, AmpUserID: o.AmpUserID, AmpWorkspaceID: o.AmpWorkspaceID, AmpProjectID: o.AmpProjectID, OperationID: o.ID}
-		validLegacy := o.AmpUserID != ""
-		if scope == "thread" {
-			legacy.AmpThreadID = o.AmpThreadID
-			validLegacy = validLegacy && o.AmpThreadID != ""
-		} else {
-			validLegacy = validLegacy && o.AmpProjectID != ""
-		}
-		if validLegacy {
-			legacy.ID = grantID(legacy)
-			ids = append(ids, legacy.ID)
-		}
 		for _, breadth := range []string{"exact", "tool", "connection"} {
 			if g, err := approvalGrant(o, ApprovalOptions{Breadth: breadth, Scope: scope, Expiry: "1h"}); err == nil {
 				// Expiry is deliberately not part of grant identity, allowing renewal.

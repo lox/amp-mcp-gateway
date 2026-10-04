@@ -81,13 +81,13 @@ func TestAmpLoginBrowserRoundTrip(t *testing.T) {
 	}
 	baseURL := "http://" + app.Listener.Addr().String()
 	var registry *accountRegistry
-	auth, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: baseURL, Issuer: idp.URL, ActorURL: idp.URL + "/actor", ClientID: "fixture-client", ClientSecret: "fixture-secret", WorkspaceID: "fixture-workspace", SessionKey: accountSecrets().SessionKey, Login: func(ctx context.Context, id string, token *oauth2.Token) (string, error) {
+	auth, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: baseURL, Issuer: idp.URL, ActorURL: idp.URL + "/actor", ClientID: "fixture-client", ClientSecret: "fixture-secret", WorkspaceID: "fixture-workspace", SessionKey: accountSecrets().SessionKey, Login: func(ctx context.Context, id string, token *oauth2.Token) error {
 		return registry.login(ctx, id, token)
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := accountConfig{Config: gateway.Config{Database: filepath.Join(t.TempDir(), "gateway.db"), OwnerSubject: "legacy-fixture-alice", AmpUserID: "amp-fixture-alice", Issuer: "legacy-issuer"}, Secrets: accountSecrets()}
+	base := accountConfig{Config: gateway.Config{Database: filepath.Join(t.TempDir(), "gateway.db"), AmpUserID: "amp-fixture-alice"}, Secrets: accountSecrets()}
 	open := func(c accountConfig) (*accountRuntime, error) {
 		s, err := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
 		return &accountRuntime{store: s, handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/account", http.StatusSeeOther) })}, err

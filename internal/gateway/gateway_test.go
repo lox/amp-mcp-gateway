@@ -77,7 +77,7 @@ func fixture(t *testing.T) (*Gateway, *store.Store, *fixtureBackend) {
 	}
 	t.Cleanup(func() { s.Close() })
 	b := &fixtureBackend{}
-	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
 	g, err := New(cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
@@ -258,7 +258,7 @@ func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	b := &bindingBackend{binding: "browser-and-tab-one"}
-	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "browser", Account: "selected tab", Browser: true}}, Tools: []Tool{{ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "browser", Account: "selected tab", Browser: true}}, Tools: []Tool{{ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
 	g, err := New(cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	b := &sequencedBindingBackend{bindings: []string{"tab-one", "tab-one", "tab-two"}}
-	cfg := Config{OwnerSubject: "owner", BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
+	cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}}, Tools: []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}}}}
 	g, err := New(cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,9 @@ func TestGetOperationPromotesImageContent(t *testing.T) {
 	if _, err := s.Submit(t.Context(), o); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(g.MCP("image-result-token"))
+	g.cfg.Demo = true
+	mcpHandler, _ := g.DemoHandlers("image-result-token")
+	server := httptest.NewServer(mcpHandler)
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "image-test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"image-result-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
@@ -414,7 +416,7 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	g, s, _ := fixture(t)
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: key, Demo: true, DemoPassword: "fixture", OwnerSubject: "owner"})
+	a, err := browserauth.New(t.Context(), browserauth.Config{BaseURL: "http://localhost", SessionKey: key, Demo: true, DemoPassword: "fixture", AmpUserID: "owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +426,9 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	a.Register(mux)
-	mux.Handle("/mcp", g.MCP("gateway-test-token"))
+	g.cfg.Demo = true
+	mcpHandler, _ := g.DemoHandlers("gateway-test-token")
+	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("/", g.UI(a, m))
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -471,7 +475,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || strings.Contains(page.Body.String(), "Remember this approval") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || !strings.Contains(page.Body.String(), "Remember this approval") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestPortalOwnerAuthentication(t *testing.T) {
-	a, err := New(t.Context(), Config{BaseURL: "https://debug.onamp.dev", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), OwnerSubject: "amp-portal:user_owner", PortalUserID: "user_owner"})
+	a, err := New(t.Context(), Config{BaseURL: "https://debug.onamp.dev", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), AmpUserID: "user_owner", PortalUserID: "user_owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestPortalOwnerAuthentication(t *testing.T) {
 			r.Header.Set("X-Amp-Authenticated", tc.authenticated)
 			w := httptest.NewRecorder()
 			a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if Subject(r.Context()) != "amp-portal:user_owner" {
+				if Subject(r.Context()) != "user_owner" {
 					t.Error("incorrect audit actor")
 				}
 				w.WriteHeader(200)

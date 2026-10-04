@@ -110,7 +110,9 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	leaseMux := http.NewServeMux()
-	leaseMux.Handle("POST /leases/{id}", g.Leases("gateway-test-token"))
+	g.cfg.Demo = true
+	_, leaseHandler := g.DemoHandlers("gateway-test-token")
+	leaseMux.Handle("POST /leases/{id}", leaseHandler)
 	unauthorized := httptest.NewRecorder()
 	leaseMux.ServeHTTP(unauthorized, httptest.NewRequest("POST", redeemURL.Path, nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -144,17 +146,17 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 	}
 }
 
-func TestFlyIntegrationMigratesPersistedGeneratedTool(t *testing.T) {
+func TestFlyIntegrationRegeneratesToolWithoutPersistingIt(t *testing.T) {
 	g, s, b := fixture(t)
-	g.cfg.Integrations = []Integration{{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t)}}
-	g.cfg.Tools = append(g.cfg.Tools, flyTool("allow"))
+	g.cfg.Integrations = []Integration{{ID: flyIntegrationID, Provider: "fly", Account: "Fixture", Credential: gatewayFlyToken(t), Policy: "allow"}}
+	g.cfg.Tools = append(g.cfg.Tools, flyTool("deny"))
 
 	restarted, err := New(g.cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if restarted.tools["fly.request_token"].Policy != "allow" || restarted.cfg.Integrations[0].Policy != "allow" {
-		t.Fatalf("persisted Fly policy was not migrated: %#v %#v", restarted.tools["fly.request_token"], restarted.cfg.Integrations[0])
+		t.Fatal("generated tool did not use integration policy")
 	}
 	if got := restarted.catalogue(); len(got.Tools) != 1 || got.Tools[0].ID == "fly.request_token" {
 		t.Fatalf("generated Fly tool remained in persisted catalogue: %#v", got.Tools)
@@ -186,7 +188,9 @@ func TestFlyCredentialChangeInvalidatesUnredeemedLease(t *testing.T) {
 	g.cfg.Integrations[0].Credential = replacement
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /leases/{id}", g.Leases("gateway-test-token"))
+	g.cfg.Demo = true
+	_, leaseHandler := g.DemoHandlers("gateway-test-token")
+	mux.Handle("POST /leases/{id}", leaseHandler)
 	redeem := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", redeemURL.Path, nil)
 		r.Header.Set("Authorization", "Bearer gateway-test-token")

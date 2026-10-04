@@ -78,7 +78,7 @@ func TestPolicyProposalBatch(t *testing.T) {
 		t.Fatal("replay accepted")
 	}
 	events, err := s.Events(t.Context())
-	if err != nil || events[0].Kind != "policy-applied" || !strings.HasPrefix(events[0].Actor, "owner · proposal ") {
+	if err != nil || events[0].Kind != "policy-applied" || !strings.HasPrefix(events[0].Actor, "amp:verified-user · proposal ") {
 		t.Fatal("missing human audit", events, err)
 	}
 }
@@ -160,6 +160,7 @@ func TestPolicyProposalValidationAndAttribution(t *testing.T) {
 		}
 	}
 	g.cfg.AmpUserID = "verified-user"
+	g.cfg.Demo = false
 	input := policyInput{Changes: []policyChange{{Connection: "notes", Tools: map[string]string{"notes.write": "inherit"}}}}
 	if _, err := g.proposePolicies(t.Context(), input); err == nil {
 		t.Fatal("missing identity accepted")

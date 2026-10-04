@@ -9,7 +9,7 @@ import (
 
 func TestFocusedPages(t *testing.T) {
 	g, s, _ := fixture(t)
-	g.cfg.AccountLink = true
+	g.cfg.AccountPage = true
 	g.cfg.Connections = append(g.cfg.Connections, upstream.Connection{ID: "browser", Account: "Selected Chrome tab", Browser: true})
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
@@ -68,8 +68,8 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	oneOff := formRequest(h, cookie, "GET", "/operations/"+second.ID, nil).Body.String()
-	if !strings.Contains(oneOff, ">Approve once</button>") || !strings.Contains(oneOff, ">Deny</button>") || strings.Contains(oneOff, "Remember this approval") {
-		t.Fatal("request without verified Amp thread identity offered reusable approval controls")
+	if !strings.Contains(oneOff, ">Approve once</button>") || !strings.Contains(oneOff, ">Deny</button>") || !strings.Contains(oneOff, "Remember this approval") {
+		t.Fatal("demo workload identity did not offer reusable approval controls")
 	}
 	if w := formRequest(h, cookie, "POST", "/operations/"+first.ID+"/deny", nil); w.Code != 303 {
 		t.Fatal("could not deny request")

@@ -2,10 +2,7 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -49,46 +46,6 @@ func TestSummaryIntegrityAndAtomicSubmission(t *testing.T) {
 	var count int
 	if err := s.db.QueryRow("SELECT (SELECT count(*) FROM operations WHERE id='rejected')+(SELECT count(*) FROM events WHERE operation='rejected')").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("failed submission was not atomic: count=%d err=%v", count, err)
-	}
-}
-
-func TestSummaryBackfillFailurePrecedesRecovery(t *testing.T) {
-	s, path, key := testStore(t)
-	if err := s.SaveToken(t.Context(), "key-check", []byte("fixture")); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"a", "z"} {
-		o := operation(id, "running")
-		raw, err := json.Marshal(o)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b := s.seal("operation:"+id, raw)
-		if id == "z" {
-			b = []byte("damaged")
-		}
-		if _, err := s.db.Exec("INSERT INTO operations VALUES (?,?,?,?,?)", id, o.Status, o.Created, o.Expires, b); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if reopened, err := Open(path, key); err == nil {
-		reopened.Close()
-		t.Fatal("backfill accepted damaged legacy operation")
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var summaries, recovered, events int
-	if err := db.QueryRow(`SELECT (SELECT count(*) FROM operation_summaries), (SELECT count(*) FROM operations WHERE status!='running'), (SELECT count(*) FROM events)`).Scan(&summaries, &recovered, &events); err != nil {
-		t.Fatal(err)
-	}
-	if summaries != 0 || recovered != 0 || events != 0 {
-		t.Fatalf("failed backfill mutated ledger: summaries=%d recovered=%d events=%d", summaries, recovered, events)
 	}
 }
 
@@ -158,49 +115,5 @@ func TestListStatusFiltersBeforeLimitWithoutReadingPayload(t *testing.T) {
 	listed, err := s.ListStatus(t.Context(), "pending")
 	if err != nil || len(listed) != 1 || listed[0].ID != "op-000" || listed[0].Status != "pending" {
 		t.Fatalf("pending operation hidden by newer history: %v, %v", listed, err)
-	}
-}
-
-func TestLegacySummaryBackfill(t *testing.T) {
-	s, path, key := testStore(t)
-	o := operation("legacy", "running")
-	o.Account = "legacy-private-account"
-	o.Result = json.RawMessage(`{"value":"` + strings.Repeat("x", 1<<20) + `"}`)
-	raw, err := json.Marshal(o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ciphertext := s.seal("operation:"+o.ID, raw)
-	if _, err := s.db.Exec("INSERT INTO operations VALUES (?,?,?,?,?)", o.ID, o.Status, o.Created, o.Expires, ciphertext); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(path, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	listed, err := reopened.List(t.Context())
-	if err != nil || len(listed) != 1 || listed[0].Account != o.Account || listed[0].Status != "unknown" {
-		t.Fatalf("legacy list failed: %v", err)
-	}
-	var stored []byte
-	if err := reopened.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&stored); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(stored, ciphertext) {
-		t.Fatal("backfill changed immutable operation payload")
-	}
-	got, err := reopened.Get(t.Context(), o.ID)
-	if err != nil || !bytes.Equal(got.Result, o.Result) || got.Arguments["text"] != o.Arguments["text"] {
-		t.Fatalf("backfill changed full operation: %v", err)
-	}
-	if _, err := reopened.db.Exec("UPDATE operations SET payload=? WHERE id=?", []byte("unreadable"), o.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reopened.List(t.Context()); err != nil {
-		t.Fatalf("backfilled list still reads full payload: %v", err)
 	}
 }

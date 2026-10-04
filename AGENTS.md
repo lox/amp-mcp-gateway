@@ -27,8 +27,8 @@ Keep dependencies deliberate; use the official MCP SDK rather than handwritten J
   but have identity-bound databases and derived keys. Never share a catalogue,
   credential manager, browser pairing manager or worker between accounts.
 - Login requires a user actor in the configured Amp workspace. Resolve existing
-  Amp IDs through the registry before provisioning; legacy Google subjects and
-  issuers remain immutable storage identities. Never infer identity from email.
+  Amp IDs through the registry before provisioning. Amp user IDs are the canonical
+  account identity; never infer identity from email.
 
 ## Preview
 

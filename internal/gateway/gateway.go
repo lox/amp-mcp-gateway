@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -39,14 +38,15 @@ type Tool struct {
 
 // Config holds non-secret configuration. Secrets are supplied by environment variables.
 type Config struct {
-	Listen, BaseURL, Database, OwnerSubject, Issuer, ClientID string
-	AmpUserID, HostedDomain                                   string
-	AccountLink                                               bool `json:"-"`
-	Connections                                               []upstream.Connection
-	Integrations                                              []Integration `json:",omitempty"`
-	Tools                                                     []Tool
-	ToolDefaults                                              map[string]string `json:",omitempty"`
-	PrivateConnections                                        map[string]bool   `json:",omitempty"`
+	Listen, BaseURL, Database string
+	AmpUserID                 string
+	AccountPage               bool `json:"-"`
+	Demo                      bool `json:"-"`
+	Connections               []upstream.Connection
+	Integrations              []Integration `json:",omitempty"`
+	Tools                     []Tool
+	ToolDefaults              map[string]string `json:",omitempty"`
+	PrivateConnections        map[string]bool   `json:",omitempty"`
 }
 
 // Backend is the upstream transport boundary.
@@ -73,20 +73,12 @@ type Gateway struct {
 
 // New validates and compiles the pinned tool catalogue.
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
+	if cfg.AmpUserID == "" {
+		return nil, errors.New("AmpUserID is required")
+	}
 	cfg.Integrations = slices.Clone(cfg.Integrations)
 	cfg.Tools = slices.Clone(cfg.Tools)
 	cfg.ToolDefaults = maps.Clone(cfg.ToolDefaults)
-	legacyFlyPolicy := ""
-	legacyFlyTools := 0
-	for _, tool := range cfg.Tools {
-		if tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Connection == flyIntegrationID && tool.Name == flyRequestToken {
-			legacyFlyTools++
-			legacyFlyPolicy = tool.Policy
-		}
-	}
-	if legacyFlyTools > 1 {
-		return nil, errors.New("duplicate tool ID")
-	}
 	integrations := make(map[string]Integration, len(cfg.Integrations))
 	for i, integration := range cfg.Integrations {
 		if integration.ID != flyIntegrationID || integration.Provider != "fly" {
@@ -104,23 +96,13 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 			return nil, errors.New("invalid Fly.io integration credential")
 		}
 		if integration.Policy == "" {
-			integration.Policy = legacyFlyPolicy
-			if integration.Policy == "" {
-				integration.Policy = cfg.defaultPolicy(integration.ID)
-			}
+			integration.Policy = cfg.defaultPolicy(integration.ID)
 		}
 		if !validPolicy(integration.Policy) {
 			return nil, errors.New("invalid integration policy")
 		}
 		cfg.Integrations[i] = integration
 		integrations[integration.ID] = integration
-	}
-	if cfg.AmpUserID == "" {
-		for _, private := range cfg.PrivateConnections {
-			if private {
-				return nil, errors.New("private connections require Amp workload identity")
-			}
-		}
 	}
 	if cfg.ToolDefaults == nil {
 		cfg.ToolDefaults = map[string]string{}
@@ -179,9 +161,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		g.schemas[t.ID] = schema
 		g.tools[t.ID] = t
 		if native {
-			g.bindings[t.ID] = digest([]any{t, integration, cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain})
+			g.bindings[t.ID] = digest([]any{t, integration, cfg.AmpUserID})
 		} else {
-			g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.OwnerSubject, cfg.Issuer, cfg.ClientID, cfg.AmpUserID, cfg.HostedDomain, os.Getenv(connection.TokenEnv)})
+			g.bindings[t.ID] = digest([]any{t, connection, cfg.privateConnection(t.Connection), cfg.AmpUserID, os.Getenv(connection.TokenEnv)})
 		}
 	}
 	return g, nil
@@ -315,27 +297,6 @@ func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, ope
 	return &mcp.CallToolResult{Content: promoted}, out
 }
 
-// MCP serves execution and policy proposal tools behind a revocable owner bearer token.
-func (g *Gateway) MCP(token string) http.Handler {
-	return g.bearerAuthenticated(token, g.mcpHandler())
-}
-
-// Leases serves one-time credential redemption for legacy bearer clients.
-func (g *Gateway) Leases(token string) http.Handler {
-	return g.bearerAuthenticated(token, http.HandlerFunc(g.redeemLease))
-}
-
-func (g *Gateway) bearerAuthenticated(token string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if g.cfg.AmpUserID != "" || token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (g *Gateway) mcpHandler() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of provider privacy, default policy, and tool exception changes for human browser review. Providers include remote MCP connections and native integrations. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict a remote connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
@@ -401,7 +362,10 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
-	if g.cfg.AmpUserID != "" && (identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID)) {
+	if g.cfg.Demo && identity.UserID == "" {
+		identity = ampIdentity{Subject: "demo-fixture-workload", UserID: g.cfg.AmpUserID, WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project", ThreadID: demoThreadID}
+	}
+	if identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID) {
 		return store.Operation{}, errors.New("verified Amp identity required")
 	}
 	if !requestID.MatchString(in.RequestID) || len(in.Calls) != 1 || len(in.ModelReported) > 200 {
@@ -440,7 +404,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	dynamicBinding := g.backend.Binding(t.Connection)
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Subject: g.cfg.OwnerSubject, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -450,7 +414,6 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	if identity.ThreadNonOwnerCanInfluence != nil {
 		o.AmpThreadNonOwnerCanInfluence = *identity.ThreadNonOwnerCanInfluence
 	}
-	o.LegacyDigest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpUserID, o.AmpThreadID})
 	o.Digest = digest([]any{o.Tool, o.Arguments, o.Binding, o.Model, o.AmpSubject, o.AmpUserID, o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID})
 	stored, err := g.store.Submit(ctx, o)
 	if err != nil {
@@ -597,7 +560,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		actor := browserauth.Subject(r.Context())
+		actor := browserActor(r)
 		var err error
 		if decision == "approve" {
 			r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -625,7 +588,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 		http.Redirect(w, r, "/operations/"+r.PathValue("id"), 303)
 	})
 	mux.HandleFunc("POST /approval-grants/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if err := g.store.RevokeApprovalGrant(r.Context(), r.PathValue("id"), browserauth.Subject(r.Context())); err != nil {
+		if err := g.store.RevokeApprovalGrant(r.Context(), r.PathValue("id"), browserActor(r)); err != nil {
 			http.Error(w, "Approval unavailable or already revoked.", 409)
 			return
 		}
@@ -635,7 +598,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 }
 
 func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
-	data := map[string]any{"Owner": g.cfg.OwnerSubject, "Section": strings.TrimPrefix(r.URL.Path, "/")}
+	data := map[string]any{"Section": strings.TrimPrefix(r.URL.Path, "/")}
 	var err error
 	switch r.URL.Path {
 	case "/approvals":
@@ -732,7 +695,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			next = pending[0].ID
 		}
 	}
-	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next, "Owner": g.cfg.OwnerSubject}
+	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
@@ -765,7 +728,7 @@ func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {
-	data["AccountLink"] = g.cfg.AccountLink
+	data["AccountPage"] = g.cfg.AccountPage
 	data["User"] = browserauth.User(r.Context())
 	data["ActorNames"] = g.actorNames(r)
 	data["AmpNames"] = browserauth.ProjectNames{}

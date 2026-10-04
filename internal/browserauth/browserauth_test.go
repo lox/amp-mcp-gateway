@@ -18,7 +18,7 @@ func demoAuth(t *testing.T) *Auth {
 	a, err := New(context.Background(), Config{
 		BaseURL:    "https://gateway.example",
 		SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)),
-		Demo:       true, DemoPassword: "correct horse", OwnerSubject: "owner",
+		Demo:       true, DemoPassword: "correct horse", AmpUserID: "owner",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestNewRejectsInvalidAndMixedConfiguration(t *testing.T) {
 		{BaseURL: "https://example.com", SessionKey: "bad", Demo: true, DemoPassword: "x"},
 		{BaseURL: "https://example.com", SessionKey: key, Demo: true},
 		{BaseURL: "https://example.com", SessionKey: key},
-		{BaseURL: "https://example.com", SessionKey: key, DemoPassword: "x", Issuer: "i", ClientID: "c", ClientSecret: "s", OwnerSubject: "o"},
+		{BaseURL: "https://example.com", SessionKey: key, DemoPassword: "x", Issuer: "i", ClientID: "c", ClientSecret: "s", AmpUserID: "o"},
 		{BaseURL: "https://example.com", SessionKey: key, Demo: true, DemoPassword: "x", Issuer: "i"},
 	}
 	for i, cfg := range tests {

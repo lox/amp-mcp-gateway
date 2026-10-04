@@ -17,6 +17,7 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 func TestIdentityNamesOnApprovalAndAuditPages(t *testing.T) {
@@ -30,10 +31,14 @@ func TestIdentityNamesOnApprovalAndAuditPages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h, cookie := adminUI(t, g, nil)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
 	// Signed fixture session, using adminUI's disposable key. Exercise the real
 	// auth middleware and both full-page and fragment rendering paths.
-	payload, _ := json.Marshal(map[string]any{"s": "owner", "e": time.Now().Add(time.Hour).Unix(), "p": browserauth.Profile{Name: "Alice Example"}})
+	payload, _ := json.Marshal(map[string]any{"s": "user-alice", "e": time.Now().Add(time.Hour).Unix(), "p": browserauth.Profile{Name: "Alice Example"}})
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
 	mac := hmac.New(sha256.New, make([]byte, 32))
 	_, _ = mac.Write([]byte(encoded))
@@ -64,7 +69,7 @@ func TestIdentityNamesOnApprovalAndAuditPages(t *testing.T) {
 	if err != nil || len(grants) != 1 || grants[0].AmpProjectID != "project-one" || grants[0].AmpWorkspaceID != "workspace-one" {
 		t.Fatal("display lookup changed grant identity")
 	}
-	if _, err := s.Submit(t.Context(), store.Operation{ID: "other-actor", Subject: "owner", AmpUserID: "user-bob", Status: "pending", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()}); err != nil {
+	if _, err := s.Submit(t.Context(), store.Operation{ID: "other-actor", AmpUserID: "user-bob", Status: "pending", Created: time.Now().Unix(), Expires: time.Now().Add(time.Hour).Unix()}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/audit?period=all", "/audit?view=events", "/operations/standing-source"} {

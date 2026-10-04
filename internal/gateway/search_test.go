@@ -25,7 +25,9 @@ func TestToolSearchBoundsAndSemantics(t *testing.T) {
 	denied := first
 	denied.ID, denied.Policy = "notes.secret", "deny"
 	g.tools[denied.ID] = denied
-	server := httptest.NewServer(g.MCP("fixture-search-token"))
+	g.cfg.Demo = true
+	mcpHandler, _ := g.DemoHandlers("fixture-search-token")
+	server := httptest.NewServer(mcpHandler)
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "search-test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"fixture-search-token"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)

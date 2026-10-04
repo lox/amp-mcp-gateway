@@ -42,8 +42,8 @@ type backend interface {
 type Manager struct {
 	// RoutingID is a non-secret account selector, set only before serving requests.
 	RoutingID string
-	// AccountLink enables account navigation in the authenticated header.
-	AccountLink bool
+	// AccountPage enables account navigation in the authenticated header.
+	AccountPage bool
 	fallback    backend
 	baseURL     string
 
@@ -577,7 +577,7 @@ type browserStatus struct {
 }
 
 type browserPageData struct {
-	AccountLink       bool
+	AccountPage       bool
 	User              browserauth.Profile
 	Connections       []browserStatus
 	PairingCode       string
@@ -599,7 +599,7 @@ func (m *Manager) statuses() []browserStatus {
 }
 
 func (m *Manager) render(w http.ResponseWriter, r *http.Request, data browserPageData) {
-	data.AccountLink = m.AccountLink
+	data.AccountPage = m.AccountPage
 	data.User = browserauth.User(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := browserPage.Execute(w, data); err != nil {

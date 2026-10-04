@@ -30,97 +30,6 @@ type catalogue struct {
 	PrivateConnections map[string]bool   `json:",omitempty"`
 }
 
-// persistedCatalogue encodes private connections as denials plus markers so a rollback
-// to a binary without private-connection support fails closed instead of refusing to start.
-type persistedCatalogue struct {
-	Connections         []upstream.Connection
-	Integrations        []Integration `json:",omitempty"`
-	Tools               []persistedTool
-	ToolDefaults        map[string]string            `json:",omitempty"`
-	PrivateConnections  []persistedPrivateConnection `json:"PrivateConnectionPolicies,omitempty"`
-	PrivateToolDefaults []string                     `json:",omitempty"` // Pre-release migration.
-}
-
-type persistedTool struct {
-	ID, Connection, Name, Description, Policy string
-	InputSchema                               map[string]any
-	PrivatePolicy                             *string `json:",omitempty"`
-	Private                                   bool    `json:",omitempty"` // Pre-release migration.
-}
-
-type persistedPrivateConnection struct {
-	ID, Default string
-}
-
-func (c catalogue) MarshalJSON() ([]byte, error) {
-	persisted := persistedCatalogue{Connections: c.Connections, Integrations: c.Integrations, ToolDefaults: maps.Clone(c.ToolDefaults)}
-	if persisted.ToolDefaults == nil && len(c.PrivateConnections) > 0 {
-		persisted.ToolDefaults = map[string]string{}
-	}
-	for id, private := range c.PrivateConnections {
-		if private {
-			original := persisted.ToolDefaults[id]
-			persisted.ToolDefaults[id] = "deny"
-			persisted.PrivateConnections = append(persisted.PrivateConnections, persistedPrivateConnection{ID: id, Default: original})
-		}
-	}
-	sort.Slice(persisted.PrivateConnections, func(i, j int) bool { return persisted.PrivateConnections[i].ID < persisted.PrivateConnections[j].ID })
-	for _, tool := range c.Tools {
-		stored := persistedTool{ID: tool.ID, Connection: tool.Connection, Name: tool.Name, Description: tool.Description, Policy: tool.Policy, InputSchema: tool.InputSchema}
-		if c.PrivateConnections[tool.Connection] {
-			original := stored.Policy
-			stored.Policy, stored.PrivatePolicy = "deny", &original
-		}
-		persisted.Tools = append(persisted.Tools, stored)
-	}
-	return json.Marshal(persisted)
-}
-
-func (c *catalogue) UnmarshalJSON(raw []byte) error {
-	var persisted persistedCatalogue
-	if err := json.Unmarshal(raw, &persisted); err != nil {
-		return err
-	}
-	c.Connections, c.Integrations, c.ToolDefaults = persisted.Connections, persisted.Integrations, persisted.ToolDefaults
-	if (len(persisted.PrivateConnections) > 0 || len(persisted.PrivateToolDefaults) > 0) && c.ToolDefaults == nil {
-		c.ToolDefaults = map[string]string{}
-	}
-	c.PrivateConnections = map[string]bool{}
-	for id, policy := range c.ToolDefaults {
-		if policy == "private" {
-			c.PrivateConnections[id] = true
-			c.ToolDefaults[id] = "allow"
-		}
-	}
-	for _, private := range persisted.PrivateConnections {
-		c.PrivateConnections[private.ID] = true
-		if private.Default == "" {
-			delete(c.ToolDefaults, private.ID)
-		} else {
-			c.ToolDefaults[private.ID] = private.Default
-		}
-	}
-	for _, id := range persisted.PrivateToolDefaults {
-		c.PrivateConnections[id] = true
-		c.ToolDefaults[id] = "allow"
-	}
-	c.Tools = make([]Tool, 0, len(persisted.Tools))
-	for _, stored := range persisted.Tools {
-		policy := stored.Policy
-		if stored.PrivatePolicy != nil {
-			policy = *stored.PrivatePolicy
-		} else if stored.Private {
-			policy = "allow"
-			c.PrivateConnections[stored.Connection] = true
-		} else if policy == "private" {
-			policy = "allow"
-			c.PrivateConnections[stored.Connection] = true
-		}
-		c.Tools = append(c.Tools, Tool{ID: stored.ID, Connection: stored.Connection, Name: stored.Name, Description: stored.Description, Policy: policy, InputSchema: stored.InputSchema})
-	}
-	return nil
-}
-
 // LoadCatalogue restores browser-managed connections and policies before startup validation.
 func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	configuredConnections := append([]upstream.Connection(nil), cfg.Connections...)
@@ -221,11 +130,8 @@ type toolDraft struct {
 	Suggestions map[string]policy.Suggestion
 }
 
-func (draft toolDraft) edit(values url.Values, workloadIdentity bool) (toolDraft, error) {
+func (draft toolDraft) edit(values url.Values) (toolDraft, error) {
 	draft.Default = values.Get("default_policy")
-	if values.Has("private_connection") && !workloadIdentity {
-		return draft, errors.New("Private connections require Amp workload identity.")
-	}
 	draft.Private = values.Has("private_connection")
 	if !validPolicy(draft.Default) {
 		return draft, errors.New("Choose a connection default.")
@@ -319,7 +225,7 @@ func (g *Gateway) addPage(w http.ResponseWriter, r *http.Request, values map[str
 	if values == nil {
 		values = map[string]string{"auth": "oauth"}
 	}
-	g.render(w, r, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL})
 }
 
 func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -425,14 +331,13 @@ func (g *Gateway) connectionSettings(w http.ResponseWriter, r *http.Request, m *
 		return
 	}
 	connection["Health"] = m.Health(r.Context(), id)
-	g.render(w, r, map[string]any{"ConnectionSettings": true, "Connection": connection, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"ConnectionSettings": true, "Connection": connection})
 }
 
 func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.Manager, id string, tools []Tool, ticket, message string, saved bool) {
 	connection := g.connectionView(id)
 	g.mu.RLock()
 	draft := g.drafts[ticket]
-	workloadIdentity := g.cfg.AmpUserID != ""
 	g.mu.RUnlock()
 	if connection == nil {
 		http.NotFound(w, nil)
@@ -451,7 +356,7 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 		schema, _ := json.Marshal(tool.InputSchema)
 		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID], "Suggestion": draft.Suggestions[tool.ID]})
 	}
-	g.render(w, r, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "WorkloadIdentity": workloadIdentity, "Added": added, "Changed": changed, "Error": message, "Saved": saved, "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "Added": added, "Changed": changed, "Error": message, "Saved": saved})
 }
 
 func (g *Gateway) connectionTools(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -492,7 +397,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 			return
 		}
 		var err error
-		previous, err = previous.edit(r.PostForm, g.cfg.AmpUserID != "")
+		previous, err = previous.edit(r.PostForm)
 		if err != nil {
 			g.mu.Unlock()
 			http.Error(w, err.Error(), 400)
@@ -624,7 +529,7 @@ func (g *Gateway) saveTools(w http.ResponseWriter, r *http.Request, m *upstream.
 		http.Error(w, "Edit expired or configuration changed. Reopen saved permissions or fetch tools again.", 409)
 		return
 	}
-	draft, err := draft.edit(r.PostForm, g.cfg.AmpUserID != "")
+	draft, err := draft.edit(r.PostForm)
 	if err != nil {
 		g.mu.Unlock()
 		http.Error(w, err.Error(), 400)

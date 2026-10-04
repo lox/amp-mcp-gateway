@@ -15,7 +15,7 @@ func (r *accountRegistry) account(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = accountPage.Execute(w, map[string]any{"AmpID": id, "User": browserauth.User(req.Context()), "AccountLink": true})
+	_ = accountPage.Execute(w, map[string]any{"AmpID": id, "User": browserauth.User(req.Context()), "AccountPage": true})
 }
 
 var accountPage = template.Must(template.New("account").Parse(webui.UserMenu + `<!doctype html>

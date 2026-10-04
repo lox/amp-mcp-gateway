@@ -74,7 +74,7 @@ func TestAdmissionByteBoundaryAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.limits.bytes = int64(len(s.seal("operation:"+o.ID, raw)) + len(o.ID) + len(o.Status) + len(o.Subject))
+	s.limits.bytes = int64(len(s.seal("operation:"+o.ID, raw)) + len(o.ID) + len(o.Status) + len("amp:"+o.AmpUserID))
 	if _, err := s.Submit(t.Context(), o); err != nil {
 		t.Fatalf("exact byte boundary rejected: %v", err)
 	}

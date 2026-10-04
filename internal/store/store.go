@@ -34,7 +34,6 @@ type Operation struct {
 	Tool                          string          `json:"tool"`
 	Connection                    string          `json:"connection"`
 	Account                       string          `json:"account"`
-	Subject                       string          `json:"subject"`
 	AmpSubject                    string          `json:"amp_subject,omitempty"`
 	AmpUserID                     string          `json:"amp_user_id,omitempty"`
 	AmpWorkspaceID                string          `json:"amp_workspace_id,omitempty"`
@@ -47,19 +46,19 @@ type Operation struct {
 	Model                         string          `json:"model_reported,omitempty"`
 	Arguments                     map[string]any  `json:"arguments"`
 	Digest                        string          `json:"digest"`
-	LegacyDigest                  string          `json:"-"`
 	Binding                       string          `json:"binding"`
 	ConnectionBinding             string          `json:"connection_binding,omitempty"`
 	ApprovalScope                 string          `json:"approval_scope,omitempty"`
 	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
 	ApprovalGrantSource           string          `json:"approval_grant_source,omitempty"`
 	Private                       bool            `json:"private,omitempty"`
-	ProtectedResult               json.RawMessage `json:"private_result,omitempty"`
 	Status                        string          `json:"status"`
 	Created                       int64           `json:"created"`
 	Expires                       int64           `json:"expires"`
 	Result                        json.RawMessage `json:"result,omitempty"`
 }
+
+const schemaVersion = 1
 
 // Event records a durable state transition without tool payloads or credentials.
 type Event struct {
@@ -70,15 +69,7 @@ type Event struct {
 
 // Open opens the database, excludes other gateway processes, and recovers ambiguous dispatches.
 func Open(path, key string) (*Store, error) {
-	b, err := base64.StdEncoding.DecodeString(key)
-	if err != nil || len(b) != 32 {
-		return nil, errors.New("encryption key must be base64-encoded 32 bytes")
-	}
-	block, err := aes.NewCipher(b)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCMWithRandomNonce(block)
+	aead, err := newAEAD(key)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +84,12 @@ func Open(path, key string) (*Store, error) {
 		lock.Close()
 		return nil, errors.New("database already in use by another gateway")
 	}
+	info, statErr := os.Stat(path)
+	fresh := errors.Is(statErr, os.ErrNotExist) || statErr == nil && info.Size() == 0
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		lock.Close()
+		return nil, statErr
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		lock.Close()
@@ -106,7 +103,21 @@ func Open(path, key string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, aead: aead, lock: lock, ready: make(chan struct{}, 1), limits: ledgerUsage{operations: 10000, events: 50000, bytes: 64 << 20, outstanding: 16}}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if !fresh && version == 0 {
+		s.Close()
+		return nil, errors.New("legacy schema version 0 requires explicit offline migration before opening")
+	}
+	if version != 0 && version != schemaVersion {
+		s.Close()
+		return nil, fmt.Errorf("unsupported database schema version %d (expected %d)", version, schemaVersion)
+	}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
+	BEGIN;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
@@ -115,7 +126,9 @@ CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER 
 CREATE TABLE IF NOT EXISTS credential_leases (id TEXT PRIMARY KEY, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, time INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS operations_history ON operations(created DESC,id DESC);
-CREATE INDEX IF NOT EXISTS events_operation ON events(operation,sequence);`)
+CREATE INDEX IF NOT EXISTS events_operation ON events(operation,sequence);
+PRAGMA user_version=1;
+COMMIT;`)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -131,16 +144,24 @@ CREATE INDEX IF NOT EXISTS events_operation ON events(operation,sequence);`)
 		s.Close()
 		return nil, errors.New("cannot decrypt existing ledger: check encryption key and database integrity")
 	}
-	if err := s.backfillSummaries(); err != nil {
-		s.Close()
-		return nil, fmt.Errorf("backfill operation summaries: %w", err)
-	}
 	_, err = db.Exec(`BEGIN; INSERT INTO events(operation,kind,actor,time) SELECT id,'unknown','restart',unixepoch() FROM operations WHERE status='running'; UPDATE operations SET status='unknown' WHERE status='running'; COMMIT;`)
 	if err != nil {
 		s.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+func newAEAD(key string) (cipher.AEAD, error) {
+	b, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(b) != 32 {
+		return nil, errors.New("encryption key must be base64-encoded 32 bytes")
+	}
+	block, err := aes.NewCipher(b)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 // Close releases the database and process lock.
@@ -222,7 +243,7 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 				rows.Close()
 				return err
 			}
-			if privateConnections[o.Connection] && (!o.Private || (len(o.Result) > 0 && len(o.ProtectedResult) == 0)) {
+			if privateConnections[o.Connection] && !o.Private {
 				o.Private = true
 				protected = append(protected, o)
 			}
@@ -235,7 +256,7 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 			return err
 		}
 		for _, o := range protected {
-			payload, err := encodeOperation(o)
+			payload, err := json.Marshal(o)
 			if err != nil {
 				return err
 			}
@@ -319,21 +340,8 @@ func (s *Store) decode(row scanner) (Operation, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	err = decoder.Decode(&o)
-	if o.Private && len(o.Result) == 0 {
-		o.Result = o.ProtectedResult
-	}
 	o.Status = status
 	return o, err
-}
-
-func encodeOperation(o Operation) ([]byte, error) {
-	if o.Private && len(o.Result) > 0 {
-		if len(o.ProtectedResult) == 0 {
-			o.ProtectedResult = o.Result
-		}
-		o.Result = nil
-	}
-	return json.Marshal(o)
 }
 
 // Get retrieves a stored operation.
@@ -351,8 +359,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	defer tx.Rollback()
 	existing, err := s.decode(tx.QueryRowContext(ctx, "SELECT id,status,payload FROM operations WHERE id=?", o.ID))
 	if err == nil {
-		legacyMatch := existing.AmpSubject == "" && existing.AmpWorkspaceID == "" && existing.AmpProjectID == "" && o.LegacyDigest != "" && existing.Digest == o.LegacyDigest
-		if existing.Digest != o.Digest && !legacyMatch {
+		if existing.Digest != o.Digest {
 			return o, errors.New("request ID already used for different arguments or authority")
 		}
 		return existing, nil
@@ -374,11 +381,11 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 			}
 		}
 	}
-	b, err := encodeOperation(o)
+	b, err := json.Marshal(o)
 	if err != nil {
 		return o, err
 	}
-	actor := o.Subject
+	actor := o.AmpSubject
 	if o.AmpUserID != "" {
 		actor = "amp:" + o.AmpUserID
 	}
@@ -396,7 +403,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
-	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, Subject: o.Subject, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
 		return o, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -504,7 +511,7 @@ func (s *Store) Claim(ctx context.Context) (Operation, error) {
 			return o, err
 		}
 		// Grant IDs are reused on renewal; only the original consent may dispatch
-		// this call. Legacy queued calls without a source fail closed on upgrade.
+		// this call. Missing consent attribution fails closed.
 		if grant == nil || o.ApprovalGrantSource == "" || grant.OperationID != o.ApprovalGrantSource {
 			if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE id=?", o.ID); err != nil {
 				return o, err
@@ -531,7 +538,7 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 		return errors.New("invalid terminal status")
 	}
 	o.Result = result
-	b, err := encodeOperation(o)
+	b, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}

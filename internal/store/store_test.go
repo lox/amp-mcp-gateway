@@ -28,7 +28,7 @@ func testStore(t *testing.T) (*Store, string, string) {
 	return s, path, key
 }
 func operation(id, status string) Operation {
-	return Operation{ID: id, Tool: "notes.create", Subject: "owner", Digest: "digest", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{"text": "sensitive-request-value"}}
+	return Operation{ID: id, Tool: "notes.create", AmpSubject: "workload-owner", AmpUserID: "owner", Digest: "digest", Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{"text": "sensitive-request-value"}}
 }
 
 func TestWorkerWakeupsFollowCommittedReadyTransitions(t *testing.T) {
@@ -104,7 +104,7 @@ func TestEventSequenceIgnoresRollbackAndIdleClaims(t *testing.T) {
 	check(1)
 }
 
-func TestPrivateResultIsHiddenFromOlderOperationSchema(t *testing.T) {
+func TestPrivateResultPersists(t *testing.T) {
 	s, _, _ := testStore(t)
 	o := operation("private-result", "ready")
 	o.Private = true
@@ -123,23 +123,9 @@ func TestPrivateResultIsHiddenFromOlderOperationSchema(t *testing.T) {
 	if err != nil || !bytes.Equal(got.Result, result) {
 		t.Fatalf("current gateway lost private result: %s, %v", got.Result, err)
 	}
-	var ciphertext []byte
-	if err := s.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&ciphertext); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := s.open("operation:"+o.ID, ciphertext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var older struct {
-		Result json.RawMessage `json:"result,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &older); err != nil || len(older.Result) != 0 {
-		t.Fatalf("older gateway schema can read private result: %s, %v", older.Result, err)
-	}
 }
 
-func TestMakingConnectionPrivateProtectsEarlierResultsFromOlderSchema(t *testing.T) {
+func TestMakingConnectionPrivateProtectsEarlierResults(t *testing.T) {
 	s, _, _ := testStore(t)
 	o := operation("earlier-result", "ready")
 	o.Connection = "notes"
@@ -160,20 +146,6 @@ func TestMakingConnectionPrivateProtectsEarlierResultsFromOlderSchema(t *testing
 	got, err := s.Get(t.Context(), o.ID)
 	if err != nil || !got.Private || !bytes.Equal(got.Result, result) {
 		t.Fatalf("current gateway lost protected earlier result: %+v, %v", got, err)
-	}
-	var ciphertext []byte
-	if err := s.db.QueryRow("SELECT payload FROM operations WHERE id=?", o.ID).Scan(&ciphertext); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := s.open("operation:"+o.ID, ciphertext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var older struct {
-		Result json.RawMessage `json:"result,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &older); err != nil || len(older.Result) != 0 {
-		t.Fatalf("older gateway schema can read newly private earlier result: %s, %v", older.Result, err)
 	}
 }
 
@@ -311,38 +283,6 @@ func TestCredentialLeaseIsEncryptedIdentityBoundAndSingleUse(t *testing.T) {
 	events, err := s.OperationEvents(ctx, lease.OperationID)
 	if err != nil || len(events) != 2 || events[0].Kind != "lease-redeemed" || events[1].Kind != "lease-ready" {
 		t.Fatalf("lease events: %#v, %v", events, err)
-	}
-}
-
-func TestLegacyDigestOnlyMatchesOperationsWithoutNewIdentity(t *testing.T) {
-	s, _, _ := testStore(t)
-	ctx := t.Context()
-	legacy := operation("legacy-id", "pending")
-	legacy.Digest = "legacy-digest"
-	legacy.AmpUserID = "user-one"
-	legacy.AmpThreadID = "thread-one"
-	if _, err := s.Submit(ctx, legacy); err != nil {
-		t.Fatal(err)
-	}
-	retry := legacy
-	retry.Digest = "current-digest"
-	retry.LegacyDigest = "legacy-digest"
-	retry.AmpSubject = "workspace:one:user:user-one:thread:thread-one"
-	retry.AmpWorkspaceID = "workspace-one"
-	if got, err := s.Submit(ctx, retry); err != nil || got.Digest != "legacy-digest" {
-		t.Fatalf("legacy retry: %v, %v", got, err)
-	}
-
-	current := operation("current-id", "pending")
-	current.Digest = "legacy-digest"
-	current.AmpWorkspaceID = "workspace-one"
-	if _, err := s.Submit(ctx, current); err != nil {
-		t.Fatal(err)
-	}
-	current.Digest = "current-digest"
-	current.LegacyDigest = "legacy-digest"
-	if _, err := s.Submit(ctx, current); err == nil {
-		t.Fatal("legacy digest accepted for operation with current identity fields")
 	}
 }
 

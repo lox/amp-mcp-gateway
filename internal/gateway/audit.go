@@ -32,7 +32,7 @@ var auditTemplateFuncs = template.FuncMap{
 	},
 	"status": auditStatus,
 	"event":  auditEvent,
-	"actor": func(actor, owner string, names map[string]string) string {
+	"actor": func(actor string, names map[string]string) string {
 		switch {
 		case actor == "gateway":
 			return "Gateway"
@@ -44,12 +44,8 @@ var auditTemplateFuncs = template.FuncMap{
 			return "Catalogue changed"
 		case actor == "approval-grant-unavailable":
 			return "Standing approval unavailable"
-		case actor == "gateway-client":
-			return "Gateway client"
 		case names[actor] != "":
 			return names[actor]
-		case actor == owner:
-			return "Owner identity"
 		case strings.HasPrefix(actor, "amp:"):
 			return "Amp caller"
 		default:
@@ -171,7 +167,7 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		g.renderAudit(w, r, "audit-list", map[string]any{"Section": "audit", "RawAudit": true, "Events": events, "Zone": zone, "Owner": g.cfg.OwnerSubject})
+		g.renderAudit(w, r, "audit-list", map[string]any{"Section": "audit", "RawAudit": true, "Events": events, "Zone": zone})
 		return
 	}
 	if end := q.Get("until"); end != "" {
@@ -232,9 +228,9 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 	g.renderAudit(w, r, "audit-requests", map[string]any{
 		"Section":  "audit",
 		"Requests": requests, "Filter": f, "Period": period, "Zone": zone,
-		"Owner": g.cfg.OwnerSubject, "Connections": connections,
-		"Outcomes": []string{"active", "investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired"},
-		"Older":    older, "Latest": latest,
+		"Connections": connections,
+		"Outcomes":    []string{"active", "investigate", "pending", "ready", "running", "succeeded", "failed", "unknown", "denied", "expired"},
+		"Older":       older, "Latest": latest,
 	})
 }
 
@@ -242,10 +238,10 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 // another actor's identity from an email, prefix or an event's position.
 func (g *Gateway) actorNames(r *http.Request) map[string]string {
 	user := browserauth.User(r.Context())
-	if g.cfg.AmpUserID == "" || browserauth.Subject(r.Context()) != g.cfg.OwnerSubject || user.Name == "Signed in" {
+	if browserauth.Subject(r.Context()) != g.cfg.AmpUserID || user.Name == "Signed in" {
 		return nil
 	}
-	return map[string]string{g.cfg.OwnerSubject: user.Name, "amp:" + g.cfg.AmpUserID: user.Name}
+	return map[string]string{"amp:" + g.cfg.AmpUserID: user.Name}
 }
 
 func (g *Gateway) renderAudit(w http.ResponseWriter, r *http.Request, fragment string, data map[string]any) {

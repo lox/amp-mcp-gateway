@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
@@ -42,7 +41,10 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
-	if g.cfg.AmpUserID != "" && (identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID)) {
+	if g.cfg.Demo && identity.UserID == "" {
+		identity = ampIdentity{Subject: "demo-fixture-workload", UserID: g.cfg.AmpUserID, WorkspaceID: "demo-fixture-workspace", ProjectID: "demo-fixture-project", ThreadID: demoThreadID}
+	}
+	if identity.UserID != g.cfg.AmpUserID || !ampThreadID.MatchString(identity.ThreadID) {
 		return policyResult{}, errors.New("verified Amp identity required")
 	}
 	if len(in.Changes) == 0 || len(in.Changes) > 32 {
@@ -70,9 +72,6 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		}
 		if native && change.Private != nil {
 			return policyResult{}, errors.New("private access is only supported for remote connections")
-		}
-		if change.Private != nil && *change.Private && g.cfg.AmpUserID == "" {
-			return policyResult{}, errors.New("private connections require Amp workload identity")
 		}
 		d := toolDraft{Connection: change.Connection, Default: g.cfg.defaultPolicy(change.Connection), Private: g.cfg.privateConnection(change.Connection)}
 		if change.Private != nil {
@@ -121,10 +120,7 @@ func (g *Gateway) proposePolicies(ctx context.Context, in policyInput) (policyRe
 		return policyResult{}, errors.New("too many proposals; wait ten minutes")
 	}
 	ticket := rand.Text()
-	actor := "authenticated bearer agent (no verified Amp identity)"
-	if identity.UserID != "" {
-		actor = "Amp user " + identity.UserID + " thread " + identity.ThreadID
-	}
+	actor := "amp:" + identity.UserID + " · thread " + identity.ThreadID
 	if err := g.store.AdmitEvent(ctx, store.Event{Kind: "policy-proposed", Actor: actor + " · proposal " + digest(ticket)}); err != nil {
 		if errors.Is(err, store.ErrCapacity) {
 			return policyResult{}, err
@@ -175,7 +171,7 @@ func (g *Gateway) reviewPolicies(w http.ResponseWriter, r *http.Request) {
 		}
 		connections = append(connections, map[string]any{"ID": d.Connection, "Before": policyLabel(g.cfg.defaultPolicy(d.Connection)), "After": policyLabel(d.Default), "BeforePrivate": g.cfg.privateConnection(d.Connection), "AfterPrivate": d.Private, "Rows": rows})
 	}
-	g.render(w, r, map[string]any{"PolicyProposal": true, "Proposal": p, "Connections": connections, "Ticket": r.PathValue("ticket"), "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"PolicyProposal": true, "Proposal": p, "Connections": connections, "Ticket": r.PathValue("ticket")})
 }
 
 func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -191,7 +187,7 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 		http.Error(w, "Proposal expired or configuration changed. Ask the agent for a new proposal.", 409)
 		return
 	}
-	event := store.Event{Kind: "policy-discarded", Actor: browserauth.Subject(r.Context()) + " · proposal " + digest(ticket)}
+	event := store.Event{Kind: "policy-discarded", Actor: browserActor(r) + " · proposal " + digest(ticket)}
 	var err error
 	if decision == "discard" {
 		err = g.store.RecordEvent(r.Context(), event)

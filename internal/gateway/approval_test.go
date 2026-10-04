@@ -19,7 +19,9 @@ func TestExactApprovalPreservesMCPNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(g.MCP("number-test"))
+	g.cfg.Demo = true
+	mcpHandler, _ := g.DemoHandlers("number-test")
+	server := httptest.NewServer(mcpHandler)
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "number-test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"number-test"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)

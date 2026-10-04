@@ -80,7 +80,9 @@ func TestMCPRejectsUnadmittedOperations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := httptest.NewServer(g.MCP("capacity-fixture"))
+	g.cfg.Demo = true
+	mcpHandler, _ := g.DemoHandlers("capacity-fixture")
+	server := httptest.NewServer(mcpHandler)
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "capacity-test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: bearer{"capacity-fixture"}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
