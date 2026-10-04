@@ -495,7 +495,7 @@ func TestOAuthStatusPage(t *testing.T) {
 	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Refresh uncertain", "Refresh delayed", "Refresh paused", "Status unavailable"} {
 		t.Run(status, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"ToolReview": true, "Connection": map[string]any{"ID": "notes", "OAuth": true, "Health": upstream.Health{Status: status, Detail: "Safe health explanation"}}})
+			err := page.Execute(w, map[string]any{"ToolReview": true, "Connection": map[string]any{"ID": "notes", "OAuth": true, "ReviewOAuth": true, "AuthURL": "https://login.example/authorize", "TokenURL": "https://tokens.example/token", "Scopes": "notes:read", "Health": upstream.Health{Status: status, Detail: "Safe health explanation"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -503,7 +503,7 @@ func TestOAuthStatusPage(t *testing.T) {
 			if status == "Not connected" {
 				action = "Connect OAuth"
 			}
-			for _, text := range []string{">" + status + "</span>", "Safe health explanation", ">" + action + "</button>", `formaction="/connections/notes/connect"`, `role="status"`, `method="post" action="/connections/notes/test"`, ">Test connection</button>"} {
+			for _, text := range []string{">" + status + "</span>", "Safe health explanation", "https://login.example/authorize", "https://tokens.example/token", `name="reviewed_endpoints" value="true" required`, "I reviewed both OAuth endpoints", "Confirm that both endpoints belong to the provider", ">" + action + "</button>", `formaction="/connections/notes/connect"`, `role="status"`, `method="post" action="/connections/notes/test"`, ">Test connection</button>"} {
 				if !strings.Contains(w.Body.String(), text) {
 					t.Fatalf("missing %q", text)
 				}
@@ -639,8 +639,8 @@ func TestDashboardOAuthStatus(t *testing.T) {
 			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, ">Test connection</button>") != 2 {
 				t.Fatal("missing status or test action")
 			}
-			if strings.Count(body, `formaction="/connections/oauth/connect"`) != 1 || strings.Contains(body, `formaction="/connections/public/connect"`) {
-				t.Fatal("reconnect action must appear only for OAuth")
+			if strings.Contains(body, `formaction="/connections/oauth/connect"`) || strings.Contains(body, "OAuth endpoint") {
+				t.Fatal("dashboard exposed OAuth connect action without endpoint review")
 			}
 		})
 	}
@@ -655,6 +655,15 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	w := formRequest(h, cookie, "GET", "/connections", nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") {
 		t.Fatal("dashboard did not load credential status")
+	}
+	settings := formRequest(h, cookie, "GET", "/connections/notes/settings", nil)
+	for _, want := range []string{"Authorization endpoint", "https://auth.example/authorize", "Token endpoint", "https://auth.example/token", "I reviewed both OAuth endpoints"} {
+		if settings.Code != http.StatusOK || !strings.Contains(settings.Body.String(), want) {
+			t.Fatalf("settings did not show OAuth destination %q", want)
+		}
+	}
+	if strings.Index(settings.Body.String(), "Authorization endpoint") > strings.Index(settings.Body.String(), "Connect OAuth") {
+		t.Fatal("connect action appeared before OAuth endpoint review")
 	}
 }
 

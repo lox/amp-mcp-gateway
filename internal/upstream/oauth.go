@@ -46,6 +46,10 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if c.config.PublicOnly && r.FormValue("reviewed_endpoints") != "true" {
+		http.Error(w, "review the OAuth endpoints before connecting", http.StatusBadRequest)
+		return
+	}
 	if c.config.OAuth.ClientSecretEnv != "" && getenv(c.config.OAuth.ClientSecretEnv) == "" {
 		http.Error(w, "OAuth client credentials are unavailable", http.StatusServiceUnavailable)
 		return

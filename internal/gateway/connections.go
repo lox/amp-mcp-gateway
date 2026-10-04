@@ -291,9 +291,9 @@ func (g *Gateway) connectionView(id string) map[string]any {
 	var connection map[string]any
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
-			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil}
+			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil}
 			if c.OAuth != nil {
-				connection["AuthURL"], connection["Scopes"] = c.OAuth.AuthURL, strings.Join(c.OAuth.Scopes, " ")
+				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
 		}
 	}

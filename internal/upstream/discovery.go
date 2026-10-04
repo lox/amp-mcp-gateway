@@ -3,6 +3,7 @@ package upstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -22,10 +23,10 @@ func DiscoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	h := oauthHTTPClient(Connection{PublicOnly: true})
-	return discoverOAuth(ctx, endpoint, callback, clientID, secret, h)
+	return discoverOAuth(ctx, endpoint, callback, clientID, secret, h, true)
 }
 
-func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret string, h *http.Client) (*OAuthConfig, error) {
+func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret string, h *http.Client, publicOnly bool) (*OAuthConfig, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, errors.New("invalid MCP URL")
@@ -95,17 +96,15 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	if !slices.Contains(meta.CodeChallengeMethodsSupported, "S256") {
 		return nil, errors.New("OAuth server must support PKCE S256")
 	}
-	// The owner reviews the authorization URL before connecting. Do not send
-	// codes, PKCE verifiers or client secrets to a different, hidden origin.
-	// Google and Dropbox publish separate token origins; accept only their exact
-	// endpoints discovered from their issuers, not arbitrary split-origin metadata.
-	google := (issuer == "https://accounts.google.com" || issuer == "https://accounts.google.com/") && googleOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
-	dropbox := issuer == "https://www.dropbox.com" && dropboxOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
-	authorization, authErr := url.Parse(meta.AuthorizationEndpoint)
-	token, tokenErr := url.Parse(meta.TokenEndpoint)
-	if !google && !dropbox && (authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host)) {
-		return nil, errors.New("OAuth authorization and token endpoints must share an origin; only Google and Dropbox's published split-origin endpoints are supported")
+	if publicOnly {
+		if err := ValidatePublicURL(meta.AuthorizationEndpoint); err != nil {
+			return nil, fmt.Errorf("OAuth authorization endpoint: %w", err)
+		}
+		if err := ValidatePublicURL(meta.TokenEndpoint); err != nil {
+			return nil, fmt.Errorf("OAuth token endpoint: %w", err)
+		}
 	}
+	google := (issuer == "https://accounts.google.com" || issuer == "https://accounts.google.com/") && googleOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
 	if len(scopes) == 0 {
 		scopes = meta.ScopesSupported
 	}
