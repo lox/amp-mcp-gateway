@@ -13,8 +13,8 @@ import (
 // retry with a new operation after an outstanding lease is redeemed or expires.
 var ErrCredentialLeaseCapacity = errors.New("too many unredeemed credential leases")
 
-// CredentialLease holds an approved right to derive a credential until one
-// authenticated redemption. The parent credential remains in the catalogue.
+// CredentialLease holds an approved right to issue a credential until one
+// authenticated redemption. The stored credential remains in the catalogue.
 type CredentialLease struct {
 	ID               string `json:"id"`
 	OperationID      string `json:"operation_id"`
@@ -62,6 +62,16 @@ func (s *Store) CreateCredentialLease(ctx context.Context, lease CredentialLease
 
 // RedeemCredentialLease atomically consumes a lease bound to the authenticated caller.
 func (s *Store) RedeemCredentialLease(ctx context.Context, id string, caller CredentialLease) (CredentialLease, error) {
+	return s.redeemCredentialLease(ctx, id, caller, nil)
+}
+
+// RedeemCredentialLeaseForIntegrations atomically consumes a lease when its
+// integration and credential digest still match one of the supplied authorities.
+func (s *Store) RedeemCredentialLeaseForIntegrations(ctx context.Context, id string, caller CredentialLease, authorities map[string]string) (CredentialLease, error) {
+	return s.redeemCredentialLease(ctx, id, caller, authorities)
+}
+
+func (s *Store) redeemCredentialLease(ctx context.Context, id string, caller CredentialLease, authorities map[string]string) (CredentialLease, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return CredentialLease{}, err
@@ -88,7 +98,12 @@ func (s *Store) RedeemCredentialLease(ctx context.Context, id string, caller Cre
 	}
 	actor := lease.AmpUserID
 	actor = "amp:" + actor
-	if lease.Integration != caller.Integration || subtle.ConstantTimeCompare([]byte(lease.CredentialDigest), []byte(caller.CredentialDigest)) != 1 {
+	expectedIntegration, expectedDigest := caller.Integration, caller.CredentialDigest
+	if authorities != nil {
+		expectedIntegration = lease.Integration
+		expectedDigest = authorities[lease.Integration]
+	}
+	if lease.Integration != expectedIntegration || subtle.ConstantTimeCompare([]byte(lease.CredentialDigest), []byte(expectedDigest)) != 1 {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM credential_leases WHERE id=?", id); err != nil {
 			return CredentialLease{}, err
 		}

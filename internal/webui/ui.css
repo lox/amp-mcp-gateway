@@ -236,7 +236,8 @@
     @apply leading-[1.5];
   }
   :where(html.dashboard) input,
-  :where(html.dashboard) select {
+  :where(html.dashboard) select,
+  :where(html.dashboard) textarea {
     @apply box-border w-full p-[11px_12px];
     border: 1px solid #bccdc0;
     @apply rounded-[6px];
@@ -245,7 +246,8 @@
     font: inherit;
   }
   :where(html.dashboard) input:focus,
-  :where(html.dashboard) select:focus {
+  :where(html.dashboard) select:focus,
+  :where(html.dashboard) textarea:focus {
     outline: 2px solid #216442;
     @apply outline-offset-[2px];
   }
@@ -768,6 +770,22 @@
     background: #7b3ff2;
     color: white;
     @apply font-extrabold text-[18px];
+  }
+  :where(html.dashboard) .secret-mark {
+    background: #216442;
+  }
+  :where(html.dashboard) .secret-list {
+    @apply grid;
+  }
+  :where(html.dashboard) .secret-row {
+    @apply flex items-center justify-between gap-4 p-[14px_0];
+    border-bottom: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .secret-row:last-child {
+    border-bottom: 0;
+  }
+  :where(html.dashboard) .secret-row .sub {
+    @apply m-[5px_0_0];
   }
   :where(html.dashboard) .integration-status {
     @apply ml-2;

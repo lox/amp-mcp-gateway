@@ -47,9 +47,10 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 
 func (g *Gateway) catalogue() catalogue {
 	tools, defaults := slices.Clone(g.cfg.Tools), maps.Clone(g.cfg.ToolDefaults)
-	if _, configured := g.integration(flyIntegrationID); configured {
-		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.ID == flyIntegrationID+"."+flyRequestToken })
-		delete(defaults, flyIntegrationID)
+	for _, integration := range g.cfg.Integrations {
+		generated := integrationTool(integration, "")
+		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.ID == generated.ID })
+		delete(defaults, integration.ID)
 	}
 	return catalogue{Connections: slices.Clone(g.cfg.Connections), Integrations: slices.Clone(g.cfg.Integrations), Tools: tools, ToolDefaults: defaults, PrivateConnections: maps.Clone(g.cfg.PrivateConnections)}
 }

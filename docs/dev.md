@@ -443,6 +443,52 @@ reused until expiry, and the gateway does not audit the subsequent Fly operation
 An agent with arbitrary shell access can deliberately print it; the shell pattern
 prevents accidental disclosure, not a malicious caller after approval.
 
+## Thread and project secrets
+
+Open **Integrations → Secrets** and add a stable secret ID, a non-sensitive display
+name, the value, and an access policy. The value is stored inside the encrypted
+catalogue and is never rendered again. The ID publishes one governed tool named
+`<id>.request_secret`; for example, `github_token.request_secret` accepts:
+
+```json
+{"purpose":"publish the reviewed release"}
+```
+
+With **Require approval**, the owner can approve one request or use the existing
+Remember controls to grant matching access to that Amp thread or project. Exact
+approvals also bind the purpose; tool-wide approvals permit any schema-valid purpose
+for that one secret. Because each secret is a separate native integration, a
+connection-wide approval is also limited to that secret. The configured **Allow**
+policy skips human review for any authenticated owner thread, while **Block** hides
+and denies the tool.
+
+After execution, poll `get_operation`. The result contains a five-minute
+`redemption_url` and, in Amp workload mode, the gateway's
+`workload_identity_audience`. Redeem it from the same thread identity and capture
+the bytes without printing them:
+
+```sh
+WORKLOAD_IDENTITY_AUDIENCE='<workload_identity_audience from get_operation>'
+REDEMPTION_URL='<redemption_url from get_operation>'
+AMP_ID_TOKEN="$(
+  amp orb id-token --audience "$WORKLOAD_IDENTITY_AUDIENCE"
+)"
+umask 077
+curl --silent --show-error --fail \
+  --request POST \
+  --header "Authorization: Bearer $AMP_ID_TOKEN" \
+  --output .local/requested-secret \
+  "$REDEMPTION_URL"
+unset AMP_ID_TOKEN
+```
+
+The URL is bound to the requesting Amp user, workspace, project and thread even
+when a project standing approval authorized the request. It can be consumed once.
+Updating or removing any secret atomically denies queued calls, revokes all standing
+approvals, and deletes every unredeemed credential lease, matching other catalogue
+changes. An approved workload with arbitrary shell access can still print, copy or
+reuse a redeemed value; approval governs disclosure, not its behavior afterward.
+
 ### Saved configuration and rollout
 
 The first browser save copies the current connections, integrations and tools into
