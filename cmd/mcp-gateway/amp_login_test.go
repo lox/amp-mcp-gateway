@@ -135,9 +135,13 @@ func TestAmpLoginMigratesLegacyAccountsWithoutRekeying(t *testing.T) {
 		{"rotated-refresh-secret", "rotated-refresh-secret"},
 		{"", "rotated-refresh-secret"},
 	} {
+		r.users["amp-bob"].namesUntil = time.Now().Add(time.Hour)
 		incoming := &oauth2.Token{AccessToken: "bob-new-access", RefreshToken: tc.refresh}
 		if _, err := r.login(ctx, "amp-bob", incoming); err != nil {
 			t.Fatal(err)
+		}
+		if !r.users["amp-bob"].namesUntil.IsZero() {
+			t.Fatal("reauthentication retained stale project cache")
 		}
 		if incoming.RefreshToken != tc.refresh {
 			t.Fatal("login mutated caller's token")

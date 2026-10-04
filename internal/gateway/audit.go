@@ -11,6 +11,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 )
 
@@ -31,7 +32,7 @@ var auditTemplateFuncs = template.FuncMap{
 	},
 	"status": auditStatus,
 	"event":  auditEvent,
-	"actor": func(actor, owner string) string {
+	"actor": func(actor, owner string, names map[string]string) string {
 		switch {
 		case actor == "gateway":
 			return "Gateway"
@@ -45,6 +46,8 @@ var auditTemplateFuncs = template.FuncMap{
 			return "Standing approval unavailable"
 		case actor == "gateway-client":
 			return "Gateway client"
+		case names[actor] != "":
+			return names[actor]
 		case actor == owner:
 			return "Owner identity"
 		case strings.HasPrefix(actor, "amp:"):
@@ -235,9 +238,20 @@ func (g *Gateway) audit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Actor labels come only from this account's authenticated profile. Never infer
+// another actor's identity from an email, prefix or an event's position.
+func (g *Gateway) actorNames(r *http.Request) map[string]string {
+	user := browserauth.User(r.Context())
+	if g.cfg.AmpUserID == "" || browserauth.Subject(r.Context()) != g.cfg.OwnerSubject || user.Name == "Signed in" {
+		return nil
+	}
+	return map[string]string{g.cfg.OwnerSubject: user.Name, "amp:" + g.cfg.AmpUserID: user.Name}
+}
+
 func (g *Gateway) renderAudit(w http.ResponseWriter, r *http.Request, fragment string, data map[string]any) {
 	w.Header().Set("Vary", "HX-Request")
 	data["Current"] = r.URL.RequestURI()
+	data["ActorNames"] = g.actorNames(r)
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := page.ExecuteTemplate(w, fragment, data); err != nil {

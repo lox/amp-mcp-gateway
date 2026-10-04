@@ -848,12 +848,20 @@ not by running an old binary against newly provisioned accounts.
 OAuth access and refresh tokens (when issued), token type and expiry are encrypted
 server-side in that user's account database before issuing a browser session.
 Reauthentication preserves the previous refresh token when Amp omits a new one.
-They are never placed in browser cookies or tool results. This change retains
-tokens for later Amp API consumers; it does not implement project-name lookup or
-automatic refresh. The [Amp API contract](https://ampcode.com/api/external) supports
+They are never placed in browser cookies or tool results. Approval review and
+standing approvals use them to resolve project names, cached per account for five
+minutes (failed lookups back off for 30 seconds). Lookups have a three-second
+budget and fall back to IDs; they never affect authorization or rewrite audit
+records. Names can change; the displayed IDs still define approval scope.
+Expired access tokens refresh under the account lock. Before refresh, the old
+refresh token is durably retired; an ambiguous failure or interrupted persistence
+requires signing in again rather than replaying it. No background refresh runs.
+The [Amp API contract](https://ampcode.com/api/external) supports
 delegated `/workspace/projects` reads with `amp.api:workspace.projects:view`, returning
 workspace-owned projects only, not personal projects. ID tokens cannot authorize
-data reads. Test real consent, refresh issuance and project reads before rollout;
+data reads. Thread titles remain unresolved: the published thread API requires
+M2M credentials and thread-content permission, neither of which this login uses.
+Test real consent, refresh issuance and project reads before rollout;
 signed local fixtures do not establish those live provider behaviors.
 
 The user menu displays the Amp profile name and HTTPS picture URL from verified
@@ -861,6 +869,10 @@ OIDC claims or subject-matched UserInfo. These display-only fields are stored in
 the signed browser cookie and refreshed at login; they never authorize access.
 Existing sessions show a generic identity until the next sign-in. Missing photos
 use a generic avatar. The browser loads photos directly without a referrer.
+Audit views also display this profile's name for exact matches to the current
+account's owner subject or `amp:<AmpUserID>`. Original actor IDs remain visible,
+including in live updates. Unknown actors and system events are not attributed
+to the signed-in user; no workspace-member directory access is requested.
 
 Accounts share process, disk, hostname and the session-cookie boundary, not
 catalogues, credentials, workers, Chrome pairing, approvals or history. Workload

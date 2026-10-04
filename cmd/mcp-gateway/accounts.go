@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
@@ -64,7 +65,6 @@ func bindAccountIdentity(ctx context.Context, s *store.Store, cfg gateway.Config
 // Only the OAuth callback calls link; unverified workload hints never create state.
 type accountRegistry struct {
 	linkMu   sync.Mutex // Serialize creation without blocking existing-account routing.
-	tokenMu  sync.Mutex // Serialize OAuth token read/modify/write across callbacks.
 	mu       sync.RWMutex
 	ctx      context.Context
 	primary  *accountRuntime
@@ -208,8 +208,8 @@ func (r *accountRegistry) login(ctx context.Context, ampID string, token *oauth2
 	r.mu.RLock()
 	account := r.users[ampID]
 	r.mu.RUnlock()
-	r.tokenMu.Lock()
-	defer r.tokenMu.Unlock()
+	account.tokenMu.Lock()
+	defer account.tokenMu.Unlock()
 	retained := *token
 	if retained.RefreshToken == "" {
 		raw, err := account.store.LoadToken(ctx, "amp-api-oauth/v1")
@@ -231,6 +231,8 @@ func (r *accountRegistry) login(ctx context.Context, ampID string, token *oauth2
 	if err != nil {
 		return "", err
 	}
+	account.names = browserauth.ProjectNames{}
+	account.namesUntil = time.Time{}
 	return subject, nil
 }
 
