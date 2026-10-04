@@ -288,7 +288,7 @@ func TestMigrateBrowserReconnectCredentials(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		manager, err := browserbridge.New(t.Context(), "https://gateway.example", []upstream.Connection{{ID: "browser", Browser: true}}, nil, s)
+		manager, err := browserbridge.New(t.Context(), []upstream.Connection{{ID: "browser", Browser: true}}, nil, s)
 		if err != nil {
 			t.Fatal(err)
 		}

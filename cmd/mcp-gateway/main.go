@@ -239,15 +239,15 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
 		return nil, fmt.Errorf("load saved catalogue: %w", err)
 	}
+	chromeAvailable := gateway.ConfigureChrome(&cfg)
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
 		return nil, err
 	}
-	browser, err := browserbridge.New(ctx, cfg.BaseURL, cfg.Connections, m, s)
+	browser, err := browserbridge.New(ctx, cfg.Connections, m, s)
 	if err != nil {
 		return nil, err
 	}
-	browser.AccountPage = cfg.AccountPage
 	g, err := gateway.New(cfg, s, browser)
 	if err != nil {
 		return nil, err
@@ -278,12 +278,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
 	mux.Handle("/browser/connect", browser.Socket())
-	browserUI := auth.Require(http.NewCrossOriginProtection().Handler(browser.UI(func(ctx context.Context) error {
-		return g.EnableChrome(ctx, m)
-	})))
-	mux.Handle("/integrations/chrome", browserUI)
-	mux.Handle("/integrations/chrome/", browserUI)
-	mux.Handle("/", g.UI(auth, m))
+	mux.Handle("/", g.UI(auth, m, browser, chromeAvailable))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
 	}

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,9 +25,22 @@ func adminUI(t *testing.T, g *Gateway, m *upstream.Manager) (http.Handler, *http
 	if err != nil {
 		t.Fatal(err)
 	}
+	connections := append([]upstream.Connection(nil), g.cfg.Connections...)
+	configured := false
+	for _, connection := range connections {
+		configured = configured || connection.Browser
+	}
+	if !configured {
+		connection, _ := ChromeIntegration()
+		connections = append(connections, connection)
+	}
+	browser, err := browserbridge.New(t.Context(), connections, m, g.store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	a.Register(mux)
-	mux.Handle("/", g.UI(a, m))
+	mux.Handle("/", g.UI(a, m, browser, true))
 	r := httptest.NewRequest("POST", "/login", strings.NewReader("password=test-login"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -62,32 +76,6 @@ func TestPrivatePoliciesRoundTrip(t *testing.T) {
 	}
 	if restored.Tools[0].Policy != "allow" || restored.Tools[1].Policy != "" || restored.ToolDefaults["notes"] != "require_approval" || !restored.PrivateConnections["notes"] {
 		t.Fatalf("private policies not restored: tools=%+v defaults=%+v", restored.Tools, restored.ToolDefaults)
-	}
-}
-
-func TestLoadCatalogueAddsConfiguredBrowserToOlderSavedCatalogue(t *testing.T) {
-	_, s, _ := fixture(t)
-	saved := catalogue{
-		Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/notes", NoAuth: true}},
-		Tools:       []Tool{{ID: "notes.read", Connection: "notes", Name: "read", Policy: "allow", InputSchema: map[string]any{"type": "object"}}},
-	}
-	raw, err := json.Marshal(saved)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
-		t.Fatal(err)
-	}
-	browserTool := Tool{ID: "browser.snapshot", Connection: "browser", Name: "snapshot", Policy: "allow", InputSchema: map[string]any{"type": "object"}}
-	cfg := Config{
-		Connections: []upstream.Connection{{ID: "browser", Account: "Selected tab", Browser: true}},
-		Tools:       []Tool{browserTool},
-	}
-	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Connections) != 2 || cfg.Connections[1].ID != "browser" || len(cfg.Tools) != 2 || cfg.Tools[1].ID != browserTool.ID {
-		t.Fatalf("browser configuration not merged: connections=%#v tools=%#v", cfg.Connections, cfg.Tools)
 	}
 }
 

@@ -57,16 +57,13 @@ func Start(ctx context.Context, baseURL, token string) (gateway.Config, http.Han
 		return gateway.Config{}, nil, err
 	}
 	schema := map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "minLength": 1, "maxLength": 1000}}, "required": []any{"text"}, "additionalProperties": false}
-	browserConnection, browserTools := gateway.ChromeIntegration()
 	cfg := gateway.Config{AmpUserID: "demo-user", Demo: true, BaseURL: baseURL, Database: ".local/gateway.db", Connections: []upstream.Connection{
 		{ID: "reference", URL: endpoint + "/read", Account: "Disposable reference account", TokenEnv: "GATEWAY_DEMO_UPSTREAM_TOKEN"},
 		{ID: "notes", URL: endpoint + "/write", Account: "Disposable OAuth notes account", OAuth: &upstream.OAuthConfig{ClientID: "gateway-demo", AuthURL: baseURL + "/demo/authorize", TokenURL: endpoint + "/token", Scopes: []string{"notes:write"}}},
-		browserConnection,
 	}, Tools: []gateway.Tool{
 		{ID: "reference.echo", Connection: "reference", Name: "echo", Description: "Read back reference text", Policy: "allow", InputSchema: schema},
 		{ID: "notes.create", Connection: "notes", Name: "create_note", Description: "Create a disposable note", Policy: "require_approval", InputSchema: schema},
 	}}
-	cfg.Tools = append(cfg.Tools, browserTools...)
 	mux := http.NewServeMux()
 	for _, spec := range []struct{ path, name string }{{"/read", "echo"}, {"/write", "create_note"}} {
 		s := mcp.NewServer(&mcp.Implementation{Name: "demo-fixture", Version: "1"}, nil)

@@ -1,11 +1,10 @@
 package gateway
 
 import (
-	"context"
-	"errors"
+	"encoding/json"
+	"net/http"
 
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
@@ -31,53 +30,137 @@ func ChromeIntegration() (upstream.Connection, []Tool) {
 	}
 }
 
-type browserInstaller interface {
-	InstallBrowser(upstream.Connection)
-}
-
-// EnableChrome persists and publishes the native browser connection and tools.
-func (g *Gateway) EnableChrome(ctx context.Context, m *upstream.Manager) error {
-	installer, ok := g.backend.(browserInstaller)
-	if !ok {
-		return errors.New("browser backend unavailable")
-	}
+// ConfigureChrome adds the native browser connection and canonical tool
+// definitions while preserving saved policies. It returns false and leaves a
+// conflicting catalogue unchanged so an upgrade cannot take that account offline.
+func ConfigureChrome(cfg *Config) bool {
 	connection, tools := ChromeIntegration()
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	next := g.catalogue()
-	configured := false
-	for _, existing := range next.Connections {
+	canonical := make(map[string]Tool, len(tools))
+	for _, tool := range tools {
+		canonical[tool.ID] = tool
+	}
+
+	configured := -1
+	for i, existing := range cfg.Connections {
 		if existing.ID != connection.ID {
 			continue
 		}
-		if !existing.Browser {
-			return errors.New("the browser connection name is already in use")
+		if configured >= 0 || !existing.Browser {
+			return false
 		}
-		configured = true
+		configured = i
 	}
-	if !configured {
-		next.Connections = append(next.Connections, connection)
-	}
-	existingTools := make(map[string]Tool, len(next.Tools))
-	for _, tool := range next.Tools {
-		existingTools[tool.ID] = tool
-	}
-	changed := !configured
-	for _, tool := range tools {
-		if existing, exists := existingTools[tool.ID]; exists {
-			if existing.Connection != connection.ID || existing.Name != tool.Name {
-				return errors.New("a Chrome tool name is already in use")
+
+	existing := make(map[string]Tool, len(tools))
+	retained := make([]Tool, 0, len(cfg.Tools)+len(tools))
+	for _, tool := range cfg.Tools {
+		definition, native := canonical[tool.ID]
+		if native {
+			if _, duplicate := existing[tool.ID]; duplicate || tool.Connection != definition.Connection || tool.Name != definition.Name {
+				return false
 			}
+			existing[tool.ID] = tool
 			continue
 		}
-		next.Tools = append(next.Tools, tool)
-		changed = true
-	}
-	if changed {
-		if err := g.saveCatalogue(ctx, next, m, store.Event{Kind: "integration-saved", Actor: "amp:" + browserauth.Subject(ctx)}); err != nil {
-			return err
+		if tool.Connection == connection.ID {
+			continue
 		}
+		retained = append(retained, tool)
 	}
-	installer.InstallBrowser(connection)
-	return nil
+	if configured < 0 {
+		cfg.Connections = append(cfg.Connections, connection)
+	} else {
+		cfg.Connections[configured] = connection
+	}
+	for _, tool := range tools {
+		if saved, ok := existing[tool.ID]; ok {
+			tool.Policy = saved.Policy
+		}
+		retained = append(retained, tool)
+	}
+	cfg.Tools = retained
+	return true
+}
+
+func (g *Gateway) registerChrome(mux *http.ServeMux, browser *browserbridge.Manager, available bool) {
+	mux.HandleFunc("GET /integrations/chrome", func(w http.ResponseWriter, r *http.Request) {
+		g.chromePage(w, r, browser, available, nil)
+	})
+	mux.HandleFunc("GET /integrations/chrome/status", func(w http.ResponseWriter, _ *http.Request) {
+		type status struct {
+			ID    string `json:"id"`
+			State string `json:"state"`
+		}
+		connections := browser.Statuses()
+		result := make([]status, 0, len(connections))
+		for _, connection := range connections {
+			state := "not-paired"
+			if connection.Connected {
+				state = "connected"
+			} else if connection.Paired {
+				state = "offline"
+			}
+			result = append(result, status{ID: connection.ID, State: state})
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("POST /integrations/chrome/pair", func(w http.ResponseWriter, r *http.Request) {
+		if !available {
+			http.Error(w, "Chrome setup unavailable", http.StatusConflict)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if r.ParseForm() != nil {
+			http.Error(w, "invalid pairing request", http.StatusBadRequest)
+			return
+		}
+		connection := r.PostForm.Get("connection")
+		code, found, err := browser.Pair(r.Context(), connection)
+		if !found {
+			http.Error(w, "unknown browser connection", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, "pairing unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		g.chromePage(w, r, browser, available, map[string]any{"PairingCode": code, "PairingConnection": connection})
+	})
+	mux.HandleFunc("POST /integrations/chrome/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if !available {
+			http.Error(w, "Chrome setup unavailable", http.StatusConflict)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if r.ParseForm() != nil {
+			http.Error(w, "invalid revocation request", http.StatusBadRequest)
+			return
+		}
+		found, err := browser.Revoke(r.Context(), r.PostForm.Get("connection"))
+		if !found {
+			http.Error(w, "unknown browser connection", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, "revocation unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		http.Redirect(w, r, "/integrations/chrome", http.StatusSeeOther)
+	})
+}
+
+func (g *Gateway) chromePage(w http.ResponseWriter, r *http.Request, browser *browserbridge.Manager, available bool, extra map[string]any) {
+	connections := browser.Statuses()
+	data := map[string]any{
+		"ChromeIntegration": true,
+		"ChromeAvailable":   available,
+		"Connections":       connections,
+		"GatewayURL":        g.cfg.BaseURL,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	g.render(w, r, data)
 }

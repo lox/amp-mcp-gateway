@@ -139,9 +139,12 @@ operation invalidation. Jev is never called during tool execution.
 
 ## Share a Chrome tab
 
-The demo and example configuration include a reverse-connected `browser`
-connection. It lets an orb inspect and control one explicitly selected tab in a
-normal Chrome profile without exposing a listener on your machine.
+The gateway automatically includes a reverse-connected `browser` connection and
+its governed tools while preserving saved policies. It lets an orb inspect and
+control one explicitly selected tab in a normal Chrome profile without exposing a
+listener on your machine. An existing remote connection named `browser` or remote
+tool using a native Chrome tool ID remains unchanged; rename it and restart to
+enable Chrome.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
    choose **Load unpacked**, and select this checkout's `extension` directory. After
@@ -150,8 +153,8 @@ normal Chrome profile without exposing a listener on your machine.
    extension session storage during reload.
 2. Open the extension's **Settings** and save the gateway origin once, for example
    `https://gateway.example.com`. The setting persists in this Chrome profile.
-3. Sign in to the gateway dashboard and open **Integrations → Chrome**. Click
-   **Enable Chrome** if this is the first setup, then create a pairing code.
+3. Sign in to the gateway dashboard, open **Integrations → Chrome**, and create
+   a pairing code.
 4. Open the tab you want to share, open the extension, and paste the pairing code.
 5. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
    accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,
@@ -159,14 +162,14 @@ normal Chrome profile without exposing a listener on your machine.
    rejects mutations if any target descriptor changed after the snapshot.
 
 The available tools are `browser.snapshot`, `browser.screenshot`, `browser.scroll`,
-`browser.click`, `browser.type`, and `browser.navigate`. The example policies allow
+`browser.click`, `browser.type`, and `browser.navigate`. The default policies allow
 viewing and scrolling directly while requiring approval for click, type, and
 navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
 tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
 uploads, and the desktop remain inaccessible.
-Completed screenshot operations include an `artifact_url` that serves the stored
-JPEG, PNG, or WebP only to the signed-in gateway owner. The response is not public
-and is marked `private, no-store`.
+Completed screenshot operations return standard MCP image content. Amp promotes
+that content to a private thread attachment when the caller forwards the tool
+result content.
 
 The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
 connect to `/mcp`. Reconnect authority is encrypted in the gateway database and
@@ -177,9 +180,6 @@ credential bound to that extension install, share generation, and tab. Re-pairin
 revocation, or selecting a new share generation invalidates queued approvals.
 After upgrading from a version that kept pairings only in memory, pair once more
 to establish the persisted reconnect authority.
-Enabling Chrome persists its connection and governed tool definitions in the
-encrypted catalogue; production deployments do not need to add them to the startup
-configuration.
 Once a browser mutation is dispatched, a disconnect or extension-reported error
 marks its outcome unknown and is never replayed automatically.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the

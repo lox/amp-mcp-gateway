@@ -8,8 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -71,7 +69,7 @@ func browserManager(t *testing.T) (*Manager, *fallbackBackend) {
 func browserManagerWithStore(t *testing.T, store pairingStore) (*Manager, *fallbackBackend) {
 	t.Helper()
 	fallback := &fallbackBackend{}
-	m, err := New(t.Context(), "https://gateway.example", []upstream.Connection{
+	m, err := New(t.Context(), []upstream.Connection{
 		{ID: "browser", Account: "Selected tab", Browser: true},
 		{ID: "remote", URL: "https://remote.example/mcp", Account: "Remote", TokenEnv: "TOKEN"},
 	}, fallback, store)
@@ -331,7 +329,7 @@ func TestReconnectAuthoritySurvivesManagerRestart(t *testing.T) {
 	if err != nil || !ok || restartedBinding != binding || next != reconnect {
 		t.Fatalf("reconnect after restart rejected: binding=%q reconnect=%q ok=%v", restartedBinding, next, ok)
 	}
-	statuses := restarted.statuses()
+	statuses := restarted.Statuses()
 	if len(statuses) != 1 || !statuses[0].Paired || statuses[0].Connected || statuses[0].TabTitle != "Persisted tab" {
 		t.Fatalf("restored status = %#v", statuses)
 	}
@@ -483,10 +481,9 @@ func TestPairingPersistenceFailureRemainsRetryable(t *testing.T) {
 func TestRevokeSendsPolicyClose(t *testing.T) {
 	m, _ := browserManager(t)
 	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
-	form := url.Values{"connection": {"browser"}}
-	r := httptest.NewRequest(http.MethodPost, "/integrations/chrome/revoke", strings.NewReader(form.Encode()))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	m.revoke(httptest.NewRecorder(), r)
+	if found, err := m.Revoke(t.Context(), "browser"); err != nil || !found {
+		t.Fatalf("revoke = found %v, error %v", found, err)
+	}
 
 	if err := ws.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -499,84 +496,27 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 	}
 }
 
-func TestUIUsesChromeIntegrationRoutes(t *testing.T) {
+func TestPairAndStatus(t *testing.T) {
 	m, _ := browserManager(t)
-	m.AccountPage = true
-	h := m.UI(nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
-	body := w.Body.String()
-	header, rest, _ := strings.Cut(body, "</header>")
-	if !strings.Contains(header, `popovertarget="user-panel"`) || !strings.Contains(header, `href="/account"`) || strings.Contains(rest, `href="/account"`) {
-		t.Fatal("Chrome account navigation must appear only in the header user menu")
+	code, found, err := m.Pair(t.Context(), "browser")
+	if err != nil || !found || code == "" {
+		t.Fatalf("pair = code %q, found %v, error %v", code, found, err)
 	}
-	if w.Code != http.StatusOK || !strings.Contains(body, `action="/integrations/chrome/pair"`) || !strings.Contains(body, `href="/integrations"`) || !strings.Contains(body, `data-browser-state="not-paired"`) {
-		t.Fatalf("Chrome integration page is missing its integration routes: status=%d body=%s", w.Code, w.Body.String())
+	if statuses := m.Statuses(); len(statuses) != 1 || statuses[0].Paired || statuses[0].Connected {
+		t.Fatalf("pending pairing status = %#v", statuses)
 	}
-	if !strings.Contains(body, `location.replace("/integrations/chrome")`) || strings.Contains(body, "location.reload()") || strings.Contains(body, "location.assign(") {
-		t.Fatalf("Chrome state polling may replay the pairing POST: %s", body)
-	}
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome/status", nil))
-	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || strings.TrimSpace(w.Body.String()) != `[{"id":"browser","state":"not-paired"}]` {
-		t.Fatalf("unexpected Chrome integration status: status=%d cache=%q body=%s", w.Code, w.Header().Get("Cache-Control"), w.Body.String())
-	}
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/browser", nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("legacy browser UI route returned %d, want 404", w.Code)
+	dialExtension(t, m, code, "install-one", "share-one", 42)
+	if statuses := m.Statuses(); len(statuses) != 1 || !statuses[0].Paired || !statuses[0].Connected {
+		t.Fatalf("connected status = %#v", statuses)
 	}
 }
 
-func TestUIReportsConnectedBrowser(t *testing.T) {
+func TestPairAndRevokeRejectUnknownConnection(t *testing.T) {
 	m, _ := browserManager(t)
-	connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
-	w := httptest.NewRecorder()
-	m.UI(nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome/status", nil))
-	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `[{"id":"browser","state":"connected"}]` {
-		t.Fatalf("unexpected connected Chrome status: status=%d body=%s", w.Code, w.Body.String())
+	if _, found, err := m.Pair(t.Context(), "missing"); err != nil || found {
+		t.Fatalf("unknown pair = found %v, error %v", found, err)
 	}
-}
-
-func TestPairingCodeRenderedByUIConnectsExtension(t *testing.T) {
-	m, _ := browserManager(t)
-	form := url.Values{"connection": {"browser"}}
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/integrations/chrome/pair", strings.NewReader(form.Encode()))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	m.UI(nil).ServeHTTP(w, r)
-	match := regexp.MustCompile(`Pairing code for browser</strong><code class="code">([^<]+)</code>`).FindStringSubmatch(w.Body.String())
-	if w.Code != http.StatusOK || len(match) != 2 {
-		t.Fatalf("pairing page did not render its code: status=%d body=%s", w.Code, w.Body.String())
-	}
-	dialExtension(t, m, match[1], "install-one", "share-one", 42)
-}
-
-func TestUIEnablesChromeBeforePairing(t *testing.T) {
-	fallback := &fallbackBackend{}
-	m, err := New(t.Context(), "https://gateway.example", nil, fallback, newMemoryPairingStore())
-	if err != nil {
-		t.Fatal(err)
-	}
-	enabled := 0
-	h := m.UI(func(context.Context) error {
-		enabled++
-		m.InstallBrowser(upstream.Connection{ID: "browser", Account: "Selected tab", Browser: true})
-		return nil
-	})
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/integrations/chrome/enable"`) {
-		t.Fatalf("unconfigured page did not offer enable: status=%d body=%s", w.Code, w.Body.String())
-	}
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/integrations/chrome/enable", nil))
-	if w.Code != http.StatusSeeOther || enabled != 1 {
-		t.Fatalf("enable returned status=%d calls=%d", w.Code, enabled)
-	}
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
-	if !strings.Contains(w.Body.String(), `action="/integrations/chrome/pair"`) || strings.Contains(w.Body.String(), `action="/integrations/chrome/enable"`) {
-		t.Fatalf("enabled page did not offer pairing: %s", w.Body.String())
+	if found, err := m.Revoke(t.Context(), "missing"); err != nil || found {
+		t.Fatalf("unknown revoke = found %v, error %v", found, err)
 	}
 }

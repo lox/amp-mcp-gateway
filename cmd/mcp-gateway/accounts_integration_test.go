@@ -99,20 +99,21 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		}
 		return token
 	}
-	request := func(token string) int {
-		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	request := func(token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		w := httptest.NewRecorder()
 		r.workload(w, req)
-		return w.Code
+		return w
 	}
-	if got := request(mint("amp-alice", base.Config.BaseURL)); got != http.StatusOK {
-		t.Fatalf("valid primary token: %d", got)
+	findBrowser := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find_tools","arguments":{"query":"browser"}}}`
+	if got := request(mint("amp-alice", base.Config.BaseURL), findBrowser); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "browser.snapshot") {
+		t.Fatalf("valid primary token did not expose startup Chrome tools: %d %s", got.Code, got.Body.String())
 	}
-	if got := request(mint("amp-bob", base.Config.BaseURL)); got != http.StatusOK {
-		t.Fatalf("valid linked token: %d", got)
+	if got := request(mint("amp-bob", base.Config.BaseURL), findBrowser); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "browser.snapshot") {
+		t.Fatalf("valid linked token did not expose startup Chrome tools: %d %s", got.Code, got.Body.String())
 	}
 	if discoveries.Load() != 1 || keyFetches.Load() != 1 {
 		t.Fatalf("accounts did not share discovery/JWKS: %d/%d", discoveries.Load(), keyFetches.Load())
@@ -230,8 +231,8 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		"wrong audience": mint("amp-alice", "https://foreign.example"),
 		"tampered routing hint selects another account": strings.Join(parts, "."),
 	} {
-		if got := request(token); got != http.StatusUnauthorized {
-			t.Fatalf("%s accepted: %d", name, got)
+		if got := request(token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); got.Code != http.StatusUnauthorized {
+			t.Fatalf("%s accepted: %d", name, got.Code)
 		}
 	}
 }

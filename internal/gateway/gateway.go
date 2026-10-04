@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -217,34 +218,11 @@ type operationResult struct {
 	ID          string          `json:"id"`
 	Status      string          `json:"status"`
 	ApprovalURL string          `json:"approval_url"`
-	ArtifactURL string          `json:"artifact_url,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
 }
 
 func (g *Gateway) result(o store.Operation) operationResult {
-	out := operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
-	if _, mimeType, ok := firstImageContent(o.Result); ok && o.Status == "succeeded" && safeImageMIME(mimeType) {
-		out.ArtifactURL = g.cfg.BaseURL + "/operations/" + o.ID + "/image"
-	}
-	return out
-}
-
-func firstImageContent(result json.RawMessage) ([]byte, string, bool) {
-	var upstreamResult mcp.CallToolResult
-	if json.Unmarshal(result, &upstreamResult) != nil {
-		return nil, "", false
-	}
-	for _, block := range upstreamResult.Content {
-		image, ok := block.(*mcp.ImageContent)
-		if ok {
-			return image.Data, image.MIMEType, true
-		}
-	}
-	return nil, "", false
-}
-
-func safeImageMIME(mimeType string) bool {
-	return mimeType == "image/jpeg" || mimeType == "image/png" || mimeType == "image/webp"
+	return operationResult{ID: o.ID, Status: o.Status, ApprovalURL: g.cfg.BaseURL + "/operations/" + o.ID, Result: o.Result}
 }
 
 func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, operationResult) {
@@ -529,7 +507,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 }
 
 // UI returns the owner-authenticated server-rendered review and audit interface.
-func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
+func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *browserbridge.Manager, chromeAvailable bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /events", g.ledgerEvents)
@@ -537,6 +515,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
+	g.registerChrome(mux, browser, chromeAvailable)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/approvals", http.StatusSeeOther) })
 	mux.HandleFunc("GET /audit", g.audit)
 	mux.HandleFunc("GET /operations", func(w http.ResponseWriter, r *http.Request) {
@@ -553,7 +532,6 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 		g.connectionSettings(w, r, m)
 	})
 	mux.HandleFunc("GET /operations/{id}", g.operation)
-	mux.HandleFunc("GET /operations/{id}/image", g.operationImage)
 	mux.HandleFunc("POST /operations/{id}/{decision}", func(w http.ResponseWriter, r *http.Request) {
 		decision := r.PathValue("decision")
 		if decision != "approve" && decision != "deny" {
@@ -707,24 +685,6 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.render(w, r, data)
-}
-
-func (g *Gateway) operationImage(w http.ResponseWriter, r *http.Request) {
-	o, err := g.store.Get(r.Context(), r.PathValue("id"))
-	if err != nil || o.Status != "succeeded" {
-		http.NotFound(w, r)
-		return
-	}
-	data, mimeType, ok := firstImageContent(o.Result)
-	if !ok || !safeImageMIME(mimeType) {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Disposition", "inline")
-	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write(data)
 }
 
 func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {

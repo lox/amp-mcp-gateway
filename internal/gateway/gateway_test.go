@@ -23,7 +23,6 @@ type fixtureBackend struct {
 	calls   atomic.Int32
 	fail    bool
 	callErr error
-	browser atomic.Bool
 }
 
 func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
@@ -37,9 +36,6 @@ func (b *fixtureBackend) Call(ctx context.Context, connection, tool, _ string, a
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: connection + "/" + tool + ":" + args["text"].(string)}}}, nil
 }
 func (b *fixtureBackend) Binding(string) string { return "" }
-func (b *fixtureBackend) InstallBrowser(connection upstream.Connection) {
-	b.browser.Store(connection.ID == chromeConnectionID && connection.Browser)
-}
 
 type bindingBackend struct {
 	fixtureBackend
@@ -343,54 +339,8 @@ func TestGetOperationPromotesImageContent(t *testing.T) {
 	}
 	structured, err := json.Marshal(result.StructuredContent)
 	encodedImage := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
-	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") || !strings.Contains(string(structured), "visible screenshot metadata") || !strings.Contains(string(structured), "/operations/image-result/image") {
+	if err != nil || strings.Contains(string(structured), encodedImage) || !strings.Contains(string(structured), "succeeded") || !strings.Contains(string(structured), "visible screenshot metadata") || strings.Contains(string(structured), "artifact_url") {
 		t.Fatalf("invalid structured operation metadata: %s, %v", structured, err)
-	}
-}
-
-func TestOperationImage(t *testing.T) {
-	g, s, _ := fixture(t)
-	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, cookie := adminUI(t, g, m)
-	upstreamResult := &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: []byte("image-bytes"), MIMEType: "image/jpeg"}}}
-	raw, err := json.Marshal(upstreamResult)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Submit(t.Context(), store.Operation{ID: "served-image", Tool: "browser.screenshot", Connection: "browser", Status: "succeeded", Result: raw}); err != nil {
-		t.Fatal(err)
-	}
-	if w := formRequest(h, nil, http.MethodGet, "/operations/served-image/image", nil); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
-		t.Fatalf("unauthenticated image returned status=%d location=%q", w.Code, w.Header().Get("Location"))
-	}
-	w := formRequest(h, cookie, http.MethodGet, "/operations/served-image/image", nil)
-	if w.Code != http.StatusOK || w.Body.String() != "image-bytes" || w.Header().Get("Content-Type") != "image/jpeg" || w.Header().Get("Cache-Control") != "private, no-store" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
-		t.Fatalf("image response: status=%d headers=%v body=%q", w.Code, w.Header(), w.Body.String())
-	}
-
-	unsafeResult := &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: []byte("<svg/>"), MIMEType: "image/svg+xml"}}}
-	unsafeRaw, err := json.Marshal(unsafeResult)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Submit(t.Context(), store.Operation{ID: "unsafe-image", Tool: "browser.screenshot", Connection: "browser", Status: "succeeded", Result: unsafeRaw}); err != nil {
-		t.Fatal(err)
-	}
-	r := httptest.NewRequest(http.MethodGet, "/operations/unsafe-image/image", nil)
-	r.SetPathValue("id", "unsafe-image")
-	w = httptest.NewRecorder()
-	g.operationImage(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("unsafe image response returned %d", w.Code)
-	}
-	if out := g.result(store.Operation{ID: "unsafe-image", Status: "succeeded", Result: unsafeRaw}); out.ArtifactURL != "" {
-		t.Fatalf("unsafe image exposed artifact URL %q", out.ArtifactURL)
-	}
-	if out := g.result(store.Operation{ID: "failed-image", Status: "failed", Result: raw}); out.ArtifactURL != "" {
-		t.Fatalf("failed operation exposed artifact URL %q", out.ArtifactURL)
 	}
 }
 
@@ -429,7 +379,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	g.cfg.Demo = true
 	mcpHandler, _ := g.DemoHandlers("gateway-test-token")
 	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/", g.UI(a, m))
+	mux.Handle("/", g.UI(a, m, nil, false))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	r, err := http.Get(server.URL + "/mcp")
