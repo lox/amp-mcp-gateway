@@ -40,7 +40,7 @@ func adminUI(t *testing.T, g *Gateway, m *upstream.Manager) (http.Handler, *http
 	}
 	mux := http.NewServeMux()
 	a.Register(mux)
-	mux.Handle("/", g.UI(a, m, browser))
+	mux.Handle("/", g.UI(a, m, browser, true))
 	r := httptest.NewRequest("POST", "/login", strings.NewReader("password=test-login"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()

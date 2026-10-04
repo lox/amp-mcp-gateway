@@ -142,7 +142,9 @@ operation invalidation. Jev is never called during tool execution.
 The gateway automatically includes a reverse-connected `browser` connection and
 its governed tools while preserving saved policies. It lets an orb inspect and
 control one explicitly selected tab in a normal Chrome profile without exposing a
-listener on your machine.
+listener on your machine. An existing remote connection named `browser` or remote
+tool using a native Chrome tool ID remains unchanged; rename it and restart to
+enable Chrome.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
    choose **Load unpacked**, and select this checkout's `extension` directory. After

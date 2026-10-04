@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
@@ -20,8 +22,8 @@ func TestConfigureChromeAddsCanonicalToolsAndPreservesPolicies(t *testing.T) {
 			{ID: "browser.retired", Connection: chromeConnectionID, Name: "retired", Policy: "allow", InputSchema: map[string]any{"type": "object"}},
 		},
 	}
-	if err := ConfigureChrome(&cfg); err != nil {
-		t.Fatal(err)
+	if !ConfigureChrome(&cfg) {
+		t.Fatal("Chrome integration was not configured")
 	}
 	if len(cfg.Connections) != 2 || cfg.Connections[1].ID != chromeConnectionID || !cfg.Connections[1].Browser {
 		t.Fatalf("browser connection not configured: %#v", cfg.Connections)
@@ -29,19 +31,47 @@ func TestConfigureChromeAddsCanonicalToolsAndPreservesPolicies(t *testing.T) {
 	if len(cfg.Tools) != 7 || cfg.Tools[1].ID != "browser.snapshot" || cfg.Tools[1].Policy != "deny" || cfg.Tools[1].Description == "stale" || cfg.Tools[6].ID != "browser.navigate" {
 		t.Fatalf("canonical browser tools not configured: %#v", cfg.Tools)
 	}
-	if err := ConfigureChrome(&cfg); err != nil || len(cfg.Connections) != 2 || len(cfg.Tools) != 7 {
-		t.Fatalf("repeated configuration changed catalogue: connections=%d tools=%d err=%v", len(cfg.Connections), len(cfg.Tools), err)
+	if !ConfigureChrome(&cfg) || len(cfg.Connections) != 2 || len(cfg.Tools) != 7 {
+		t.Fatalf("repeated configuration changed catalogue: connections=%d tools=%d", len(cfg.Connections), len(cfg.Tools))
 	}
 }
 
-func TestConfigureChromeRejectsNameConflicts(t *testing.T) {
+func TestConfigureChromePreservesNameConflicts(t *testing.T) {
 	for _, cfg := range []Config{
 		{Connections: []upstream.Connection{{ID: chromeConnectionID, URL: "https://example.com/mcp", NoAuth: true}}},
-		{Tools: []Tool{{ID: "browser.snapshot", Connection: "remote", Name: "snapshot", InputSchema: map[string]any{"type": "object"}}}},
+		{Connections: []upstream.Connection{{ID: "remote", URL: "https://example.com/mcp", NoAuth: true}}, Tools: []Tool{{ID: "browser.snapshot", Connection: "remote", Name: "snapshot", InputSchema: map[string]any{"type": "object"}}}},
 	} {
-		if err := ConfigureChrome(&cfg); err == nil {
-			t.Fatalf("conflicting configuration accepted: %#v", cfg)
+		before := cfg
+		before.Connections = append([]upstream.Connection(nil), cfg.Connections...)
+		before.Tools = append([]Tool(nil), cfg.Tools...)
+		if ConfigureChrome(&cfg) || !reflect.DeepEqual(cfg, before) {
+			t.Fatalf("conflicting configuration changed: before=%#v after=%#v", before, cfg)
 		}
+	}
+}
+
+func TestChromePageReportsNamespaceConflict(t *testing.T) {
+	g, s, _ := fixture(t)
+	connections := []upstream.Connection{{ID: chromeConnectionID, Account: "Legacy browser", Browser: true}}
+	m, err := upstream.New(g.cfg.BaseURL, connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser, err := browserbridge.New(t.Context(), connections, m, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	g.registerChrome(mux, browser, false)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/integrations/chrome", nil))
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "Chrome setup unavailable") || strings.Contains(body, `/integrations/chrome/pair`) {
+		t.Fatalf("namespace conflict page: status=%d body=%s", w.Code, body)
+	}
+	w = formRequest(mux, nil, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {chromeConnectionID}})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("namespace conflict pairing returned %d", w.Code)
 	}
 }
 

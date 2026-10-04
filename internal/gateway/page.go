@@ -43,6 +43,7 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Parse(we
 </aside><main id="main">
 {{if .ChromeIntegration}}
 <div class="setup"><a href="/integrations">← Integrations</a><div class="heading"><div><h1>Chrome</h1><p class="sub">Pair one explicitly selected tab with the gateway. The extension connects outbound, and you can disconnect it at any time.</p></div></div>
+{{if .ChromeAvailable}}
 {{if .PairingCode}}<section class="card"><h2>Pair the extension</h2><dl><dt>Gateway URL</dt><dd><code>{{.GatewayURL}}</code></dd><dt>Pairing code for {{.PairingConnection}}</dt><dd><code>{{.PairingCode}}</code></dd></dl><p class="help">Paste the code into the extension. It expires in ten minutes if unused and is shown only on this page.</p></section>{{end}}
 {{range .Connections}}<section class="card" data-browser-connection="{{.ID}}" data-browser-state="{{if .Connected}}connected{{else if .Paired}}offline{{else}}not-paired{{end}}"><div class="heading"><div><h2>{{.Account}}</h2><p><code>{{.ID}}</code> · {{if .Connected}}<span class="badge succeeded">Connected</span>{{else if .Paired}}<span class="badge pending">Offline</span>{{else}}<span class="badge">Not paired</span>{{end}}</p>{{if .TabTitle}}<p class="sub">{{.TabTitle}}<br><span class="endpoint">{{.TabURL}}</span></p>{{end}}</div>{{if or .Paired .Connected}}<form method="post" action="/integrations/chrome/revoke"><input type="hidden" name="connection" value="{{.ID}}"><button class="danger">Disconnect</button></form>{{else}}<form method="post" action="/integrations/chrome/pair"><input type="hidden" name="connection" value="{{.ID}}"><button class="primary">Create pairing code</button></form>{{end}}</div></section>{{end}}
 <p class="help">One explicitly selected HTTP(S) tab · outbound extension connection · revocable at any time</p></div><script>
@@ -58,6 +59,8 @@ if (browserCards.size) setInterval(async () => {
   }
 }, 2000);
 </script>
+{{else}}<section class="card"><h2>Chrome setup unavailable</h2><p class="note">The reserved <code>browser</code> connection name or a native Chrome tool ID is already used by a remote MCP configuration. Rename the conflicting connection or tool and restart the gateway to enable the native Chrome integration.</p></section></div>
+{{end}}
 {{else if .FlyIntegration}}
 <div class="setup"><a href="/integrations">← Integrations</a><div class="heading"><div><h1>Fly.io</h1><p class="sub">Issue short-lived, scoped credentials for flyctl without exposing the stored parent token.</p></div>{{if .Configured}}<span class="badge succeeded">Connected</span>{{end}}</div>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="success" role="status">Fly.io integration saved. The governed tool is available to agents now.</p>{{end}}

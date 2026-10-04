@@ -507,7 +507,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 }
 
 // UI returns the owner-authenticated server-rendered review and audit interface.
-func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *browserbridge.Manager) http.Handler {
+func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *browserbridge.Manager, chromeAvailable bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /events", g.ledgerEvents)
@@ -515,7 +515,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
-	g.registerChrome(mux, browser)
+	g.registerChrome(mux, browser, chromeAvailable)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/approvals", http.StatusSeeOther) })
 	mux.HandleFunc("GET /audit", g.audit)
 	mux.HandleFunc("GET /operations", func(w http.ResponseWriter, r *http.Request) {

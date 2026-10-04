@@ -239,9 +239,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
 		return nil, fmt.Errorf("load saved catalogue: %w", err)
 	}
-	if err := gateway.ConfigureChrome(&cfg); err != nil {
-		return nil, fmt.Errorf("configure Chrome integration: %w", err)
-	}
+	chromeAvailable := gateway.ConfigureChrome(&cfg)
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
 		return nil, err
@@ -280,7 +278,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
 	mux.Handle("/browser/connect", browser.Socket())
-	mux.Handle("/", g.UI(auth, m, browser))
+	mux.Handle("/", g.UI(auth, m, browser, chromeAvailable))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
 	}

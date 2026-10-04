@@ -379,7 +379,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	g.cfg.Demo = true
 	mcpHandler, _ := g.DemoHandlers("gateway-test-token")
 	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/", g.UI(a, m, nil))
+	mux.Handle("/", g.UI(a, m, nil, false))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	r, err := http.Get(server.URL + "/mcp")

@@ -17,6 +17,7 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
 func accountSecrets() demo.Secrets {
@@ -217,5 +218,27 @@ func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
 	}
 	if raw, err := s.LoadToken(t.Context(), "private-provider"); err != nil || string(raw) != "original-credential" {
 		t.Fatal("rejected reassignment changed existing credentials")
+	}
+}
+
+func TestAccountStartsWithConflictingRemoteBrowserNamespace(t *testing.T) {
+	cfg := gateway.Config{
+		BaseURL:     "https://gateway.example",
+		Database:    filepath.Join(t.TempDir(), "gateway.db"),
+		AmpUserID:   "owner",
+		Demo:        true,
+		Connections: []upstream.Connection{{ID: "browser", URL: "https://example.com/mcp", NoAuth: true}},
+		Tools: []gateway.Tool{{
+			ID: "browser.snapshot", Connection: "browser", Name: "snapshot", Policy: "allow",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false},
+		}},
+	}
+	account, err := newAccount(t.Context(), accountConfig{Config: cfg, Secrets: accountSecrets()}, browserauth.Config{Demo: true, DemoPassword: "fixture-password"}, nil)
+	if err != nil {
+		t.Fatalf("existing remote browser namespace prevented startup: %v", err)
+	}
+	defer account.store.Close()
+	if statuses := account.browser.Statuses(); len(statuses) != 0 {
+		t.Fatalf("native Chrome replaced conflicting remote connection: %#v", statuses)
 	}
 }
