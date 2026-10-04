@@ -9,9 +9,10 @@ steps:
     key: check
     plugins:
       - setup-go#v0.1.0: ~
-      - mise#v1.1.5:
-          install_args: node
-    command: .buildkite/check
+    command: |
+      export PATH="$${MISE_DATA_DIR}/bin:$${PATH}"
+      mise install node
+      MISE_AUTO_INSTALL=false mise exec node -- .buildkite/check
     timeout_in_minutes: 15
 
   - label: ":bun: Test Amp plugin"

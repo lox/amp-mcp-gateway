@@ -600,9 +600,10 @@ The Buildkite pipeline uses a hosted cluster's `default` queue. The GitHub webho
 builds branches and pull requests; fork PRs are disabled. The pipeline uploads
 `.buildkite/pipeline.yml` from the checkout.
 
-Checks use the `setup-go` plugin to install the Go version from `mise.toml`, then
-run formatting checks, race tests, vet and build the gateway. A separate plugin-test
-job installs the pinned Bun version through mise and runs `mise run check-plugin`.
+Checks use the `setup-go` plugin to install the Go version from `mise.toml`, reuse
+its mise installation for the pinned Node version, then run formatting checks,
+race tests, vet and build the gateway. A separate plugin-test job installs the
+pinned Bun version through mise and runs `mise run check-plugin`.
 It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
 fall back to normal downloads and compilation. On non-PR `main` builds, a parallel

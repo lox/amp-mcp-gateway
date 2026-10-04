@@ -4,4 +4,4 @@ set -euo pipefail
 export MISE_AUTO_INSTALL=false
 mise run check
 git diff --exit-code -- internal/webui/assets/ui.css
-mise run build
+mise run --skip-deps build

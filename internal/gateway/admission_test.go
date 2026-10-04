@@ -38,8 +38,7 @@ func TestProposalAdmissionPreservesExistingDecisions(t *testing.T) {
 			}
 			defer db.Close()
 			// Represent durable history from earlier proposal batches or restarts.
-			if _, err := db.Exec(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<49999)
-INSERT INTO events(operation,kind,actor,time) SELECT '', 'policy-proposed', 'fixture', 0 FROM n`); err != nil {
+			if _, err := db.Exec(`INSERT INTO events(operation,kind,actor,time) VALUES('', 'policy-proposed', cast(zeroblob(64 * 1024 * 1024) AS TEXT), 0)`); err != nil {
 				t.Fatal(err)
 			}
 			for range 3 {
@@ -51,7 +50,7 @@ INSERT INTO events(operation,kind,actor,time) SELECT '', 'policy-proposed', 'fix
 				t.Fatal("rejected proposal published a ticket")
 			}
 			var count int
-			if err := db.QueryRow("SELECT count(*) FROM events").Scan(&count); err != nil || count != 50000 {
+			if err := db.QueryRow("SELECT count(*) FROM events").Scan(&count); err != nil || count != 2 {
 				t.Fatal("rejected proposals grew history", err)
 			}
 			m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)

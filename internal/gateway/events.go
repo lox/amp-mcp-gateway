@@ -10,6 +10,10 @@ import (
 // ledgerEvents sends invalidations, never ledger data. Every connection starts
 // with a refresh, so missed events and process restarts need no replay buffer.
 func (g *Gateway) ledgerEvents(w http.ResponseWriter, r *http.Request) {
+	g.streamLedgerEvents(w, r, 5*time.Second)
+}
+
+func (g *Gateway) streamLedgerEvents(w http.ResponseWriter, r *http.Request, writeTimeout time.Duration) {
 	// Bound the authenticated stream's lifetime. Reconnects pass through owner
 	// authentication again; every fragment GET also checks the current session.
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
@@ -28,7 +32,7 @@ func (g *Gateway) ledgerEvents(w http.ResponseWriter, r *http.Request) {
 	controller := http.NewResponseController(w)
 	send := func(frame string) error {
 		// A stalled browser must not retain its handler indefinitely.
-		if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := controller.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 			return err
 		}
 		defer controller.SetWriteDeadline(time.Time{})

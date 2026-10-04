@@ -29,8 +29,8 @@ func TestLedgerAdmissionRejectsOutstandingGrowth(t *testing.T) {
 
 func TestLedgerAdmissionIncludesEventHistory(t *testing.T) {
 	s, _, _ := testStore(t)
-	if _, err := s.db.Exec(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000)
-INSERT INTO events(operation,kind,actor,time) SELECT '', 'policy-proposed', 'fixture', 0 FROM n`); err != nil {
+	s.limits.events = 1
+	if _, err := s.db.Exec(`INSERT INTO events(operation,kind,actor,time) VALUES('', 'policy-proposed', 'fixture', 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Submit(t.Context(), operation("excess", "denied")); err == nil {
@@ -190,8 +190,7 @@ func TestReopenOverCapacityPreservesRecovery(t *testing.T) {
 	if _, err := s.Submit(t.Context(), o); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000)
-INSERT INTO events(operation,kind,actor,time) SELECT '', 'legacy', 'fixture', 0 FROM n`); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO events(operation,kind,actor,time) VALUES('', 'legacy', cast(zeroblob(64 * 1024 * 1024) AS TEXT), 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
