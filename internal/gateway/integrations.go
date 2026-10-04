@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -122,6 +123,14 @@ func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream
 	id := strings.TrimSpace(r.PostForm.Get("id"))
 	name := strings.TrimSpace(r.PostForm.Get("name"))
 	credential := r.PostForm.Get("value")
+	if r.PostForm.Has("value_base64") {
+		decoded, err := base64.StdEncoding.DecodeString(r.PostForm.Get("value_base64"))
+		if err != nil {
+			http.Error(w, "invalid secret value", http.StatusBadRequest)
+			return
+		}
+		credential = string(decoded)
+	}
 	policy := r.PostForm.Get("policy")
 	fail := func(message string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

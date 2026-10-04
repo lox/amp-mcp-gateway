@@ -75,12 +75,26 @@ if (browserCards.size) setInterval(async () => {
 <div class="setup"><div class="heading"><div><h1>Secrets</h1><p class="sub">Store values centrally and grant individual Amp threads or projects access through approvals.</p></div></div>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="success" role="status">Secret saved. Its governed access tool is available to agents now.</p>{{end}}
 {{if .Secrets}}<section class="card"><h2>Stored secrets</h2><div class="secret-list">{{range .Secrets}}<div class="secret-row"><div><strong>{{.Name}}</strong><p class="sub"><code>{{.ID}}.request_secret</code> · {{if eq .Policy "allow"}}Allow{{else if eq .Policy "deny"}}Block{{else}}Require approval{{end}}</p></div><form method="post" action="/secrets/{{.ID}}/remove"><button class="danger">Remove<span class="visually-hidden"> {{.Name}}</span></button></form></div>{{end}}</div></section>{{end}}
-<form method="post" action="/secrets" autocomplete="off"><div class="card"><h2>Add or update a secret</h2>
+<form id="secret-form" method="post" action="/secrets" autocomplete="off"><div class="card"><h2>Add or update a secret</h2>
 <div class="field"><label for="secret-id">Secret ID</label><input id="secret-id" name="id" value="{{.Values.ID}}" placeholder="github_token" pattern="[a-zA-Z0-9_-]{1,60}" maxlength="60" required><small>Used in the tool ID, such as <code>github_token.request_secret</code>. Reuse an ID to update it.</small></div>
 <div class="field"><label for="secret-name">Display name</label><input id="secret-name" name="name" value="{{.Values.Name}}" placeholder="GitHub deployment token" maxlength="200" required><small>Visible to agents and on approval pages. Never put the secret value in this label.</small></div>
-<div class="field"><label for="secret-value">Secret value</label><textarea id="secret-value" name="value" maxlength="65536" autocomplete="new-password" placeholder="Paste the secret value"></textarea><small>Stored encrypted and never shown again. Leave blank only when updating an existing ID to keep its current value.</small></div>
+<div class="field"><label for="secret-value">Secret value</label><textarea id="secret-value" maxlength="65536" autocomplete="new-password" placeholder="Paste the secret value"></textarea><small>Stored encrypted and never shown again. Leave blank only when updating an existing ID to keep its current value.</small></div>
 <div class="field"><label for="secret-policy">Permission for access requests</label><select id="secret-policy" name="policy"><option value="require_approval" {{if or (not .Values.Policy) (eq .Values.Policy "require_approval")}}selected{{end}}>Require approval</option><option value="deny" {{if eq .Values.Policy "deny"}}selected{{end}}>Block</option><option value="allow" {{if eq .Values.Policy "allow"}}selected{{end}}>Allow</option></select><small>Require approval lets you approve once or remember access for the requesting thread or project.</small></div>
-</div><p class="note">Approved calls return a five-minute, single-use URL bound to the requesting Amp identity. The secret itself never appears in MCP results or audit pages.</p><div class="actions"><button class="primary">Save secret</button><a class="button" href="/secrets">Cancel</a></div></form></div>
+</div><p class="note">Approved calls return a five-minute, single-use URL bound to the requesting Amp identity. The secret itself never appears in MCP results or audit pages.</p><div class="actions"><button class="primary">Save secret</button><a class="button" href="/secrets">Cancel</a></div></form></div><script>
+document.getElementById('secret-form').addEventListener('submit', event => {
+  const value = document.getElementById('secret-value');
+  const bytes = new TextEncoder().encode(value.value);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  const encoded = document.createElement('input');
+  encoded.type = 'hidden';
+  encoded.name = 'value_base64';
+  encoded.value = btoa(binary);
+  event.currentTarget.append(encoded);
+});
+</script>
 {{else if .AddConnection}}
 <div class="setup"><a href="/connections">← Connections</a><h1>Add MCP</h1><p class="sub">Connect a remote server, then choose which tools agents can use.</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}

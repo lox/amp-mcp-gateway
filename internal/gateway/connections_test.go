@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -126,6 +128,32 @@ func TestSecretsPersistOutsideLegacyIntegrations(t *testing.T) {
 	restored = Config{}
 	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0] != secret {
 		t.Fatalf("secret did not survive rollback save: %#v, %v", restored.Integrations, err)
+	}
+	// The rolled-back release cannot see secret IDs and may reuse one for a connection.
+	legacy.Connections = []upstream.Connection{
+		{ID: secret.ID, URL: "http://localhost/mcp", NoAuth: true},
+		{ID: "deploy_key_recovered", URL: "http://localhost/other", NoAuth: true},
+	}
+	rollbackCollision, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), rollbackCollision); err != nil {
+		t.Fatal(err)
+	}
+	restored = Config{AmpUserID: "owner", BaseURL: "http://localhost"}
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Connections) != 2 || restored.Connections[0].ID != secret.ID || len(restored.Integrations) != 1 || restored.Integrations[0].ID != "deploy_key_recovered_2" || restored.Integrations[0].Credential != secret.Credential {
+		t.Fatalf("rollback collision not recovered: connections=%#v integrations=%#v", restored.Connections, restored.Integrations)
+	}
+	if _, err := New(restored, s, b); err != nil {
+		t.Fatalf("recovered rollback configuration did not start: %v", err)
+	}
+	stored, err := s.LoadSecrets(t.Context())
+	if err != nil || stored["deploy_key_recovered_2"] == nil || stored[secret.ID] != nil {
+		t.Fatalf("recovered secret not migrated: keys=%v, %v", slices.Sorted(maps.Keys(stored)), err)
 	}
 }
 

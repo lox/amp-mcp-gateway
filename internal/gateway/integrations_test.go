@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -154,7 +155,7 @@ func TestSecretAccessUsesStandingApprovalsAndIdentityBoundRedemption(t *testing.
 	}
 	h, cookie := adminUI(t, g, m)
 	secret := "fixture-secret-value\nwith-second-line"
-	values := url.Values{"id": {"deploy_key"}, "name": {"Deployment key"}, "value": {secret}, "policy": {"require_approval"}}
+	values := url.Values{"id": {"deploy_key"}, "name": {"Deployment key"}, "value_base64": {base64.StdEncoding.EncodeToString([]byte(secret))}, "policy": {"require_approval"}}
 	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/secrets?saved=1" {
 		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
 	}
@@ -258,7 +259,7 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, cookie := adminUI(t, g, m)
-	values := url.Values{"id": {"api_key"}, "name": {"API key"}, "value": {"first-value"}, "policy": {"allow"}}
+	values := url.Values{"id": {"api_key"}, "name": {"API key"}, "value_base64": {base64.StdEncoding.EncodeToString([]byte("first-value"))}, "policy": {"allow"}}
 	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
 		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
 	}
@@ -271,7 +272,7 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values.Set("value", "second-value")
+	values.Set("value_base64", base64.StdEncoding.EncodeToString([]byte("second-value")))
 	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
 		t.Fatalf("rotate secret: %d %s", w.Code, w.Body.String())
 	}

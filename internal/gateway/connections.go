@@ -67,7 +67,9 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 			Tools: persisted.Tools, ToolDefaults: persisted.ToolDefaults, PrivateConnections: persisted.PrivateConnections,
 		}
 	}
-	for id, encoded := range storedSecrets {
+	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
+	for _, id := range secretIDs {
+		encoded := storedSecrets[id]
 		var secret Integration
 		if err := json.Unmarshal(encoded, &secret); err != nil || secret.ID != id || secret.Provider != secretProvider {
 			return errors.New("invalid stored secret integration")
@@ -75,7 +77,31 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		c.Integrations = slices.DeleteFunc(c.Integrations, func(integration Integration) bool { return integration.ID == id })
 		c.Integrations = append(c.Integrations, secret)
 	}
-	if hadEmbeddedSecrets {
+	used := make(map[string]bool, len(c.Connections)+len(c.Integrations))
+	for _, connection := range c.Connections {
+		used[connection.ID] = true
+	}
+	for _, integration := range c.Integrations {
+		if integration.Provider != secretProvider {
+			used[integration.ID] = true
+		}
+	}
+	recoveredCollision := false
+	for i := range c.Integrations {
+		secret := &c.Integrations[i]
+		if secret.Provider != secretProvider {
+			continue
+		}
+		if !connectionID.MatchString(secret.ID) {
+			return errors.New("invalid stored secret integration")
+		}
+		if used[secret.ID] {
+			secret.ID = recoveredSecretID(secret.ID, used)
+			recoveredCollision = true
+		}
+		used[secret.ID] = true
+	}
+	if hadEmbeddedSecrets || recoveredCollision {
 		migrated, secrets, err := encodeCatalogue(c)
 		if err != nil {
 			return err
@@ -87,6 +113,22 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	cfg.Connections, cfg.Integrations, cfg.Tools = c.Connections, c.Integrations, c.Tools
 	cfg.ToolDefaults, cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
 	return nil
+}
+
+func recoveredSecretID(id string, used map[string]bool) string {
+	for n := 1; ; n++ {
+		suffix := "_recovered"
+		if n > 1 {
+			suffix += "_" + strconv.Itoa(n)
+		}
+		base := id
+		if len(base)+len(suffix) > 60 {
+			base = base[:60-len(suffix)]
+		}
+		if candidate := base + suffix; !used[candidate] {
+			return candidate
+		}
+	}
 }
 
 func (g *Gateway) catalogue() catalogue {

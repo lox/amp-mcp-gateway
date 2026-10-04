@@ -491,7 +491,9 @@ reuse a redeemed value; approval governs disclosure, not its behavior afterward.
 Secrets use a dedicated encrypted table that the previous release leaves untouched.
 A binary rollback therefore starts safely with secret tools disabled, and
 browser-managed configuration saves by that older binary preserve the secret records.
-Upgrading again restores them.
+Upgrading again restores them. If the older binary created a connection using a
+hidden secret's ID, the upgrade preserves the value under an available
+`<id>_recovered` secret ID so the account can start and the owner can manage it.
 
 ### Saved configuration and rollout
 
