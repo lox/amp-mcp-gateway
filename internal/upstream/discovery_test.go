@@ -93,6 +93,52 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCanonicalizesRootResource(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpointPath string
+		wantSuccess        bool
+	}{
+		{name: "root slash", endpointPath: "/", wantSuccess: true},
+		{name: "path remains exact", endpointPath: "/mcp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var origin string
+			authorizationRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case tc.endpointPath:
+					w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+origin+`/metadata"`)
+					w.WriteHeader(http.StatusUnauthorized)
+				case "/metadata":
+					json.NewEncoder(w).Encode(map[string]any{"resource": origin, "authorization_servers": []string{origin}, "scopes_supported": []string{"stock-market-data"}})
+				case "/.well-known/oauth-authorization-server":
+					authorizationRequests++
+					json.NewEncoder(w).Encode(map[string]any{"issuer": origin, "authorization_endpoint": origin + "/authorize", "token_endpoint": origin + "/token", "response_types_supported": []string{"code"}, "code_challenge_methods_supported": []string{"S256"}})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			origin = server.URL
+
+			o, err := discoverOAuth(t.Context(), origin+tc.endpointPath, "https://gateway.example/callback", "existing-client", "", server.Client())
+			if !tc.wantSuccess {
+				if err == nil || o != nil || authorizationRequests != 0 {
+					t.Fatalf("accepted mismatched path resource: config=%v, error=%v, authorization requests=%d", o, err, authorizationRequests)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o.Resource != origin || strings.Join(o.Scopes, " ") != "stock-market-data" || authorizationRequests != 1 {
+				t.Fatalf("incorrect root discovery: config=%#v, authorization requests=%d", o, authorizationRequests)
+			}
+		})
+	}
+}
+
 func TestDiscoveryRootResourceFallback(t *testing.T) {
 	for _, tc := range []struct {
 		name, resourceSuffix string
