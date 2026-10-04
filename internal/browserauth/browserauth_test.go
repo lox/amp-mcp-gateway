@@ -122,7 +122,7 @@ func TestDemoLoginPageAndCrossOriginProtection(t *testing.T) {
 	a.Register(mux)
 	page := httptest.NewRecorder()
 	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "DEMO MODE") || !strings.Contains(page.Body.String(), `type="password"`) {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Enter the configured password to continue.") || strings.Contains(strings.ToLower(page.Body.String()), "demo") || !strings.Contains(page.Body.String(), `type="password"`) {
 		t.Fatalf("unexpected page: %d %q", page.Code, page.Body.String())
 	}
 
@@ -139,6 +139,15 @@ func TestDemoLoginPageAndCrossOriginProtection(t *testing.T) {
 	mux.ServeHTTP(getLogout, httptest.NewRequest(http.MethodGet, "/logout", nil))
 	if getLogout.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET logout status = %d", getLogout.Code)
+	}
+}
+
+func TestAmpLoginPageCopy(t *testing.T) {
+	w := httptest.NewRecorder()
+	(&Auth{}).login(w, httptest.NewRequest(http.MethodGet, "/login", nil))
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "Sign in with your Amp account") || !strings.Contains(body, "Continue with Amp") || strings.Contains(strings.ToLower(body), "demo") {
+		t.Fatalf("unexpected page: %d %q", w.Code, body)
 	}
 }
 

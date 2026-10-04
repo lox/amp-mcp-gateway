@@ -1277,11 +1277,6 @@
   :where(html.login) p {
     @apply leading-[1.6] text-muted;
   }
-  :where(html.login) .badge {
-    color: #6d5010;
-    @apply p-[5px_8px] rounded-[3px] bg-selected text-[12px];
-    font-family: ui-monospace, monospace;
-  }
   :where(html.login) label,
   :where(html.login) input,
   :where(html.login) button,
