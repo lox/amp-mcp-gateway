@@ -19,8 +19,8 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Parse(we
 {{if and (ne .Status "Healthy") (ne .Status "Not tested")}}<p class="help health-warning">{{.Detail}}</p>{{end}}{{end}}{{end}}
 {{define "connection-health"}}<section class="connection-status" aria-label="Connection health">
 <div id="health-{{.ID}}" class="connection-health" role="status">{{template "health" .Health}}</div>
-<form class="connection-test actions" method="post" action="/connections/{{.ID}}/test"><button hx-post="/connections/{{.ID}}/test" hx-target="#health-{{.ID}}" hx-headers='{"Accept":"text/vnd.gateway.health+html"}' hx-disabled-elt="this" hx-sync="closest section:drop">Test connection</button>
-{{if .OAuth}}<button formaction="/connections/{{.ID}}/connect">{{if and .Health (eq .Health.Status "Not connected")}}Connect OAuth{{else}}Reconnect OAuth{{end}}</button>{{end}}</form>
+<form class="connection-test {{if .ReviewOAuth}}oauth-connect{{else}}actions{{end}}" method="post" action="/connections/{{.ID}}/test">{{if .ReviewOAuth}}<div class="oauth-review"><h2>OAuth</h2><dl><dt>Authorization endpoint</dt><dd>{{.AuthURL}}</dd><dt>Token endpoint</dt><dd>{{.TokenURL}}</dd><dt>Requested scopes</dt><dd><code>{{.Scopes}}</code></dd></dl><label><input type="checkbox" name="reviewed_endpoints" value="true" required> I reviewed both OAuth endpoints.</label><p class="help">Confirm that both endpoints belong to the provider. No code, PKCE verifier or client secret is sent until you connect.</p></div>{{end}}<div class="actions"><button hx-post="/connections/{{.ID}}/test" hx-target="#health-{{.ID}}" hx-headers='{"Accept":"text/vnd.gateway.health+html"}' hx-disabled-elt="this" hx-sync="closest section:drop" formnovalidate>Test connection</button>
+{{if .ReviewOAuth}}<button formaction="/connections/{{.ID}}/connect">{{if and .Health (eq .Health.Status "Not connected")}}Connect OAuth{{else}}Reconnect OAuth{{end}}</button>{{end}}</div></form>
 <p class="help test-error" role="alert" hidden></p></section>{{end}}
 {{define "operation-status"}}{{with .Operation}}<div id="operation-live" role="status" {{if or (eq .Status "ready") (eq .Status "running")}}data-live hx-get="/operations/{{.ID}}" hx-trigger="live-update from:body queue:last" hx-swap="outerHTML"{{end}}>
 <span class="badge {{.Status}}">{{.Status}}</span>
@@ -98,7 +98,7 @@ if (browserCards.size) setInterval(async () => {
 <div class="permissions"><a href="/connections">← Connections</a><div class="connection-heading"><h1>{{.Connection.ID}}</h1></div><p class="sub">{{.Connection.Account}} · configured account label</p>
 <nav class="tabs" aria-label="Connection pages"><a href="/connections/{{.Connection.ID}}/tools">Tools &amp; permissions</a><a href="/connections/{{.Connection.ID}}/settings" aria-current="page">Settings</a></nav>
 <section class="card"><h2>Connection settings</h2><dl><dt>Server URL</dt><dd>{{.Connection.URL}}</dd><dt>Account label</dt><dd>{{.Connection.Account}}</dd></dl>
-{{if .Connection.OAuth}}<h2>OAuth</h2><dl><dt>Authorization endpoint</dt><dd>{{.Connection.AuthURL}}</dd><dt>Token endpoint</dt><dd>{{.Connection.TokenURL}}</dd><dt>Requested scopes</dt><dd><code>{{.Connection.Scopes}}</code></dd></dl><p class="help">Review both OAuth endpoints before connecting. Credentials are never displayed.</p>{{end}}{{template "connection-health" .Connection}}<p class="help">Testing or reconnecting does not change tool permissions.</p></section></div>
+{{template "connection-health" .Connection}}<p class="help">Credentials are never displayed. Testing or reconnecting does not change tool permissions.</p></section></div>
 {{else if .ToolReview}}
 <div class="permissions"><a href="/connections">← Connections</a>
 <div class="connection-heading"><h1>{{.Connection.ID}}</h1></div>

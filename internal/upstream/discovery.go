@@ -23,20 +23,10 @@ func DiscoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	h := oauthHTTPClient(Connection{PublicOnly: true})
-	o, err := discoverOAuth(ctx, endpoint, callback, clientID, secret, h)
-	if err != nil {
-		return nil, err
-	}
-	if err := ValidatePublicURL(o.AuthURL); err != nil {
-		return nil, fmt.Errorf("OAuth authorization endpoint: %w", err)
-	}
-	if err := ValidatePublicURL(o.TokenURL); err != nil {
-		return nil, fmt.Errorf("OAuth token endpoint: %w", err)
-	}
-	return o, nil
+	return discoverOAuth(ctx, endpoint, callback, clientID, secret, h, true)
 }
 
-func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret string, h *http.Client) (*OAuthConfig, error) {
+func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret string, h *http.Client, publicOnly bool) (*OAuthConfig, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, errors.New("invalid MCP URL")
@@ -105,6 +95,14 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	}
 	if !slices.Contains(meta.CodeChallengeMethodsSupported, "S256") {
 		return nil, errors.New("OAuth server must support PKCE S256")
+	}
+	if publicOnly {
+		if err := ValidatePublicURL(meta.AuthorizationEndpoint); err != nil {
+			return nil, fmt.Errorf("OAuth authorization endpoint: %w", err)
+		}
+		if err := ValidatePublicURL(meta.TokenEndpoint); err != nil {
+			return nil, fmt.Errorf("OAuth token endpoint: %w", err)
+		}
 	}
 	google := (issuer == "https://accounts.google.com" || issuer == "https://accounts.google.com/") && googleOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
 	if len(scopes) == 0 {

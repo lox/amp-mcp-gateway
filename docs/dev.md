@@ -205,8 +205,9 @@ For private providers, choose **Bearer token** or **OAuth**. OAuth discovers the
 provider's metadata and tries dynamic client registration. If registration is
 unavailable, expand **Use an existing OAuth client** and supply its client ID and,
 if required, secret. Register the callback shown in the form with that provider.
-Review the discovered authorization endpoint, token endpoint and scopes before clicking
-**Connect OAuth** (or **Reconnect OAuth**). **Test connection**, beside reconnect,
+Review the discovered authorization endpoint, token endpoint and scopes, check the
+review confirmation, then click **Connect OAuth** (or **Reconnect OAuth**).
+**Test connection**, beside reconnect,
 initializes MCP and lists tools without executing a tool or changing permissions.
 It updates health inline, preserving unsaved tool edits. **Healthy** means that
 test or a tool-list fetch succeeded at the displayed time, not continuous monitoring

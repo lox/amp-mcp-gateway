@@ -54,14 +54,14 @@ func TestDiscoverOAuthRegistrationAndResource(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	origin = server.URL
-	o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/connections/notes/callback", "", "", server.Client())
+	o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/connections/notes/callback", "", "", server.Client(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if o.Resource != origin+"/mcp" || strings.Join(o.Scopes, " ") != "notes:read" || o.ClientID != "registered-id" || o.AuthStyle != oauth2.AuthStyleInParams {
 		t.Fatalf("incorrect discovery: %#v", o)
 	}
-	if _, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/connections/notes/callback", "existing", "secret", server.Client()); err != nil || registrations != 1 {
+	if _, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/connections/notes/callback", "existing", "secret", server.Client(), false); err != nil || registrations != 1 {
 		t.Fatal("pre-registered client tried DCR", err)
 	}
 	m, err := New("https://gateway.example", []Connection{{ID: "notes", URL: origin + "/mcp", OAuth: o}}, &memoryStore{data: map[string][]byte{}})
@@ -122,7 +122,7 @@ func TestDiscoveryCanonicalizesRootResource(t *testing.T) {
 			defer server.Close()
 			origin = server.URL
 
-			o, err := discoverOAuth(t.Context(), origin+tc.endpointPath, "https://gateway.example/callback", "existing-client", "", server.Client())
+			o, err := discoverOAuth(t.Context(), origin+tc.endpointPath, "https://gateway.example/callback", "existing-client", "", server.Client(), false)
 			if !tc.wantSuccess {
 				if err == nil || o != nil || authorizationRequests != 0 {
 					t.Fatalf("accepted mismatched path resource: config=%v, error=%v, authorization requests=%d", o, err, authorizationRequests)
@@ -183,7 +183,7 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "existing-client", "", server.Client())
+			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "existing-client", "", server.Client(), false)
 			if rootRequests == 0 {
 				t.Fatal("root metadata was not fetched")
 			}
@@ -229,7 +229,7 @@ func TestDiscoveryRejectsExpiringClientSecret(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "", "", server.Client())
+			o, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "", "", server.Client(), false)
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) || o != nil {
 					t.Fatalf("expected %q, got config %v, error %v", tc.wantError, o != nil, err)
@@ -257,7 +257,7 @@ func TestAdvertisedMetadataFailureDoesNotFallBack(t *testing.T) {
 	}))
 	defer server.Close()
 	origin = server.URL
-	if _, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "client", "", server.Client()); err == nil || !strings.Contains(err.Error(), "advertised") {
+	if _, err := discoverOAuth(t.Context(), origin+"/mcp", "https://gateway.example/callback", "client", "", server.Client(), false); err == nil || !strings.Contains(err.Error(), "advertised") {
 		t.Fatalf("expected advertised metadata rejection, got %v", err)
 	}
 }

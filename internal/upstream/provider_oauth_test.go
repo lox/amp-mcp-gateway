@@ -17,6 +17,22 @@ type oauthMetadataTransport struct {
 	t                        *testing.T
 }
 
+type unsafeRegistrationTransport struct{ t *testing.T }
+
+func (m unsafeRegistrationTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	m.t.Helper()
+	if r.Method != http.MethodGet {
+		m.t.Fatalf("registration attempted before endpoint validation: %s %s", r.Method, r.URL)
+	}
+	body := `{}`
+	if strings.Contains(r.URL.Path, "/.well-known/oauth-protected-resource") {
+		body = `{"resource":"https://mcp.example/mcp","authorization_servers":["https://oauth.example"]}`
+	} else if strings.Contains(r.URL.Path, "/.well-known/") {
+		body = `{"issuer":"https://oauth.example","authorization_endpoint":"https://login.example:8443/authorize","token_endpoint":"https://tokens.example/token","registration_endpoint":"https://oauth.example/register","response_types_supported":["code"],"code_challenge_methods_supported":["S256"]}`
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
 func (m oauthMetadataTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	m.t.Helper()
 	if r.Method != "GET" {
@@ -44,7 +60,7 @@ func TestGoogleOAuthDiscovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &http.Client{Transport: oauthMetadataTransport{tc.issuer, tc.authorize, tc.token, "https://sheetsmcp.googleapis.com/mcp/v1", "https://www.googleapis.com/auth/spreadsheets.readonly", t}}
-			o, err := discoverOAuth(t.Context(), "https://sheetsmcp.googleapis.com/mcp/v1", "https://gateway.example/connections/sheets/callback", "existing-client", "fixture-secret", h)
+			o, err := discoverOAuth(t.Context(), "https://sheetsmcp.googleapis.com/mcp/v1", "https://gateway.example/connections/sheets/callback", "existing-client", "fixture-secret", h, true)
 			if (err == nil) != tc.wantOK {
 				t.Fatalf("success=%v, error=%v", err == nil, err)
 			}
@@ -85,7 +101,7 @@ func TestDropboxOAuthDiscovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &http.Client{Transport: oauthMetadataTransport{tc.issuer, tc.authorize, tc.token, "https://mcp.dropbox.com/mcp", "files.metadata.read", t}}
-			o, err := discoverOAuth(t.Context(), "https://mcp.dropbox.com/mcp", "https://gateway.example/connections/dropbox/callback", "existing-client", "fixture-secret", h)
+			o, err := discoverOAuth(t.Context(), "https://mcp.dropbox.com/mcp", "https://gateway.example/connections/dropbox/callback", "existing-client", "fixture-secret", h, true)
 			if (err == nil) != tc.wantOK {
 				t.Fatalf("success=%v, error=%v", err == nil, err)
 			}
@@ -123,7 +139,7 @@ func TestSplitOriginOAuthDiscovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &http.Client{Transport: oauthMetadataTransport{tc.issuer, tc.authorize, tc.token, "https://api.x.com/mcp", "tweet.read", t}}
-			o, err := discoverOAuth(t.Context(), "https://api.x.com/mcp", "https://gateway.example/connections/x/callback", "existing-client", "", h)
+			o, err := discoverOAuth(t.Context(), "https://api.x.com/mcp", "https://gateway.example/connections/x/callback", "existing-client", "", h, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,8 +152,15 @@ func TestSplitOriginOAuthDiscovery(t *testing.T) {
 			}
 			mux := http.NewServeMux()
 			m.Register(mux)
+			unreviewed := httptest.NewRecorder()
+			mux.ServeHTTP(unreviewed, httptest.NewRequest(http.MethodPost, "/connections/x/connect", nil))
+			if unreviewed.Code != http.StatusBadRequest || !strings.Contains(unreviewed.Body.String(), "review the OAuth endpoints") {
+				t.Fatal("public OAuth connected without endpoint review")
+			}
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/connections/x/connect", nil))
+			r := httptest.NewRequest(http.MethodPost, "/connections/x/connect", strings.NewReader("reviewed_endpoints=true"))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			mux.ServeHTTP(w, r)
 			location := authorizationLocation(t, w)
 			q := location.Query()
 			for key, want := range map[string]string{"access_type": "", "prompt": "", "token_access_type": "", "code_challenge_method": "S256", "client_id": "existing-client", "redirect_uri": "https://gateway.example/connections/x/callback", "scope": "tweet.read", "resource": "https://api.x.com/mcp"} {
@@ -152,5 +175,13 @@ func TestSplitOriginOAuthDiscovery(t *testing.T) {
 				t.Fatalf("authorization destination=%q, want %q", location.Scheme+"://"+location.Host+location.Path, tc.authorize)
 			}
 		})
+	}
+}
+
+func TestPublicDiscoveryValidatesEndpointsBeforeRegistration(t *testing.T) {
+	h := &http.Client{Transport: unsafeRegistrationTransport{t}}
+	_, err := discoverOAuth(t.Context(), "https://mcp.example/mcp", "https://gateway.example/callback", "", "", h, true)
+	if err == nil || !strings.Contains(err.Error(), "OAuth authorization endpoint") {
+		t.Fatalf("unsafe authorization endpoint accepted: %v", err)
 	}
 }

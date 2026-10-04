@@ -678,6 +678,15 @@
   :where(html.dashboard) .connection-test.actions {
     @apply m-0 gap-2;
   }
+  :where(html.dashboard) .connection-test.oauth-connect {
+    @apply basis-full;
+  }
+  :where(html.dashboard) .oauth-review dd {
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .oauth-review label {
+    @apply flex items-center gap-2 font-semibold;
+  }
   :where(html.dashboard) .connection-test button {
     @apply text-[13px] px-[10px] py-2;
   }
