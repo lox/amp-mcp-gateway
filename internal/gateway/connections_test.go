@@ -656,6 +656,15 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") {
 		t.Fatal("dashboard did not load credential status")
 	}
+	settings := formRequest(h, cookie, "GET", "/connections/notes/settings", nil)
+	for _, want := range []string{"Authorization endpoint", "https://auth.example/authorize", "Token endpoint", "https://auth.example/token", "Review both OAuth endpoints before connecting"} {
+		if settings.Code != http.StatusOK || !strings.Contains(settings.Body.String(), want) {
+			t.Fatalf("settings did not show OAuth destination %q", want)
+		}
+	}
+	if strings.Index(settings.Body.String(), "Authorization endpoint") > strings.Index(settings.Body.String(), "Connect OAuth") {
+		t.Fatal("connect action appeared before OAuth endpoint review")
+	}
 }
 
 func TestDefaultPermissionRadios(t *testing.T) {

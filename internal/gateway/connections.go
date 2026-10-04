@@ -293,7 +293,7 @@ func (g *Gateway) connectionView(id string) map[string]any {
 		if c.ID == id {
 			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil}
 			if c.OAuth != nil {
-				connection["AuthURL"], connection["Scopes"] = c.OAuth.AuthURL, strings.Join(c.OAuth.Scopes, " ")
+				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
 		}
 	}

@@ -34,10 +34,6 @@ func dropboxOAuthEndpoints(authorize, token string) bool {
 	return authorize == "https://www.dropbox.com/oauth2/authorize" && token == "https://api.dropboxapi.com/oauth2/token"
 }
 
-func xOAuthEndpoints(authorize, token string) bool {
-	return authorize == "https://x.com/i/oauth2/authorize" && token == "https://api.x.com/2/oauth2/token"
-}
-
 // Register installs the OAuth connect and callback handlers on mux.
 func (m *Manager) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /connections/{id}/connect", m.connectHandler)

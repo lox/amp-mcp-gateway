@@ -205,7 +205,7 @@ For private providers, choose **Bearer token** or **OAuth**. OAuth discovers the
 provider's metadata and tries dynamic client registration. If registration is
 unavailable, expand **Use an existing OAuth client** and supply its client ID and,
 if required, secret. Register the callback shown in the form with that provider.
-Review the discovered authorization server and scopes before clicking
+Review the discovered authorization endpoint, token endpoint and scopes before clicking
 **Connect OAuth** (or **Reconnect OAuth**). **Test connection**, beside reconnect,
 initializes MCP and lists tools without executing a tool or changing permissions.
 It updates health inline, preserving unsaved tool edits. **Healthy** means that
@@ -255,15 +255,10 @@ clients, form parameters for public clients). An explicit HTTP 400/401
 ambiguous failures never trigger authentication-method probing.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
-Discovered authorization and token endpoints must share an origin, except for exact
-published pairs discovered from their respective issuers:
-
-- Google: `https://accounts.google.com/o/oauth2/v2/auth` and `https://oauth2.googleapis.com/token`.
-- Dropbox: `https://www.dropbox.com/oauth2/authorize` and `https://api.dropboxapi.com/oauth2/token`.
-- X: `https://x.com/i/oauth2/authorize` and `https://api.x.com/2/oauth2/token`.
-
-Other split-origin providers are rejected. Dynamic registration responses with
-expiring client secrets are also rejected; registration renewal is not implemented.
+Discovered authorization and token endpoints may use different origins. Both must
+be public HTTPS endpoints and are shown in connection settings before any code,
+PKCE verifier or client secret is sent. Dynamic registration responses with expiring
+client secrets are rejected; registration renewal is not implemented.
 
 Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.

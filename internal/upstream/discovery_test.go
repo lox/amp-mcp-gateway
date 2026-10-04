@@ -203,12 +203,11 @@ func TestDiscoveryRootResourceFallback(t *testing.T) {
 	}
 }
 
-func TestDiscoveryRejectsUnsafeClientConfiguration(t *testing.T) {
+func TestDiscoveryRejectsExpiringClientSecret(t *testing.T) {
 	for _, tc := range []struct {
-		name, tokenURL, secret, wantError string
-		expires                           int64
+		name, secret, wantError string
+		expires                 int64
 	}{
-		{name: "split origin", tokenURL: "https://attacker.example/token", wantError: "share an origin"},
 		{name: "finite secret", secret: "fixture-secret", expires: 2000000000, wantError: "expiring"},
 		{name: "permanent secret", secret: "fixture-secret"},
 	} {
@@ -220,15 +219,8 @@ func TestDiscoveryRejectsUnsafeClientConfiguration(t *testing.T) {
 				case "/mcp":
 					w.WriteHeader(401)
 				case "/.well-known/oauth-authorization-server":
-					tokenURL := tc.tokenURL
-					if tokenURL == "" {
-						tokenURL = origin + "/token"
-					}
-					json.NewEncoder(w).Encode(map[string]any{"issuer": origin, "authorization_endpoint": origin + "/authorize", "token_endpoint": tokenURL, "registration_endpoint": origin + "/register", "response_types_supported": []string{"code"}, "code_challenge_methods_supported": []string{"S256"}})
+					json.NewEncoder(w).Encode(map[string]any{"issuer": origin, "authorization_endpoint": origin + "/authorize", "token_endpoint": origin + "/token", "registration_endpoint": origin + "/register", "response_types_supported": []string{"code"}, "code_challenge_methods_supported": []string{"S256"}})
 				case "/register":
-					if tc.tokenURL != "" {
-						t.Error("unsafe endpoints reached client registration")
-					}
 					w.WriteHeader(201)
 					json.NewEncoder(w).Encode(map[string]any{"client_id": "fixture-client", "client_secret": tc.secret, "client_secret_expires_at": tc.expires, "token_endpoint_auth_method": "client_secret_basic"})
 				default:
