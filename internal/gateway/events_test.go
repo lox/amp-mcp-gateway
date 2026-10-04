@@ -34,7 +34,7 @@ func TestLedgerEvents(t *testing.T) {
 	done := make(chan struct{})
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
-		h.ServeHTTP(w, r)
+		g.streamLedgerEvents(w, r, 10*time.Millisecond)
 	}))
 	server.EnableHTTP2 = true
 	server.StartTLS()
@@ -87,7 +87,7 @@ func TestLedgerEvents(t *testing.T) {
 	select {
 	case frame := <-frames:
 		t.Fatalf("unchanged ledger emitted a frame: %q", frame)
-	case <-time.After(6 * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// Outlast the per-write deadline: it must not terminate an idle HTTP/2 stream.
 	}
 	if err := s.Decide(t.Context(), "event-request", "owner", false); err != nil {
