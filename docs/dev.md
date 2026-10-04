@@ -255,11 +255,12 @@ clients, form parameters for public clients). An explicit HTTP 400/401
 ambiguous failures never trigger authentication-method probing.
 PKCE S256 is required. Providers requiring client-ID
 metadata documents or custom authentication flows are not supported yet.
-Discovered authorization and token endpoints must share an origin, except for
-Google and Dropbox's exact published pairs, discovered from their respective issuers:
+Discovered authorization and token endpoints must share an origin, except for exact
+published pairs discovered from their respective issuers:
 
 - Google: `https://accounts.google.com/o/oauth2/v2/auth` and `https://oauth2.googleapis.com/token`.
 - Dropbox: `https://www.dropbox.com/oauth2/authorize` and `https://api.dropboxapi.com/oauth2/token`.
+- X: `https://x.com/i/oauth2/authorize` and `https://api.x.com/2/oauth2/token`.
 
 Other split-origin providers are rejected. Dynamic registration responses with
 expiring client secrets are also rejected; registration renewal is not implemented.
@@ -325,6 +326,16 @@ token. Fetch tools, keep **Require approval** as the default, and explicitly all
 only the reads you want. Verify a harmless read, approval/denial and token refresh
 before removing the direct connection. Discovery support does not establish that
 registration, consent or real calls have succeeded.
+
+### X
+
+In **Add MCP**, use connection name `x`, URL `https://api.x.com/mcp` and
+**OAuth**. X requires your own developer app and does not advertise dynamic client
+registration. Register the callback shown by the gateway in the X developer portal,
+then expand **Use an existing OAuth client** and supply the OAuth 2.0 client ID and,
+for a confidential client, its secret. The gateway requests X's advertised
+`offline.access` scope so X can issue refresh tokens. Review all advertised scopes
+carefully: the MCP can expose write operations as well as reads.
 
 ### Defaults, exceptions and refreshes
 

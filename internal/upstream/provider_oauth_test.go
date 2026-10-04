@@ -125,3 +125,50 @@ func TestDropboxOAuthDiscovery(t *testing.T) {
 		})
 	}
 }
+
+func TestXOAuthDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, issuer, authorize, token string
+		wantOK                         bool
+	}{
+		{"X", "https://api.x.com", "https://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", true},
+		{"wrong issuer", "https://attacker.example", "https://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", false},
+		{"lookalike authorization host", "https://api.x.com", "https://x.com.attacker.example/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", false},
+		{"wrong authorization path", "https://api.x.com", "https://x.com/oauth2/authorize", "https://api.x.com/2/oauth2/token", false},
+		{"HTTP authorization", "https://api.x.com", "http://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", false},
+		{"authorization query", "https://api.x.com", "https://x.com/i/oauth2/authorize?redirect_uri=https://attacker.example", "https://api.x.com/2/oauth2/token", false},
+		{"wrong token path", "https://api.x.com", "https://x.com/i/oauth2/authorize", "https://api.x.com/oauth2/token", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &http.Client{Transport: oauthMetadataTransport{tc.issuer, tc.authorize, tc.token, "https://api.x.com/mcp", "tweet.read", t}}
+			o, err := discoverOAuth(t.Context(), "https://api.x.com/mcp", "https://gateway.example/connections/x/callback", "existing-client", "", h)
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("success=%v, error=%v", err == nil, err)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if o.AuthStyle != oauth2.AuthStyleInParams || o.Resource != "https://api.x.com/mcp" || strings.Join(o.Scopes, " ") != "tweet.read" {
+				t.Fatalf("incorrect config: auth style=%v resource=%q scopes=%v", o.AuthStyle, o.Resource, o.Scopes)
+			}
+			m, err := New("https://gateway.example", []Connection{{ID: "x", URL: o.Resource, OAuth: o}}, &memoryStore{data: map[string][]byte{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mux := http.NewServeMux()
+			m.Register(mux)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/connections/x/connect", nil))
+			location := authorizationLocation(t, w)
+			q := location.Query()
+			for key, want := range map[string]string{"access_type": "", "prompt": "", "token_access_type": "", "code_challenge_method": "S256", "client_id": "existing-client", "redirect_uri": "https://gateway.example/connections/x/callback", "scope": "tweet.read", "resource": "https://api.x.com/mcp"} {
+				if q.Get(key) != want {
+					t.Errorf("%s=%q, want %q", key, q.Get(key), want)
+				}
+			}
+			if q.Get("state") == "" || q.Get("code_challenge") == "" || q.Has("client_secret") {
+				t.Fatal("unsafe authorization URL")
+			}
+		})
+	}
+}

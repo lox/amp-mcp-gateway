@@ -97,14 +97,15 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	}
 	// The owner reviews the authorization URL before connecting. Do not send
 	// codes, PKCE verifiers or client secrets to a different, hidden origin.
-	// Google and Dropbox publish separate token origins; accept only their exact
+	// Google, Dropbox and X publish separate token origins; accept only their exact
 	// endpoints discovered from their issuers, not arbitrary split-origin metadata.
 	google := (issuer == "https://accounts.google.com" || issuer == "https://accounts.google.com/") && googleOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
 	dropbox := issuer == "https://www.dropbox.com" && dropboxOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
+	x := issuer == "https://api.x.com" && xOAuthEndpoints(meta.AuthorizationEndpoint, meta.TokenEndpoint)
 	authorization, authErr := url.Parse(meta.AuthorizationEndpoint)
 	token, tokenErr := url.Parse(meta.TokenEndpoint)
-	if !google && !dropbox && (authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host)) {
-		return nil, errors.New("OAuth authorization and token endpoints must share an origin; only Google and Dropbox's published split-origin endpoints are supported")
+	if !google && !dropbox && !x && (authErr != nil || tokenErr != nil || authorization.Host == "" || authorization.Scheme != token.Scheme || !strings.EqualFold(authorization.Host, token.Host)) {
+		return nil, errors.New("OAuth authorization and token endpoints must share an origin unless their exact published split-origin pair is supported")
 	}
 	if len(scopes) == 0 {
 		scopes = meta.ScopesSupported
