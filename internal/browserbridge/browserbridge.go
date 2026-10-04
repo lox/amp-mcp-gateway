@@ -12,16 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
-	"ampcode.com/lox/amp-mcp-gateway/internal/webui"
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -45,11 +42,8 @@ type pairingStore interface {
 
 // Manager owns persisted browser pairing state and active extension connections.
 type Manager struct {
-	// AccountPage enables account navigation in the authenticated header.
-	AccountPage bool
-	fallback    backend
-	baseURL     string
-	store       pairingStore
+	fallback backend
+	store    pairingStore
 
 	mu              sync.Mutex
 	connections     map[string]upstream.Connection
@@ -118,13 +112,12 @@ func (e *beforeDispatchError) Error() string { return e.message }
 
 // New creates a browser-aware backend and restores persisted reconnect
 // authority. Non-browser connections are delegated to fallback.
-func New(ctx context.Context, baseURL string, connections []upstream.Connection, fallback backend, store pairingStore) (*Manager, error) {
+func New(ctx context.Context, connections []upstream.Connection, fallback backend, store pairingStore) (*Manager, error) {
 	if store == nil {
 		return nil, errors.New("browser pairing store is required")
 	}
 	m := &Manager{
 		fallback:        fallback,
-		baseURL:         strings.TrimRight(baseURL, "/"),
 		store:           store,
 		connections:     make(map[string]upstream.Connection),
 		pairings:        make(map[string]pairing),
@@ -174,13 +167,6 @@ func (m *Manager) savePairing(ctx context.Context, id string, p pairing) error {
 		return err
 	}
 	return m.store.SaveBrowserPairing(ctx, id, raw)
-}
-
-// InstallBrowser publishes a browser connection after its catalogue has been persisted.
-func (m *Manager) InstallBrowser(connection upstream.Connection) {
-	m.mu.Lock()
-	m.connections[connection.ID] = connection
-	m.mu.Unlock()
 }
 
 // Binding returns the current extension-and-tab identity included in durable
@@ -543,79 +529,24 @@ func truncate(value string, max int) string {
 	return value
 }
 
-// UI serves owner-authenticated pairing and revocation controls. The caller
-// supplies authentication and cross-origin protection middleware.
-func (m *Manager) UI(enable func(context.Context) error) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /integrations/chrome", m.browserPage)
-	mux.HandleFunc("GET /integrations/chrome/status", m.browserStatus)
-	mux.HandleFunc("POST /integrations/chrome/enable", func(w http.ResponseWriter, r *http.Request) {
-		if enable == nil {
-			http.Error(w, "Chrome setup unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if err := enable(r.Context()); err != nil {
-			m.render(w, r, browserPageData{Connections: m.statuses(), Error: err.Error()})
-			return
-		}
-		http.Redirect(w, r, "/integrations/chrome", http.StatusSeeOther)
-	})
-	mux.HandleFunc("POST /integrations/chrome/pair", m.pair)
-	mux.HandleFunc("POST /integrations/chrome/revoke", m.revoke)
-	return mux
-}
-
-func (m *Manager) browserPage(w http.ResponseWriter, r *http.Request) {
-	m.render(w, r, browserPageData{Connections: m.statuses()})
-}
-
-func (m *Manager) browserStatus(w http.ResponseWriter, _ *http.Request) {
-	type status struct {
-		ID    string `json:"id"`
-		State string `json:"state"`
-	}
-	connections := m.statuses()
-	result := make([]status, 0, len(connections))
-	for _, connection := range connections {
-		state := "not-paired"
-		if connection.Connected {
-			state = "connected"
-		} else if connection.Paired {
-			state = "offline"
-		}
-		result = append(result, status{ID: connection.ID, State: state})
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(result)
-}
-
-func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid pairing request", http.StatusBadRequest)
-		return
-	}
-	connection := r.PostForm.Get("connection")
+// Pair replaces any existing authority with a one-time pairing code.
+func (m *Manager) Pair(ctx context.Context, connection string) (string, bool, error) {
 	m.mu.Lock()
 	_, ok := m.connections[connection]
 	m.mu.Unlock()
 	if !ok {
-		http.Error(w, "unknown browser connection", http.StatusBadRequest)
-		return
+		return "", false, nil
 	}
 	code, err := randomString(24)
 	if err != nil {
-		http.Error(w, "pairing unavailable", http.StatusInternalServerError)
-		return
+		return "", true, err
 	}
 	hash := sha256.Sum256([]byte(code))
 	p := pairing{hash: hash, created: m.now()}
 	m.mu.Lock()
-	if err := m.savePairing(r.Context(), connection, p); err != nil {
+	if err := m.savePairing(ctx, connection, p); err != nil {
 		m.mu.Unlock()
-		http.Error(w, "pairing unavailable", http.StatusServiceUnavailable)
-		return
+		return "", true, err
 	}
 	old := m.clients[connection]
 	delete(m.clients, connection)
@@ -624,21 +555,19 @@ func (m *Manager) pair(w http.ResponseWriter, r *http.Request) {
 	if old != nil {
 		old.revoke()
 	}
-	m.render(w, r, browserPageData{Connections: m.statuses(), PairingCode: code, GatewayURL: m.baseURL, PairingConnection: connection})
+	return code, true, nil
 }
 
-func (m *Manager) revoke(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid revocation request", http.StatusBadRequest)
-		return
-	}
-	connection := r.PostForm.Get("connection")
+// Revoke removes pairing and disconnects the selected tab.
+func (m *Manager) Revoke(ctx context.Context, connection string) (bool, error) {
 	m.mu.Lock()
-	if err := m.store.DeleteBrowserPairing(r.Context(), connection); err != nil {
+	if _, ok := m.connections[connection]; !ok {
 		m.mu.Unlock()
-		http.Error(w, "revocation unavailable", http.StatusServiceUnavailable)
-		return
+		return false, nil
+	}
+	if err := m.store.DeleteBrowserPairing(ctx, connection); err != nil {
+		m.mu.Unlock()
+		return true, err
 	}
 	old := m.clients[connection]
 	delete(m.clients, connection)
@@ -647,59 +576,24 @@ func (m *Manager) revoke(w http.ResponseWriter, r *http.Request) {
 	if old != nil {
 		old.revoke()
 	}
-	http.Redirect(w, r, "/integrations/chrome", http.StatusSeeOther)
+	return true, nil
 }
 
-type browserStatus struct {
+// Status describes persisted and live state for one browser connection.
+type Status struct {
 	ID, Account, TabTitle, TabURL string
 	Paired, Connected             bool
 }
 
-type browserPageData struct {
-	AccountPage       bool
-	User              browserauth.Profile
-	Connections       []browserStatus
-	PairingCode       string
-	PairingConnection string
-	GatewayURL        string
-	Error             string
-}
-
-func (m *Manager) statuses() []browserStatus {
+// Statuses returns browser connection state for presentation.
+func (m *Manager) Statuses() []Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	statuses := make([]browserStatus, 0, len(m.connections))
+	statuses := make([]Status, 0, len(m.connections))
 	for id, connection := range m.connections {
 		p, paired := m.pairings[id]
-		statuses = append(statuses, browserStatus{ID: id, Account: connection.Account, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: paired && p.paired, Connected: m.clients[id] != nil})
+		statuses = append(statuses, Status{ID: id, Account: connection.Account, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: paired && p.paired, Connected: m.clients[id] != nil})
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
 	return statuses
 }
-
-func (m *Manager) render(w http.ResponseWriter, r *http.Request, data browserPageData) {
-	data.AccountPage = m.AccountPage
-	data.User = browserauth.User(r.Context())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := browserPage.Execute(w, data); err != nil {
-		http.Error(w, "render pairing page", http.StatusInternalServerError)
-	}
-}
-
-var browserPage = template.Must(template.New("browser").Parse(webui.UserMenu + `<!doctype html>
-<html lang="en" class="chrome"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amp MCP Gateway · Chrome</title><link rel="stylesheet" href="/assets/ui.css"></head><body><a class="skip" href="#main">Skip to content</a><header class="topbar"><a class="brand" href="/approvals"><span class="brand-mark" aria-hidden="true"></span>Amp MCP Gateway</a>{{template "user-menu" .}}</header><div class="shell"><aside class="sidebar"><nav aria-label="Main navigation"><a href="/approvals"><span class="nav-symbol" aria-hidden="true">↗</span>Approvals</a><a href="/connections"><span class="nav-symbol" aria-hidden="true">⊞</span>Connections</a><a href="/integrations" aria-current="page"><span class="nav-symbol" aria-hidden="true">◇</span>Integrations</a><a href="/audit"><span class="nav-symbol" aria-hidden="true">≡</span>Audit</a></nav></aside><main id="main"><a href="/integrations">← Integrations</a><h1>Chrome</h1><p class="sub">Pair one explicitly selected tab with the gateway. The extension connects outbound, and you can disconnect it here at any time.</p>
-{{if .PairingCode}}<div class="card"><h2>Pair the extension</h2><strong>Gateway URL</strong><code class="code">{{.GatewayURL}}</code><strong>Pairing code for {{.PairingConnection}}</strong><code class="code">{{.PairingCode}}</code><p class="sub">Paste both values into the extension. The code expires in ten minutes if unused and is shown only on this page.</p></div>{{end}}
-{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{range .Connections}}<div class="card" data-browser-connection="{{.ID}}" data-browser-state="{{if .Connected}}connected{{else if .Paired}}offline{{else}}not-paired{{end}}"><div class="row"><div><strong>{{.Account}}</strong><p><code>{{.ID}}</code> · {{if .Connected}}<span class="badge connected">connected</span>{{else if .Paired}}<span class="badge">offline</span>{{else}}<span class="badge">not paired</span>{{end}}</p>{{if .TabTitle}}<p class="sub">{{.TabTitle}}<br><span class="url">{{.TabURL}}</span></p>{{end}}</div>{{if or .Paired .Connected}}<form method="post" action="/integrations/chrome/revoke"><input type="hidden" name="connection" value="{{.ID}}"><button class="danger">Disconnect</button></form>{{else}}<form method="post" action="/integrations/chrome/pair"><input type="hidden" name="connection" value="{{.ID}}"><button>Create pairing code</button></form>{{end}}</div></div>{{else}}<div class="card"><h2>Enable Chrome</h2><p class="sub">Add the governed browser tools to this gateway. Viewing is allowed directly; click, type and navigation require approval.</p><form method="post" action="/integrations/chrome/enable"><button>Enable Chrome</button></form></div>{{end}}
-<footer>One explicitly selected HTTP(S) tab · outbound extension connection · revocable at any time</footer></main></div><script>
-const browserCards = new Map(Array.from(document.querySelectorAll("[data-browser-connection]"), card => [card.dataset.browserConnection, card.dataset.browserState]));
-if (browserCards.size) setInterval(async () => {
-  try {
-    const response = await fetch("/integrations/chrome/status", {cache: "no-store"});
-    if (!response.ok) return;
-    const statuses = await response.json();
-    if (statuses.some(status => browserCards.get(status.id) !== status.state)) location.replace("/integrations/chrome");
-  } catch (_) {
-    // A later poll will observe the connection state.
-  }
-}, 2000);
-</script></body></html>`))

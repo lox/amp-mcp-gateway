@@ -239,7 +239,7 @@ func TestAuditRouteRequiresBrowserAuthentication(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	a.Register(mux)
-	mux.Handle("/", g.UI(a, m))
+	mux.Handle("/", g.UI(a, m, nil))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/audit", nil))
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {

@@ -47,7 +47,7 @@ func TestPublicStylesheetDoesNotExposeAuthenticatedRoutes(t *testing.T) {
 				t.Fatalf("stylesheet: %d %v", response.Code, response.Header())
 			}
 			css := response.Body.String()
-			for _, selector := range []string{".dashboard", ".login", ".chrome", ".pending", ".succeeded", ".failed", ".denied", ".unknown", ".connected"} {
+			for _, selector := range []string{".dashboard", ".login", ".setup", ".pending", ".succeeded", ".failed", ".denied", ".unknown"} {
 				if !strings.Contains(css, selector) {
 					t.Errorf("compiled stylesheet missing %s", selector)
 				}

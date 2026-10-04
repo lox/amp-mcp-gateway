@@ -26,57 +26,57 @@
   --color-negative-ink: #9c3724;
 }
 @layer components {
-  :where(html.dashboard, html.chrome) .user-menu {
+  :where(html.dashboard) .user-menu {
     @apply ml-auto flex-none;
   }
   :where(html.dashboard) .topbar:has(.notification-trigger:not([hidden])) .user-menu {
     @apply ml-0;
   }
-  :where(html.dashboard, html.chrome) .topbar .user-menu-trigger {
+  :where(html.dashboard) .topbar .user-menu-trigger {
     anchor-name: --user-menu-trigger;
     @apply flex items-center gap-2 min-h-10 p-[5px_8px];
   }
-  :where(html.dashboard, html.chrome) .user-avatar {
+  :where(html.dashboard) .user-avatar {
     @apply relative grid place-items-center size-7 rounded-full overflow-hidden flex-none;
     background: #edf1f8;
   }
-  :where(html.dashboard, html.chrome) .user-avatar img {
+  :where(html.dashboard) .user-avatar img {
     @apply absolute inset-0 size-full object-cover;
   }
-  :where(html.dashboard, html.chrome) .user-name {
+  :where(html.dashboard) .user-name {
     @apply max-w-[180px] truncate;
   }
-  :where(html.dashboard, html.chrome) .user-identity {
+  :where(html.dashboard) .user-identity {
     @apply m-0 p-[10px_12px] text-[13px] font-semibold;
     overflow-wrap: anywhere;
   }
-  :where(html.dashboard, html.chrome) .user-menu-trigger svg {
+  :where(html.dashboard) .user-menu-trigger svg {
     @apply size-5;
   }
-  :where(html.dashboard, html.chrome) .user-panel {
+  :where(html.dashboard) .user-panel {
     position: fixed;
     inset: 76px 16px auto auto;
     @apply m-0 w-[180px] max-w-[calc(100vw-32px)] p-2 rounded-[4px] bg-surface text-ink;
     border: 1px solid #dcdde1;
     box-shadow: 0 6px 20px #15244320;
   }
-  :where(html.dashboard, html.chrome) .user-panel a,
-  :where(html.dashboard, html.chrome) .topbar .user-panel button {
+  :where(html.dashboard) .user-panel a,
+  :where(html.dashboard) .topbar .user-panel button {
     @apply block box-border w-full min-h-10 p-[10px_12px] text-left text-ink no-underline rounded-[3px];
     border: 0;
     background: transparent;
     font: 13px ui-monospace, monospace;
   }
-  :where(html.dashboard, html.chrome) .user-panel a:hover,
-  :where(html.dashboard, html.chrome) .topbar .user-panel button:hover {
+  :where(html.dashboard) .user-panel a:hover,
+  :where(html.dashboard) .topbar .user-panel button:hover {
     background: #edf1f8;
   }
-  :where(html.dashboard, html.chrome) .user-panel :focus-visible {
+  :where(html.dashboard) .user-panel :focus-visible {
     outline: 3px solid #2866cb;
     outline-offset: -3px;
   }
   @supports (top: anchor(bottom)) {
-    :where(html.dashboard, html.chrome) .user-panel {
+    :where(html.dashboard) .user-panel {
       position-anchor: --user-menu-trigger;
       top: calc(anchor(bottom) + 10px);
       right: anchor(right);
@@ -933,10 +933,10 @@
   :where(html.dashboard) .card {
     @apply p-6;
   }
-  :where(html.dashboard, html.chrome) .card > :first-child {
+  :where(html.dashboard) .card > :first-child {
     @apply mt-0;
   }
-  :where(html.dashboard, html.chrome) .card > :last-child {
+  :where(html.dashboard) .card > :last-child {
     @apply mb-0;
   }
   :where(html.dashboard) .tabs {
@@ -1093,7 +1093,7 @@
     :where(html.dashboard) .topbar {
       @apply flex-wrap gap-3;
     }
-    :where(html.dashboard, html.chrome) .user-name {
+    :where(html.dashboard) .user-name {
       display: none;
     }
     :where(html.dashboard) .topbar form {
@@ -1315,205 +1315,6 @@
     border-left: 3px solid #9c3724;
   }
 
-  /* chrome */
-  html.chrome {
-    font-family:
-      system-ui,
-      -apple-system,
-      BlinkMacSystemFont,
-      "Segoe UI",
-      sans-serif;
-    @apply text-ink bg-canvas text-[14px] leading-[1.5];
-  }
-  :where(html.chrome) * {
-    @apply box-border;
-  }
-  :where(html.chrome) body {
-    @apply m-0;
-  }
-  :where(html.chrome) a {
-    @apply text-link;
-    text-underline-offset: 3px;
-  }
-  :where(html.chrome) .skip {
-    @apply absolute left-[16px] top-[-80px] p-3;
-    background: white;
-    @apply z-[2];
-  }
-  :where(html.chrome) .skip:focus {
-    @apply top-[12px];
-  }
-  :where(html.chrome) .topbar {
-    @apply min-h-19;
-    border-bottom: 1px solid #dedfe3;
-    @apply flex items-center gap-6 p-[16px_28px];
-  }
-  :where(html.chrome) .topbar form {
-    @apply ml-auto;
-  }
-  :where(html.chrome) .brand {
-    @apply flex items-center gap-3 no-underline text-ink text-[26px] font-extrabold tracking-[-1px];
-  }
-  :where(html.chrome) .brand-mark {
-    @apply relative w-6 h-6 bg-ink mr-[5px];
-  }
-  :where(html.chrome) .brand-mark:after {
-    content: "";
-    @apply absolute w-[17px] h-[17px];
-    background: #ffcf4c;
-    @apply rounded-full right-[-7px] bottom-[-5px];
-  }
-  :where(html.chrome) .shell {
-    @apply grid grid-cols-[190px_minmax(0,1fr)] min-h-[calc(100vh_-_76px)];
-  }
-  :where(html.chrome) .sidebar {
-    border-right: 1px solid #dedfe3;
-    @apply p-[30px_14px];
-  }
-  :where(html.chrome) .sidebar nav {
-    @apply grid gap-2;
-  }
-  :where(html.chrome) .sidebar a {
-    @apply flex items-center gap-3 min-h-11 p-[10px_12px] text-ink no-underline;
-    font:
-      13px ui-monospace,
-      monospace;
-    @apply rounded-[3px];
-  }
-  :where(html.chrome) .sidebar a:hover {
-    background: #f0eee7;
-  }
-  :where(html.chrome) .sidebar a[aria-current] {
-    @apply bg-selected;
-  }
-  :where(html.chrome) .nav-symbol {
-    @apply w-[18px] text-center text-muted;
-  }
-  :where(html.chrome) main {
-    @apply min-w-0 w-full max-w-240 m-[0_auto] p-[38px_40px_28px];
-  }
-  :where(html.chrome) h1 {
-    @apply text-[32px] leading-[1.2] tracking-[-1.1px] m-[16px_0_10px];
-  }
-  :where(html.chrome) .sub {
-    @apply text-muted leading-[1.6];
-    overflow-wrap: anywhere;
-  }
-  :where(html.chrome) .card {
-    @apply bg-surface;
-    border: 1px solid #dcdde1;
-    @apply rounded-[4px] p-6 m-[18px_0];
-  }
-  :where(html.chrome) button {
-    @apply inline-block min-h-10;
-    border: 1px solid #152443;
-    @apply rounded-[3px] p-[10px_16px] bg-ink;
-    color: white;
-    font: inherit;
-    @apply font-semibold cursor-pointer;
-  }
-  :where(html.chrome) button:hover {
-    background: #293e64;
-  }
-  :where(html.chrome) .topbar button {
-    @apply bg-transparent text-ink border-control;
-    font:
-      12px ui-monospace,
-      monospace;
-  }
-  :where(html.chrome) .topbar button:hover {
-    background: #edf1f8;
-  }
-  :where(html.chrome) .danger {
-    background: transparent;
-    color: #9c3030;
-    border-color: #be7777;
-  }
-  :where(html.chrome) .danger:hover {
-    background: #fff0f0;
-  }
-  :where(html.chrome) .badge {
-    @apply inline-block;
-    font:
-      12px ui-monospace,
-      monospace;
-    @apply rounded-[3px] p-[5px_8px] bg-inset;
-  }
-  :where(html.chrome) .connected {
-    @apply bg-positive text-positive-ink;
-  }
-  :where(html.chrome) code {
-    font-family: ui-monospace, monospace;
-    overflow-wrap: anywhere;
-  }
-  :where(html.chrome) .code {
-    @apply block bg-inset p-4 rounded-[3px] text-[14px] m-[14px_0];
-  }
-  :where(html.chrome) .row {
-    @apply flex items-center justify-between gap-4;
-  }
-  :where(html.chrome) .url {
-    overflow-wrap: anywhere;
-    @apply text-[13px];
-  }
-  :where(html.chrome) form {
-    @apply m-0;
-  }
-  :where(html.chrome) a:focus-visible,
-  :where(html.chrome) button:focus-visible {
-    outline: 3px solid #2866cb;
-    @apply outline-offset-[3px];
-  }
-  :where(html.chrome) footer {
-    @apply text-muted text-[12px] mt-8 leading-[1.6];
-  }
-  @media (max-width: 800px) {
-    :where(html.chrome) .shell {
-      @apply grid-cols-[1fr] min-h-0;
-    }
-    :where(html.chrome) .sidebar {
-      @apply p-[12px_20px];
-      border-right: 0;
-      border-bottom: 1px solid #dedfe3;
-    }
-    :where(html.chrome) .sidebar nav {
-      @apply flex flex-wrap;
-    }
-    :where(html.chrome) main {
-      @apply p-[28px_20px];
-    }
-  }
-  @media (max-width: 600px) {
-    :where(html.chrome) .topbar {
-      @apply p-[16px_20px];
-    }
-    :where(html.chrome) .card {
-      @apply p-4;
-    }
-    :where(html.chrome) .row {
-      @apply items-start flex-col;
-    }
-  }
-  @media (max-width: 480px) {
-    :where(html.chrome) .topbar {
-      @apply flex-wrap gap-3;
-    }
-    :where(html.chrome) .sidebar {
-      @apply p-[10px];
-    }
-    :where(html.chrome) .sidebar nav {
-      @apply grid grid-cols-2;
-    }
-    :where(html.chrome) .sidebar a {
-      @apply min-h-10 gap-[6px] p-[10px] text-[12px];
-    }
-    :where(html.chrome) main {
-      @apply py-6 px-4;
-    }
-    :where(html.chrome) h1 {
-      @apply text-[28px];
-    }
-  }
 }
 
 @layer components {
