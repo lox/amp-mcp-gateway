@@ -31,6 +31,10 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 		return nil, errors.New("invalid MCP URL")
 	}
 	origin := u.Scheme + "://" + u.Host
+	resourceEndpoint := endpoint
+	if u.EscapedPath() == "/" && u.RawQuery == "" {
+		resourceEndpoint = origin
+	}
 	type metadataCandidate struct {
 		url, resource string
 	}
@@ -49,7 +53,7 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 		for _, c := range challenges {
 			if c.Scheme == "bearer" {
 				if raw := c.Params["resource_metadata"]; raw != "" {
-					metadataURLs = append(metadataURLs, metadataCandidate{raw, endpoint})
+					metadataURLs = append(metadataURLs, metadataCandidate{raw, resourceEndpoint})
 					advertised = true
 				}
 				scopes = strings.Fields(c.Params["scope"])
@@ -60,8 +64,8 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	// Preserve endpoint-scoped metadata at the root, then try origin-scoped
 	// metadata. Each candidate still requires an exact resource match.
 	metadataURLs = append(metadataURLs,
-		metadataCandidate{origin + "/.well-known/oauth-protected-resource" + u.EscapedPath(), endpoint},
-		metadataCandidate{origin + "/.well-known/oauth-protected-resource", endpoint},
+		metadataCandidate{origin + "/.well-known/oauth-protected-resource" + u.EscapedPath(), resourceEndpoint},
+		metadataCandidate{origin + "/.well-known/oauth-protected-resource", resourceEndpoint},
 		metadataCandidate{origin + "/.well-known/oauth-protected-resource", origin},
 	)
 	var prm *oauthex.ProtectedResourceMetadata
@@ -74,7 +78,7 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 			return nil, errors.New("advertised OAuth resource metadata is invalid or unavailable")
 		}
 	}
-	issuer, resource := origin, endpoint
+	issuer, resource := origin, resourceEndpoint
 	if prm != nil {
 		if len(prm.AuthorizationServers) == 0 {
 			return nil, errors.New("MCP metadata lists no authorization server")
