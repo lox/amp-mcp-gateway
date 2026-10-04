@@ -166,7 +166,7 @@ var connectionID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,60}$`)
 func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	mux.HandleFunc("GET /policy-proposals/{ticket}", g.reviewPolicies)
 	mux.HandleFunc("POST /policy-proposals/{ticket}/{decision}", func(w http.ResponseWriter, r *http.Request) { g.decidePolicies(w, r, m) })
-	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, r, nil, "") })
+	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, r, nil, "", false) })
 	mux.HandleFunc("POST /connections", func(w http.ResponseWriter, r *http.Request) { g.addConnection(w, r, m) })
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/discover", func(w http.ResponseWriter, r *http.Request) { g.discoverTools(w, r, m) })
@@ -198,11 +198,11 @@ func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	})
 }
 
-func (g *Gateway) addPage(w http.ResponseWriter, r *http.Request, values map[string]string, message string) {
+func (g *Gateway) addPage(w http.ResponseWriter, r *http.Request, values map[string]string, message string, existingClientRequired bool) {
 	if values == nil {
 		values = map[string]string{"auth": "oauth"}
 	}
-	g.render(w, r, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL})
+	g.render(w, r, map[string]any{"AddConnection": true, "Values": values, "Error": message, "BaseURL": g.cfg.BaseURL, "ExistingOAuthClientRequired": existingClientRequired})
 }
 
 func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -215,10 +215,11 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 	for _, key := range []string{"id", "url", "account", "auth", "client_id"} {
 		values[key] = strings.TrimSpace(r.PostForm.Get(key))
 	}
+	existingClientRequired := false
 	fail := func(message string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(400)
-		g.addPage(w, r, values, message)
+		g.addPage(w, r, values, message, existingClientRequired)
 	}
 	if !connectionID.MatchString(values["id"]) {
 		fail("Use 1–60 letters, numbers, dashes or underscores for the connection name.")
@@ -258,6 +259,7 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 		var err error
 		c.OAuth, err = upstream.DiscoverOAuth(r.Context(), c.URL, g.cfg.BaseURL+"/connections/"+c.ID+"/callback", values["client_id"], strings.TrimSpace(r.PostForm.Get("client_secret")))
 		if err != nil {
+			existingClientRequired = errors.Is(err, upstream.ErrOAuthClientIDRequired)
 			fail(err.Error())
 			return
 		}

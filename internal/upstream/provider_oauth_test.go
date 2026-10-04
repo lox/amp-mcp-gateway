@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -175,6 +176,10 @@ func TestSplitOriginOAuthDiscovery(t *testing.T) {
 				t.Fatalf("authorization destination=%q, want %q", location.Scheme+"://"+location.Host+location.Path, tc.authorize)
 			}
 		})
+	}
+	h := &http.Client{Transport: oauthMetadataTransport{"https://api.x.com", "https://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", "https://api.x.com/mcp", "tweet.read", t}}
+	if _, err := discoverOAuth(t.Context(), "https://api.x.com/mcp", "https://gateway.example/connections/x/callback", "", "", h, true); !errors.Is(err, ErrOAuthClientIDRequired) {
+		t.Fatalf("missing registration endpoint error = %v", err)
 	}
 }
 
