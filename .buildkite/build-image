@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${BUILDKITE_BRANCH:-}" != main || "${BUILDKITE_PULL_REQUEST:-false}" != false ]]; then
+  echo 'Only non-PR main builds can publish deployment images.' >&2
+  exit 1
+fi
+
+# Build and push before checks finish so Fly's remote-builder startup is not on
+# the deployment critical path. The deploy job still gates production changes.
+set +x
+FLY_API_TOKEN=$(buildkite-agent secret get MCP_GATEWAY_FLY_DEPLOY)
+export FLY_API_TOKEN
+flyctl deploy --app lox-mcp-gateway --build-only --push --remote-only \
+  --image-label "$BUILDKITE_COMMIT" --yes

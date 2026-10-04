@@ -605,15 +605,17 @@ run formatting checks, race tests, vet and build the gateway. A separate plugin-
 job installs the pinned Bun version through mise and runs `mise run check-plugin`.
 It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
-fall back to normal downloads and compilation. The deploy job installs only
-`flyctl` with the mise plugin, without rebuilding Go binaries locally; Fly's remote
-Docker builder still builds the production image from source.
+fall back to normal downloads and compilation. On non-PR `main` builds, a parallel
+job uses Fly's remote Docker builder to publish an image tagged with the immutable
+Git commit. The deploy job installs only `flyctl` with the mise plugin and deploys
+that exact image after all checks pass.
 
-Fly config validation runs in the authenticated deploy job. Only non-PR `main`
-builds deploy after checks pass. Deploys
-share one concurrency slot, skip superseded main commits, use Fly's rolling
-strategy without HA, and check public `/healthz` afterwards. Running deployments
-are not automatically cancelled by a newer commit.
+Only non-PR `main` builds publish deployment images or deploy. Image creation runs
+alongside checks so remote-builder startup and compilation stay off the deployment
+critical path; publishing an image does not change the running app. Deploys share
+one concurrency slot, skip superseded main commits, use Fly's rolling strategy
+without HA, and check public `/healthz` afterwards. Running deployments are not
+automatically cancelled by a newer commit.
 
 **One-time credential setup:** create an app-scoped Fly deploy token on your trusted
 machine, not an organisation-wide token:
@@ -631,12 +633,13 @@ cluster. Restrict its agent access to the deployment pipeline with:
   build_source: "webhook"
 ```
 
-The deploy script retrieves it only after its branch and freshness checks. Keep
-the Amp login and encryption secrets in Fly, not Buildkite. The deploy token expires
-after 90 days; replace it before expiry and revoke the old token. The secret is
-configured and automatic deployment has passed. The policy deliberately rejects
-API/manual builds; use a reviewed main push for normal deployment. Pipeline and
-repository administrators remain trusted to change production code.
+The image and deploy scripts retrieve it only after their branch checks; deployment
+also checks that its commit is still the latest `main`. Keep the Amp login and
+encryption secrets in Fly, not Buildkite. The deploy token expires after 90 days;
+replace it before expiry and revoke the old token. The secret is configured and
+automatic deployment has passed. The policy deliberately rejects API/manual builds;
+use a reviewed main push for normal deployment. Pipeline and repository
+administrators remain trusted to change production code.
 
 ### Connect Amp
 
