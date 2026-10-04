@@ -239,14 +239,15 @@ func migrateCatalogue(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
 	}
-	_, hasPrivatePolicies := fields["PrivateConnectionPolicies"]
 	var old struct {
 		Integrations              []gateway.Integration
 		ToolDefaults              map[string]string
 		PrivateConnectionPolicies []struct{ ID, Default string }
+		PrivateToolDefaults       []string
 		Tools                     []struct {
 			gateway.Tool
 			PrivatePolicy *string
+			Private       bool
 		}
 	}
 	if err := json.Unmarshal(raw, &old); err != nil {
@@ -256,6 +257,12 @@ func migrateCatalogue(raw []byte) ([]byte, error) {
 	if old.ToolDefaults == nil {
 		old.ToolDefaults = map[string]string{}
 	}
+	privateChanged := old.PrivateConnectionPolicies != nil || old.PrivateToolDefaults != nil
+	for id, policy := range old.ToolDefaults {
+		if policy == "private" {
+			private[id], old.ToolDefaults[id], privateChanged = true, "allow", true
+		}
+	}
 	for _, policy := range old.PrivateConnectionPolicies {
 		private[policy.ID] = true
 		if policy.Default == "" {
@@ -264,19 +271,26 @@ func migrateCatalogue(raw []byte) ([]byte, error) {
 			old.ToolDefaults[policy.ID] = policy.Default
 		}
 	}
+	for _, id := range old.PrivateToolDefaults {
+		private[id], old.ToolDefaults[id] = true, "allow"
+	}
 	tools := make([]gateway.Tool, 0, len(old.Tools))
 	for _, tool := range old.Tools {
 		if tool.PrivatePolicy != nil {
 			tool.Policy = *tool.PrivatePolicy
+			privateChanged = true
+		} else if tool.Private || tool.Policy == "private" {
+			tool.Policy, private[tool.Connection], privateChanged = "allow", true, true
 		}
 		tools = append(tools, tool.Tool)
 	}
 	flyChanged := migrateFlyPolicies(old.Integrations, tools)
-	if !hasPrivatePolicies && !flyChanged {
+	if !privateChanged && !flyChanged {
 		return raw, nil
 	}
-	if hasPrivatePolicies {
+	if privateChanged {
 		delete(fields, "PrivateConnectionPolicies")
+		delete(fields, "PrivateToolDefaults")
 		fields["PrivateConnections"], _ = json.Marshal(private)
 		fields["ToolDefaults"], _ = json.Marshal(old.ToolDefaults)
 		fields["Tools"], _ = json.Marshal(tools)

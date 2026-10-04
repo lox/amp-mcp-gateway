@@ -447,6 +447,38 @@ func TestMigratePrivateCatalogue(t *testing.T) {
 	}
 }
 
+func TestMigratePreReleasePrivateCatalogues(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields, tool, wantDefault, wantTool string
+	}{
+		{"default marker", `"ToolDefaults":{"notes":"deny"},"PrivateToolDefaults":["notes"]`, `"Policy":"require_approval"`, "allow", "require_approval"},
+		{"tool marker", `"ToolDefaults":{"notes":"require_approval"}`, `"Policy":"deny","Private":true`, "require_approval", "allow"},
+		{"private tool policy", `"ToolDefaults":{"notes":"deny"}`, `"Policy":"private"`, "deny", "allow"},
+		{"private default policy", `"ToolDefaults":{"notes":"private"}`, `"Policy":"deny"`, "allow", "deny"},
+		{"marker precedence", `"ToolDefaults":{"notes":"private"},"PrivateConnectionPolicies":[{"ID":"notes","Default":"deny"}],"PrivateToolDefaults":["notes"]`, `"Policy":"private","Private":true,"PrivatePolicy":"deny"`, "allow", "deny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{%s,"Tools":[{"ID":"notes.read","Connection":"notes",%s},{"ID":"other.read","Connection":"other","Policy":"deny"}]}`, tc.fields, tc.tool))
+			got, err := migrateCatalogue(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg gateway.Config
+			if err := json.Unmarshal(got, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.PrivateConnections["notes"] || cfg.PrivateConnections["other"] || cfg.ToolDefaults["notes"] != tc.wantDefault || cfg.Tools[0].Policy != tc.wantTool || cfg.Tools[1].Policy != "deny" {
+				t.Fatalf("migration changed effective private policy: %s", got)
+			}
+			for _, obsolete := range []string{"PrivateToolDefaults", "PrivateConnectionPolicies", "PrivatePolicy", `"Private":`, `"private"`} {
+				if bytes.Contains(got, []byte(obsolete)) {
+					t.Fatalf("migration retained %s: %s", obsolete, got)
+				}
+			}
+		})
+	}
+}
+
 func TestMigrateAccountsPreservesGeneratedFlyPolicy(t *testing.T) {
 	for _, policy := range []string{"allow", "deny"} {
 		t.Run(policy, func(t *testing.T) {
