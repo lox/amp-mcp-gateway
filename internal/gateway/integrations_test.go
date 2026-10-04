@@ -172,7 +172,7 @@ func TestSecretAccessUsesStandingApprovalsAndIdentityBoundRedemption(t *testing.
 		t.Fatalf("secret tool not published: %#v", tool)
 	}
 
-	threadOne := ampIdentity{Subject: "amp:user-owner:thread:one", UserID: "user-owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+	threadOne := ampIdentity{Subject: "amp:owner:thread:one", UserID: "owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
 	threadTwo := threadOne
 	threadTwo.Subject = "amp:user-owner:thread:two"
 	threadTwo.ThreadID = "T-01a0b6d8-e50f-7723-941c-60bca63723bb"
@@ -222,7 +222,7 @@ func TestSecretAccessUsesStandingApprovalsAndIdentityBoundRedemption(t *testing.
 		t.Fatal(err)
 	}
 	leaseMux := http.NewServeMux()
-	leaseMux.Handle("POST /leases/{id}", g.Leases("gateway-test-token"))
+	leaseMux.HandleFunc("POST /leases/{id}", g.redeemLease)
 	redeem := func(identity ampIdentity) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", redeemURL.Path, nil)
 		r.Header.Set("Authorization", "Bearer gateway-test-token")
@@ -271,7 +271,7 @@ func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer gateway-test-token")
 	w := httptest.NewRecorder()
 	leaseMux := http.NewServeMux()
-	leaseMux.Handle("POST /leases/{id}", g.Leases("gateway-test-token"))
+	leaseMux.HandleFunc("POST /leases/{id}", g.redeemLease)
 	leaseMux.ServeHTTP(w, r)
 	if w.Code != http.StatusGone {
 		t.Fatalf("lease survived rotation: %d %s", w.Code, w.Body.String())

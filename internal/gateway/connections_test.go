@@ -79,6 +79,56 @@ func TestPrivatePoliciesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSecretsPersistOutsideLegacyIntegrations(t *testing.T) {
+	_, s, b := fixture(t)
+	secret := Integration{ID: "deploy_key", Provider: secretProvider, Account: "Deployment key", Credential: "private-value", Policy: "require_approval"}
+	raw, _, err := encodeCatalogue(catalogue{Integrations: []Integration{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), secret.Credential) {
+		t.Fatal("secret persisted in the legacy catalogue")
+	}
+	var legacy struct {
+		Connections  []upstream.Connection
+		Integrations []Integration
+		Tools        []Tool
+		ToolDefaults map[string]string
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.Integrations) != 0 || len(legacy.Tools) != 0 {
+		t.Fatalf("rollback exposed an unsupported secret integration: integrations=%#v tools=%#v", legacy.Integrations, legacy.Tools)
+	}
+	if _, err := New(Config{AmpUserID: "owner", BaseURL: "http://localhost", Connections: legacy.Connections, Integrations: legacy.Integrations, Tools: legacy.Tools, ToolDefaults: legacy.ToolDefaults}, s, b); err != nil {
+		t.Fatalf("rollback configuration did not start: %v", err)
+	}
+	preRelease, err := json.Marshal(persistedCatalogue{Secrets: []Integration{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), preRelease); err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0] != secret {
+		t.Fatalf("pre-release secret field not migrated: %#v, %v", restored.Integrations, err)
+	}
+	migrated, err := s.LoadCatalogue(t.Context())
+	if err != nil || strings.Contains(string(migrated), secret.Credential) || strings.Contains(string(migrated), "Secrets") {
+		t.Fatalf("migrated catalogue retained secrets: %s, %v", migrated, err)
+	}
+	// Simulate a browser-managed configuration save by the previous release.
+	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+		t.Fatal(err)
+	}
+	restored = Config{}
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0] != secret {
+		t.Fatalf("secret did not survive rollback save: %#v, %v", restored.Integrations, err)
+	}
+}
+
 func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	g, s, _ := fixture(t)
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)

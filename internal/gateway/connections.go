@@ -30,15 +30,59 @@ type catalogue struct {
 	PrivateConnections map[string]bool   `json:",omitempty"`
 }
 
+// persistedCatalogue reads records written by earlier versions of the secrets
+// branch so they can move to dedicated rollback-safe storage.
+type persistedCatalogue struct {
+	Connections        []upstream.Connection
+	Integrations       []Integration `json:",omitempty"`
+	Secrets            []Integration `json:",omitempty"`
+	Tools              []Tool
+	ToolDefaults       map[string]string `json:",omitempty"`
+	PrivateConnections map[string]bool   `json:",omitempty"`
+}
+
 // LoadCatalogue restores saved connections and policies before startup validation.
 func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	raw, err := s.LoadCatalogue(ctx)
-	if err != nil || raw == nil {
+	if err != nil {
 		return err
 	}
-	var c catalogue
-	if err := json.Unmarshal(raw, &c); err != nil {
+	storedSecrets, err := s.LoadSecrets(ctx)
+	if err != nil {
 		return err
+	}
+	if raw == nil && len(storedSecrets) == 0 {
+		return nil
+	}
+	var c catalogue
+	hadEmbeddedSecrets := false
+	if raw != nil {
+		var persisted persistedCatalogue
+		if err := json.Unmarshal(raw, &persisted); err != nil {
+			return err
+		}
+		hadEmbeddedSecrets = len(persisted.Secrets) > 0
+		c = catalogue{
+			Connections: persisted.Connections, Integrations: append(persisted.Integrations, persisted.Secrets...),
+			Tools: persisted.Tools, ToolDefaults: persisted.ToolDefaults, PrivateConnections: persisted.PrivateConnections,
+		}
+	}
+	for id, encoded := range storedSecrets {
+		var secret Integration
+		if err := json.Unmarshal(encoded, &secret); err != nil || secret.ID != id || secret.Provider != secretProvider {
+			return errors.New("invalid stored secret integration")
+		}
+		c.Integrations = slices.DeleteFunc(c.Integrations, func(integration Integration) bool { return integration.ID == id })
+		c.Integrations = append(c.Integrations, secret)
+	}
+	if hadEmbeddedSecrets {
+		migrated, secrets, err := encodeCatalogue(c)
+		if err != nil {
+			return err
+		}
+		if err := s.MigrateCatalogueSecrets(ctx, migrated, secrets); err != nil {
+			return err
+		}
 	}
 	cfg.Connections, cfg.Integrations, cfg.Tools = c.Connections, c.Integrations, c.Tools
 	cfg.ToolDefaults, cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
@@ -68,6 +112,27 @@ func (cfg Config) defaultPolicy(id string) string {
 	return "require_approval"
 }
 
+func encodeCatalogue(c catalogue) ([]byte, map[string][]byte, error) {
+	persisted := c
+	persisted.Integrations = slices.DeleteFunc(slices.Clone(c.Integrations), func(integration Integration) bool { return integration.Provider == secretProvider })
+	raw, err := json.Marshal(persisted)
+	if err != nil {
+		return nil, nil, err
+	}
+	secrets := map[string][]byte{}
+	for _, integration := range c.Integrations {
+		if integration.Provider != secretProvider {
+			continue
+		}
+		encoded, err := json.Marshal(integration)
+		if err != nil {
+			return nil, nil, err
+		}
+		secrets[integration.ID] = encoded
+	}
+	return raw, secrets, nil
+}
+
 // Caller holds g.mu. Validate before persistence; publish only after commit.
 func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, events ...store.Event) error {
 	next := g.cfg
@@ -81,11 +146,11 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	if err != nil {
 		return errors.New("tool definitions are invalid; schemas must be self-contained")
 	}
-	raw, err := json.Marshal(c)
+	raw, secrets, err := encodeCatalogue(c)
 	if err != nil {
 		return err
 	}
-	if err := g.store.SaveCatalogueProtecting(ctx, raw, c.PrivateConnections, events...); err != nil {
+	if err := g.store.SaveCatalogueProtectingWithSecrets(ctx, raw, c.PrivateConnections, secrets, events...); err != nil {
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
 	m.Install(manager)

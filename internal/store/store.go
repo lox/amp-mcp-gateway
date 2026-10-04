@@ -121,6 +121,7 @@ func Open(path, key string) (*Store, error) {
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS secrets (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL);
@@ -137,7 +138,7 @@ COMMIT;`)
 	// Reject a wrong key before recovery mutates an existing ledger.
 	var id string
 	var payload []byte
-	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'browser-pairing:'||id,payload FROM browser_pairings UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
+	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'browser-pairing:'||id,payload FROM browser_pairings UNION ALL SELECT 'secret:'||id,payload FROM secrets UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
 	}
@@ -207,19 +208,78 @@ func (s *Store) LoadCatalogue(ctx context.Context) ([]byte, error) {
 	return s.open("catalogue", b)
 }
 
+// LoadSecrets retrieves browser-managed secret integrations from storage that
+// older gateway binaries cannot overwrite.
+func (s *Store) LoadSecrets(ctx context.Context) (map[string][]byte, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id,payload FROM secrets ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	secrets := map[string][]byte{}
+	for rows.Next() {
+		var id string
+		var encrypted []byte
+		if err := rows.Scan(&id, &encrypted); err != nil {
+			return nil, err
+		}
+		payload, err := s.open("secret:"+id, encrypted)
+		if err != nil {
+			return nil, err
+		}
+		secrets[id] = payload
+	}
+	return secrets, rows.Err()
+}
+
 // SaveCatalogue commits configuration and revokes queued approvals atomically.
 // Running operations must finish before their authority can change.
 func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) error {
-	return s.saveCatalogue(ctx, b, nil, events...)
+	return s.saveCatalogue(ctx, b, nil, nil, events...)
 }
 
 // SaveCatalogueProtecting also makes existing results from private connections
 // unreadable to older binaries in the same transaction as the policy change.
 func (s *Store) SaveCatalogueProtecting(ctx context.Context, b []byte, privateConnections map[string]bool, events ...Event) error {
-	return s.saveCatalogue(ctx, b, privateConnections, events...)
+	return s.saveCatalogue(ctx, b, privateConnections, nil, events...)
 }
 
-func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections map[string]bool, events ...Event) error {
+// SaveCatalogueProtectingWithSecrets atomically replaces the current secret
+// integrations. Legacy catalogue saves preserve this separate storage.
+func (s *Store) SaveCatalogueProtectingWithSecrets(ctx context.Context, b []byte, privateConnections map[string]bool, secrets map[string][]byte, events ...Event) error {
+	return s.saveCatalogue(ctx, b, privateConnections, secrets, events...)
+}
+
+// MigrateCatalogueSecrets moves already-authorized secret records out of a
+// pre-release catalogue shape without changing operation or grant authority.
+func (s *Store) MigrateCatalogueSecrets(ctx context.Context, b []byte, secrets map[string][]byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "INSERT INTO catalogue VALUES (1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", s.seal("catalogue", b)); err != nil {
+		return err
+	}
+	if err := s.replaceSecrets(ctx, tx, secrets); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) replaceSecrets(ctx context.Context, tx *sql.Tx, secrets map[string][]byte) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM secrets"); err != nil {
+		return err
+	}
+	for id, payload := range secrets {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO secrets VALUES (?,?)", id, s.seal("secret:"+id, payload)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections map[string]bool, secrets map[string][]byte, events ...Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -268,6 +328,11 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO catalogue VALUES (1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", s.seal("catalogue", b)); err != nil {
 		return err
+	}
+	if secrets != nil {
+		if err := s.replaceSecrets(ctx, tx, secrets); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) SELECT id,'denied','catalogue-changed',unixepoch() FROM operations WHERE status IN ('pending','ready')"); err != nil {
 		return err

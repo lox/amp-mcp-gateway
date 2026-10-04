@@ -488,6 +488,10 @@ Updating or removing any secret atomically denies queued calls, revokes all stan
 approvals, and deletes every unredeemed credential lease, matching other catalogue
 changes. An approved workload with arbitrary shell access can still print, copy or
 reuse a redeemed value; approval governs disclosure, not its behavior afterward.
+Secrets use a dedicated encrypted table that the previous release leaves untouched.
+A binary rollback therefore starts safely with secret tools disabled, and
+browser-managed configuration saves by that older binary preserve the secret records.
+Upgrading again restores them.
 
 ### Saved configuration and rollout
 

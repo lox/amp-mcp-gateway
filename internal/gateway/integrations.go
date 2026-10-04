@@ -110,7 +110,7 @@ func (g *Gateway) secretsPage(w http.ResponseWriter, r *http.Request) {
 		views = append(views, map[string]string{"ID": secret.ID, "Name": secret.Account, "Policy": secret.Policy})
 	}
 	g.mu.RUnlock()
-	g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Saved": r.URL.Query().Get("saved") == "1", "Owner": g.cfg.OwnerSubject})
+	g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Saved": r.URL.Query().Get("saved") == "1"})
 }
 
 func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
@@ -133,7 +133,7 @@ func (g *Gateway) saveSecret(w http.ResponseWriter, r *http.Request, m *upstream
 			views = append(views, map[string]string{"ID": secret.ID, "Name": secret.Account, "Policy": secret.Policy})
 		}
 		g.mu.RUnlock()
-		g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Values": map[string]string{"ID": id, "Name": name, "Policy": policy}, "Error": message, "Owner": g.cfg.OwnerSubject})
+		g.render(w, r, map[string]any{"SecretsIntegration": true, "Secrets": views, "Values": map[string]string{"ID": id, "Name": name, "Policy": policy}, "Error": message})
 	}
 	if !connectionID.MatchString(id) || id == flyIntegrationID {
 		fail("Use 1–60 letters, numbers, dashes or underscores for a non-reserved secret ID.")
