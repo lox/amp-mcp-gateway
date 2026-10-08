@@ -704,48 +704,109 @@
   }
   :where(html.dashboard) .connection-list {
     border: 1px solid;
-    @apply m-[16px_0] overflow-hidden;
+    @apply m-[16px_0] overflow-x-auto;
+  }
+  :where(html.dashboard) .connections-heading {
+    @apply items-start flex-wrap;
+  }
+  :where(html.dashboard) .connection-summary {
+    @apply text-[13px] text-muted m-[4px_0_0];
+  }
+  :where(html.dashboard) .connection-summary strong {
+    color: #8a5a00;
+  }
+  :where(html.dashboard) .heading-actions {
+    @apply flex items-center gap-3 flex-wrap;
+  }
+  :where(html.dashboard) .heading-actions input {
+    @apply min-h-10 w-60 px-3;
+  }
+  :where(html.dashboard) .connection-table {
+    @apply min-w-180;
+  }
+  :where(html.dashboard) .connection-table th {
+    @apply p-[10px_16px] text-[12px] font-normal text-muted bg-inset;
+  }
+  :where(html.dashboard) .connection-table td {
+    @apply p-[14px_16px] align-middle text-ink;
+    border-top: 1px solid #e7ebe5;
+  }
+  :where(html.dashboard) .connection-table th:last-child,
+  :where(html.dashboard) .connection-table td:last-child {
+    @apply w-0 text-right;
+  }
+  :where(html.dashboard) .connection-table td .sub {
+    @apply block text-[13px] mt-[2px];
   }
   :where(html.dashboard) .connection-row {
-    @apply grid grid-cols-[180px_minmax(0,1fr)_auto_auto] gap-4;
-    align-items: start;
-    @apply p-5;
-    border-bottom: 1px solid #e7ebe5;
+    @apply relative;
   }
-  :where(html.dashboard) .connection-row:last-child {
-    border: 0;
+  :where(html.dashboard) .connection-row:hover {
+    background: #f7f6f1;
+  }
+  :where(html.dashboard) .connection-row.attention td:first-child {
+    box-shadow: inset 3px 0 0 #e0a526;
   }
   :where(html.dashboard) .connection-identity {
     overflow-wrap: anywhere;
   }
-  :where(html.dashboard) .connection-identity .sub {
-    @apply text-[13px] m-[6px_0_0];
+  :where(html.dashboard) .connection-name {
+    @apply font-semibold text-ink no-underline;
   }
-  :where(html.dashboard) .connection-row .connection-status {
-    @apply m-0 contents;
+  :where(html.dashboard) .connection-name:hover {
+    @apply underline;
   }
-  :where(html.dashboard) .connection-row .connection-health {
-    grid-column: 2;
-    grid-row: 1;
+  /* The name link covers the row; row controls stay above it. */
+  :where(html.dashboard) .connection-name::after {
+    content: "";
+    @apply absolute inset-0;
   }
-  :where(html.dashboard) .connection-row .connection-test {
-    grid-column: 3;
-    grid-row: 1;
+  :where(html.dashboard) .connection-row :is(button, time, .connection-fix, .test-error) {
+    @apply relative z-1;
   }
-  :where(html.dashboard) .connection-row > .button {
-    grid-column: 4;
-    grid-row: 1;
+  :where(html.dashboard) .connection-chips {
+    @apply flex flex-wrap gap-[6px] mt-2;
   }
-  :where(html.dashboard) .connection-row button,
-  :where(html.dashboard) .connection-row .button {
-    @apply text-[13px] p-[8px_10px];
+  :where(html.dashboard) .chip {
+    font:
+      11px ui-monospace,
+      monospace;
+    @apply p-[2px_6px] rounded-[3px] text-muted whitespace-nowrap;
+    border: 1px solid #d5d7dc;
+  }
+  :where(html.dashboard) .badge.neutral {
+    @apply bg-inset text-muted;
+  }
+  :where(html.dashboard) .connection-row .connection-health .help {
+    @apply text-[13px] m-[4px_0_0] max-w-[44ch];
+  }
+  :where(html.dashboard) .connection-fix {
+    @apply inline-block text-[13px] font-semibold mt-1;
   }
   :where(html.dashboard) .connection-row .test-error {
-    grid-column: 2 / -1;
-    @apply m-0;
+    @apply text-[13px] m-[4px_0_0];
   }
-  :where(html.dashboard) .connection-columns {
-    @apply grid grid-cols-[180px_1fr_410px] gap-4 p-[12px_20px] text-[12px];
+  :where(html.dashboard) .connection-test .icon-button {
+    @apply inline-grid place-items-center size-9 min-h-9 p-0;
+  }
+  :where(html.dashboard) .icon-button svg {
+    @apply size-4;
+  }
+  :where(html.dashboard) .icon-button:disabled {
+    @apply cursor-wait opacity-[.65];
+  }
+  :where(html.dashboard) .icon-button.htmx-request svg {
+    animation: spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(html.dashboard) .icon-button.htmx-request svg {
+      animation: none;
+    }
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   :where(html.dashboard) .integration-grid {
     @apply grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 m-[24px_0];
@@ -810,44 +871,42 @@
   :where(html.dashboard) .danger-zone {
     @apply mt-8;
   }
-  @media (max-width: 1150px) {
-    :where(html.dashboard) .connection-row {
-      @apply grid-cols-[minmax(0,1fr)_auto];
-    }
-    :where(html.dashboard) .connection-columns {
-      @apply hidden;
-    }
-    :where(html.dashboard) .connection-row .connection-test {
-      grid-column: 1;
-      grid-row: 2;
-    }
-    :where(html.dashboard) .connection-row > .button {
-      grid-column: 2;
-      grid-row: 2;
-      justify-self: end;
-    }
-    :where(html.dashboard) .connection-row .test-error {
-      grid-column: 1 / -1;
-    }
-  }
   @media (max-width: 600px) {
     :where(html.dashboard) .secret-row {
       @apply items-start flex-col;
     }
+    :where(html.dashboard) .connection-table,
+    :where(html.dashboard) .connection-table tbody {
+      @apply block min-w-0;
+    }
+    :where(html.dashboard) .connection-table thead {
+      @apply hidden;
+    }
     :where(html.dashboard) .connection-row {
-      @apply grid-cols-[minmax(0,1fr)] gap-[14px];
+      @apply grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 p-[14px_16px];
+      border-top: 1px solid #e7ebe5;
     }
-    :where(html.dashboard) .connection-row .connection-health {
+    :where(html.dashboard) .connection-row:first-child {
+      border-top: 0;
+    }
+    :where(html.dashboard) .connection-table td {
+      @apply block p-0;
       grid-column: 1;
-      grid-row: 2;
+      border: 0;
     }
-    :where(html.dashboard) .connection-row .connection-test {
-      grid-row: 3;
+    :where(html.dashboard) .connection-table td:last-child {
+      @apply w-auto;
+      grid-column: 2;
+      grid-row: 1;
     }
-    :where(html.dashboard) .connection-row > .button {
-      grid-column: 1;
-      grid-row: 4;
-      justify-self: start;
+    :where(html.dashboard) .connection-row.attention {
+      box-shadow: inset 3px 0 0 #e0a526;
+    }
+    :where(html.dashboard) .connection-row.attention td:first-child {
+      box-shadow: none;
+    }
+    :where(html.dashboard) .heading-actions input {
+      @apply w-full;
     }
     :where(html.dashboard) .connection-status {
       @apply flex-col;
@@ -1024,8 +1083,7 @@
   :where(html.dashboard) .text-button {
     @apply text-link;
   }
-  :where(html.dashboard) .policy-columns,
-  :where(html.dashboard) .connection-columns {
+  :where(html.dashboard) .policy-columns {
     @apply bg-inset text-muted;
   }
   :where(html.dashboard) .badge {
@@ -1054,9 +1112,6 @@
   }
   :where(html.dashboard) .empty p {
     @apply m-0 text-muted;
-  }
-  :where(html.dashboard) .connection-row .connection-identity a {
-    @apply text-ink;
   }
   :where(html.dashboard) .request-id {
     @apply block;

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -297,6 +298,29 @@ func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 		}
 		// Only presentation-safe health is returned, never provider errors or tools.
 		_ = m.TestConnection(r.Context(), id)
+		if r.Header.Get("Accept") == "text/vnd.gateway.connection-row+html" {
+			// The summary is swapped out of band so bulk tests keep the header counts current.
+			rows, err := g.connectionRows(r.Context(), m)
+			i := slices.IndexFunc(rows, func(row connectionRow) bool { return row.ID == id })
+			if err != nil || i < 0 {
+				http.Error(w, "could not render connection status", 500)
+				return
+			}
+			summary := summarizeConnections(rows)
+			summary.OOB = true
+			var b bytes.Buffer
+			if err := page.ExecuteTemplate(&b, "connection-row", rows[i]); err != nil {
+				http.Error(w, "could not render connection status", 500)
+				return
+			}
+			if err := page.ExecuteTemplate(&b, "connection-summary", summary); err != nil {
+				http.Error(w, "could not render connection status", 500)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(b.Bytes())
+			return
+		}
 		if r.Header.Get("Accept") == "text/vnd.gateway.health+html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := page.ExecuteTemplate(w, "health", m.Health(r.Context(), id)); err != nil {
@@ -410,6 +434,113 @@ func (g *Gateway) connectionView(id string) map[string]any {
 		}
 	}
 	return connection
+}
+
+// connectionRow summarizes one dashboard connection. Last calls come from the
+// durable ledger; health checks are process-local observations.
+type connectionRow struct {
+	ID, Account, Auth, Fix, Policies string
+	Private, Attention               bool
+	Health                           upstream.Health
+	Tools                            int
+	LastCall                         string
+	LastCallAt                       time.Time
+}
+
+type connectionSummary struct {
+	Total, Attention, Untested int
+	OOB                        bool
+}
+
+func summarizeConnections(rows []connectionRow) connectionSummary {
+	summary := connectionSummary{Total: len(rows)}
+	for _, row := range rows {
+		if row.Attention {
+			summary.Attention++
+		}
+		if row.Health.Status == "Not tested" {
+			summary.Untested++
+		}
+	}
+	return summary
+}
+
+// connectionRows lists non-browser connections, with those needing owner action first.
+func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]connectionRow, error) {
+	calls, err := g.store.RecentCalls(ctx)
+	if err != nil {
+		return nil, err
+	}
+	g.mu.RLock()
+	rows := []connectionRow{}
+	for _, c := range g.cfg.Connections {
+		if c.Browser {
+			continue
+		}
+		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID)}
+		if c.OAuth != nil {
+			row.Auth = "OAuth"
+		} else if c.NoAuth {
+			row.Auth = "No auth"
+		}
+		var allowed, approval, blocked int
+		for _, t := range g.cfg.Tools {
+			if t.Connection != c.ID {
+				continue
+			}
+			row.Tools++
+			policy := t.Policy
+			if policy == "" {
+				policy = g.cfg.defaultPolicy(c.ID)
+			}
+			switch policy {
+			case "allow":
+				allowed++
+			case "deny":
+				blocked++
+			default:
+				approval++
+			}
+		}
+		var policies []string
+		for _, p := range []struct {
+			n     int
+			label string
+		}{{allowed, "allowed"}, {approval, "need approval"}, {blocked, "blocked"}} {
+			if p.n > 0 {
+				policies = append(policies, strconv.Itoa(p.n)+" "+p.label)
+			}
+		}
+		row.Policies = strings.Join(policies, " · ")
+		if call, ok := calls[c.ID]; ok {
+			row.LastCall, row.LastCallAt = call.Status, time.Unix(call.Time, 0)
+		}
+		rows = append(rows, row)
+	}
+	g.mu.RUnlock()
+	for i := range rows {
+		row := &rows[i]
+		row.Health = m.Health(ctx, row.ID)
+		switch row.Health.Status {
+		case "Healthy", "Not tested", "Updating credentials", "Refresh delayed":
+		case "Not connected":
+			row.Attention, row.Fix = true, "Connect"
+		case "Reconnect required", "Refresh uncertain":
+			row.Attention, row.Fix = true, "Reconnect"
+		default:
+			row.Attention, row.Fix = true, "Settings"
+		}
+	}
+	slices.SortStableFunc(rows, func(a, b connectionRow) int {
+		if a.Attention == b.Attention {
+			return 0
+		}
+		if a.Attention {
+			return -1
+		}
+		return 1
+	})
+	return rows, nil
 }
 
 func (g *Gateway) connectionSettings(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {

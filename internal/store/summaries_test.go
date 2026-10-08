@@ -117,3 +117,39 @@ func TestListStatusFiltersBeforeLimitWithoutReadingPayload(t *testing.T) {
 		t.Fatalf("pending operation hidden by newer history: %v, %v", listed, err)
 	}
 }
+
+func TestRecentCallsReportsLatestDispatchedOutcomePerConnection(t *testing.T) {
+	s, _, _ := testStore(t)
+	finish := func(id, connection, status string) {
+		t.Helper()
+		o := operation(id, "ready")
+		o.Connection = connection
+		if _, err := s.Submit(t.Context(), o); err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := s.Claim(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Finish(t.Context(), claimed, status, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finish("notes-old", "notes", "succeeded")
+	finish("notes-new", "notes", "failed")
+	finish("reference", "reference", "unknown")
+	// Denials never reached the upstream, so they are not calls.
+	finish("denied", "reference", "denied")
+	pending := operation("pending", "pending")
+	pending.Connection = "idle"
+	if _, err := s.Submit(t.Context(), pending); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := s.RecentCalls(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls["notes"].Status != "failed" || calls["reference"].Status != "unknown" || calls["notes"].Time == 0 {
+		t.Fatalf("unexpected recent calls: %+v", calls)
+	}
+}

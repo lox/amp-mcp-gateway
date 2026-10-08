@@ -24,6 +24,18 @@ var auditTemplateFuncs = template.FuncMap{
 		return time.Unix(epoch, 0).In(loc).Format("02 Jan 2006 · 15:04:05 MST")
 	},
 	"iso": func(epoch int64) string { return time.Unix(epoch, 0).UTC().Format(time.RFC3339) },
+	"ago": func(t time.Time) string {
+		switch d := time.Since(t); {
+		case d < time.Minute:
+			return "just now"
+		case d < time.Hour:
+			return strconv.Itoa(int(d.Minutes())) + " min ago"
+		case d < 48*time.Hour:
+			return strconv.Itoa(int(d.Hours())) + "h ago"
+		default:
+			return strconv.Itoa(int(d.Hours()/24)) + "d ago"
+		}
+	},
 	"updated": func(events []store.Event) int64 {
 		if len(events) == 0 {
 			return 0

@@ -94,8 +94,8 @@ document.addEventListener('htmx:beforeRequest', event => {
     return;
   }
   if (elt.matches('.connection-test button')) {
-    elt.textContent = 'Testing…';
-    elt.closest('.connection-status').querySelector('.test-error').hidden = true;
+    if (!elt.matches('.icon-button')) elt.textContent = 'Testing…';
+    elt.closest('.connection-status, .connection-row').querySelector('.test-error').hidden = true;
   }
 });
 
@@ -148,8 +148,8 @@ document.addEventListener('htmx:afterRequest', event => {
     stopLive();
     setTimeout(syncLive, 1000);
   }
-  const health = elt.closest('.connection-status');
-  if (health) elt.textContent = 'Test connection';
+  const health = elt.closest('.connection-status, .connection-row');
+  if (health && !elt.matches?.('.icon-button')) elt.textContent = 'Test connection';
   const error = notification ? document.querySelector('.notification-error')
     : health?.querySelector('.test-error') || document.querySelector('.live-error');
   if (!error) return;
@@ -160,3 +160,27 @@ document.addEventListener('htmx:afterRequest', event => {
     : notification ? 'Approval alerts are unavailable. Refresh the page to reconnect.'
       : 'Live updates are unavailable. Refresh the page to check the latest status.';
 });
+
+// Connection list: local filtering and bulk tests reuse each row's test action.
+const connectionFilter = document.querySelector('#connection-filter');
+if (connectionFilter) {
+  connectionFilter.hidden = false;
+  connectionFilter.addEventListener('input', () => {
+    const query = connectionFilter.value.trim().toLowerCase();
+    let shown = 0;
+    for (const row of document.querySelectorAll('.connection-row')) {
+      row.hidden = !row.dataset.filter.toLowerCase().includes(query);
+      if (!row.hidden) shown++;
+    }
+    document.querySelector('#connection-filter-empty').hidden = shown > 0;
+  });
+}
+const testAll = document.querySelector('#test-all');
+if (testAll) {
+  testAll.hidden = false;
+  testAll.addEventListener('click', () => {
+    for (const button of document.querySelectorAll('.connection-row:not([hidden]) .connection-test button:enabled')) {
+      button.click();
+    }
+  });
+}

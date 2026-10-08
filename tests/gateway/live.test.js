@@ -126,3 +126,19 @@ test('a successful connection test does not depend on notification stream health
   f.afterRequest({id: 'test-button', closest: () => ({querySelector: () => error})}, true);
   assert.equal(error.hidden, true);
 });
+
+test('icon test buttons keep their icon while testing', () => {
+  const f = fixture({hasList: false});
+  const error = {hidden: false};
+  const button = {
+    textContent: 'icon',
+    hasAttribute: () => false,
+    matches: selector => selector === '.connection-test button' || selector === '.icon-button',
+    closest: () => ({querySelector: () => error}),
+  };
+  assert.equal(f.request(button), true);
+  assert.equal(button.textContent, 'icon');
+  assert.equal(error.hidden, true);
+  f.afterRequest(button, true);
+  assert.equal(button.textContent, 'icon');
+});
