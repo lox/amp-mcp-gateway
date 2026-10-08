@@ -44,9 +44,31 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Parse(we
 {{if .ChromeIntegration}}
 <div class="setup"><a href="/integrations">← Integrations</a><div class="heading"><div><h1>Chrome</h1><p class="sub">Pair one explicitly selected tab with the gateway. The extension connects outbound, and you can disconnect it at any time.</p></div></div>
 {{if .ChromeAvailable}}
-{{if .PairingCode}}<section class="card"><h2>Pair the extension</h2><dl><dt>Gateway URL</dt><dd><code>{{.GatewayURL}}</code></dd><dt>Pairing code for {{.PairingConnection}}</dt><dd><code>{{.PairingCode}}</code></dd></dl><p class="help">Paste the code into the extension. It expires in ten minutes if unused and is shown only on this page.</p></section>{{end}}
+{{if .PairingCode}}<section class="card" aria-labelledby="pairing-heading"><h2 id="pairing-heading">Pair the extension</h2><p class="sub">Copy this code, then open the extension on the tab you want to share and paste it.</p><div class="pairing-code"><code id="pairing-code">{{.PairingCode}}</code><button type="button" class="primary" data-copy="pairing-code" aria-label="Copy pairing code">Copy</button></div><p id="pairing-copy-status" class="visually-hidden" role="status"></p><p class="help">Expires in ten minutes if unused. The code is shown only on this page.</p><p class="help pairing-gateway">Gateway URL for extension settings: <code>{{.GatewayURL}}</code></p></section>{{end}}
 {{range .Connections}}<section class="card" data-browser-connection="{{.ID}}" data-browser-state="{{if .Connected}}connected{{else if .Paired}}offline{{else}}not-paired{{end}}"><div class="heading"><div><h2>{{.Account}}</h2><p><code>{{.ID}}</code> · {{if .Connected}}<span class="badge succeeded">Connected</span>{{else if .Paired}}<span class="badge pending">Offline</span>{{else}}<span class="badge">Not paired</span>{{end}}</p>{{if .TabTitle}}<p class="sub">{{.TabTitle}}<br><span class="endpoint">{{.TabURL}}</span></p>{{end}}</div>{{if or .Paired .Connected}}<form method="post" action="/integrations/chrome/revoke"><input type="hidden" name="connection" value="{{.ID}}"><button class="danger">Disconnect</button></form>{{else}}<form method="post" action="/integrations/chrome/pair"><input type="hidden" name="connection" value="{{.ID}}"><button class="primary">Create pairing code</button></form>{{end}}</div></section>{{end}}
 <p class="help">One explicitly selected HTTP(S) tab · outbound extension connection · revocable at any time</p></div><script>
+const copyButton = document.querySelector("[data-copy]");
+let copyReset;
+copyButton?.addEventListener("click", async () => {
+  const code = document.getElementById(copyButton.dataset.copy);
+  const status = document.getElementById("pairing-copy-status");
+  clearTimeout(copyReset);
+  try {
+    await navigator.clipboard.writeText(code.textContent);
+    copyButton.textContent = "Copied";
+    copyButton.classList.add("copied");
+    status.textContent = "Pairing code copied.";
+  } catch (_) {
+    getSelection().selectAllChildren(code);
+    copyButton.textContent = "Copy manually";
+    status.textContent = "Copy failed. The pairing code is selected so you can copy it manually.";
+  }
+  copyReset = setTimeout(() => {
+    copyButton.textContent = "Copy";
+    copyButton.classList.remove("copied");
+    status.textContent = "";
+  }, 2500);
+});
 const browserCards = new Map(Array.from(document.querySelectorAll("[data-browser-connection]"), card => [card.dataset.browserConnection, card.dataset.browserState]));
 if (browserCards.size) setInterval(async () => {
   try {

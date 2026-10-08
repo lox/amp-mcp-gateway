@@ -784,6 +784,26 @@
   :where(html.dashboard) .secret-row .sub {
     @apply m-[5px_0_0];
   }
+  :where(html.dashboard) .pairing-code {
+    @apply flex items-center gap-3 m-[18px_0_12px] p-[10px_10px_10px_16px] rounded-[4px] bg-inset;
+    border: 1px solid #dcdde1;
+  }
+  :where(html.dashboard) .pairing-code code {
+    @apply flex-1 min-w-0 text-[20px] font-semibold tracking-[.5px] select-all;
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .pairing-code button {
+    @apply flex-none min-w-[96px];
+  }
+  :where(html.dashboard) .pairing-code button.copied {
+    @apply bg-positive text-positive-ink;
+    border-color: #175e37;
+  }
+  :where(html.dashboard) .pairing-gateway {
+    @apply mt-4 pt-4 text-[13px];
+    border-top: 1px solid #e7ebe5;
+    overflow-wrap: anywhere;
+  }
   :where(html.dashboard) .integration-status {
     @apply ml-2;
   }
