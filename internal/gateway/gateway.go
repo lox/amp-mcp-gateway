@@ -601,19 +601,9 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	case "/approval-grants":
 		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
 	case "/connections":
-		g.mu.RLock()
-		connections := make([]map[string]any, 0, len(g.cfg.Connections))
-		for _, c := range g.cfg.Connections {
-			if c.Browser {
-				continue
-			}
-			connections = append(connections, map[string]any{"ID": c.ID, "Account": c.Account, "OAuth": c.OAuth != nil})
-		}
-		g.mu.RUnlock()
-		for _, c := range connections {
-			c["Health"] = m.Health(r.Context(), c["ID"].(string))
-		}
-		data["Connections"] = connections
+		var rows []connectionRow
+		rows, err = g.connectionRows(r.Context(), m)
+		data["Connections"], data["Summary"] = rows, summarizeConnections(rows)
 	case "/integrations":
 		g.mu.RLock()
 		_, configured := g.integration(flyIntegrationID)

@@ -94,8 +94,8 @@ document.addEventListener('htmx:beforeRequest', event => {
     return;
   }
   if (elt.matches('.connection-test button')) {
-    elt.textContent = 'Testing…';
-    elt.closest('.connection-status').querySelector('.test-error').hidden = true;
+    if (!elt.matches('.icon-button')) elt.textContent = 'Testing…';
+    elt.closest('.connection-status, .connection-row').querySelector('.test-error').hidden = true;
   }
 });
 
@@ -148,8 +148,8 @@ document.addEventListener('htmx:afterRequest', event => {
     stopLive();
     setTimeout(syncLive, 1000);
   }
-  const health = elt.closest('.connection-status');
-  if (health) elt.textContent = 'Test connection';
+  const health = elt.closest('.connection-status, .connection-row');
+  if (health && !elt.matches?.('.icon-button')) elt.textContent = 'Test connection';
   const error = notification ? document.querySelector('.notification-error')
     : health?.querySelector('.test-error') || document.querySelector('.live-error');
   if (!error) return;
@@ -160,3 +160,43 @@ document.addEventListener('htmx:afterRequest', event => {
     : notification ? 'Approval alerts are unavailable. Refresh the page to reconnect.'
       : 'Live updates are unavailable. Refresh the page to check the latest status.';
 });
+
+// Connection list: local filtering and bulk tests reuse each row's test action.
+const connectionFilter = document.querySelector('#connection-filter');
+if (connectionFilter) {
+  connectionFilter.hidden = false;
+  connectionFilter.addEventListener('input', () => {
+    const query = connectionFilter.value.trim().toLowerCase();
+    let shown = 0;
+    for (const row of document.querySelectorAll('.connection-row')) {
+      row.hidden = !row.dataset.filter.toLowerCase().includes(query);
+      if (!row.hidden) shown++;
+    }
+    document.querySelector('#connection-filter-empty').hidden = shown > 0;
+  });
+}
+const testAll = document.querySelector('#test-all');
+if (testAll) {
+  let pending = 0;
+  testAll.hidden = false;
+  testAll.addEventListener('click', () => {
+    const buttons = [...document.querySelectorAll('.connection-row:not([hidden]) .connection-test button:enabled')];
+    if (!buttons.length) return;
+    pending = buttons.length;
+    testAll.disabled = true;
+    testAll.textContent = 'Testing…';
+    for (const button of buttons) button.click();
+  });
+  // A successful test replaces its row before htmx:afterRequest, detaching the button, so
+  // count the last events dispatched while it is still in the document.
+  const settled = event => {
+    if (!pending || !event.detail.elt.matches?.('.connection-row .icon-button') || --pending) return;
+    testAll.disabled = false;
+    testAll.textContent = 'Test all';
+    // Concurrent row responses can arrive out of order; reread the summary once all settle.
+    htmx.ajax('GET', '/connections', {target: '#connection-summary', select: '#connection-summary', swap: 'outerHTML'});
+  };
+  for (const name of ['htmx:beforeOnLoad', 'htmx:sendError', 'htmx:timeout', 'htmx:sendAbort']) {
+    document.addEventListener(name, settled);
+  }
+}

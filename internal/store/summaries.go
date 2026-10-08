@@ -33,6 +33,45 @@ func (s *Store) List(ctx context.Context) ([]OperationSummary, error) {
 	return s.ListStatus(ctx, "")
 }
 
+// ConnectionCall is the latest dispatched outcome for one connection.
+type ConnectionCall struct {
+	Status string
+	Time   int64
+}
+
+// RecentCalls returns each connection's latest succeeded, failed or unknown
+// outcome among the most recent 1000. Older activity is omitted, not reported as none.
+func (s *Store) RecentCalls(ctx context.Context) (map[string]ConnectionCall, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.operation,e.kind,e.time,s.payload FROM events e
+JOIN operation_summaries s ON s.id=e.operation WHERE e.kind IN ('succeeded','failed','unknown')
+ORDER BY e.sequence DESC LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]ConnectionCall{}
+	for rows.Next() {
+		var id string
+		var call ConnectionCall
+		var b []byte
+		if err := rows.Scan(&id, &call.Status, &call.Time, &b); err != nil {
+			return nil, err
+		}
+		raw, err := s.open("operation-summary:"+id, b)
+		if err != nil {
+			return nil, err
+		}
+		var o OperationSummary
+		if err := json.Unmarshal(raw, &o); err != nil {
+			return nil, err
+		}
+		if _, seen := out[o.Connection]; !seen {
+			out[o.Connection] = call
+		}
+	}
+	return out, rows.Err()
+}
+
 // ListStatus filters before limiting the list; an empty status includes all states.
 func (s *Store) ListStatus(ctx context.Context, status string) ([]OperationSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id,o.status,s.payload FROM operations o

@@ -14,9 +14,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
+	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -724,6 +726,17 @@ func TestConnectionCheckIsReadOnlyAndOwnerProtected(t *testing.T) {
 			t.Fatalf("incorrect safe health response: %d %s", w.Code, w.Body.String())
 		}
 	}
+	// The connection list swaps the whole row so status, sorting cues and fix links stay consistent.
+	unavailable.Store(false)
+	r := httptest.NewRequest("POST", "/connections/notes/test", nil)
+	r.AddCookie(cookie)
+	r.Header.Set("Accept", "text/vnd.gateway.connection-row+html")
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.HasPrefix(w.Body.String(), `<tr id="connection-notes"`) || !strings.Contains(w.Body.String(), ">Healthy</span>") || !strings.Contains(w.Body.String(), "just now</time>") || !strings.Contains(w.Body.String(), `<p id="connection-summary" class="connection-summary" hx-swap-oob="true">1 connection</p>`) {
+		t.Fatalf("incorrect connection row response: %d %s", w.Code, w.Body.String())
+	}
 	if calls.Load() != 0 || digest(g.catalogue()) != before {
 		t.Fatal("test executed tool or changed catalogue")
 	}
@@ -756,16 +769,25 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	for _, status := range []string{"Healthy", "Not tested", "Not connected", "Reconnect required", "Status unavailable"} {
 		t.Run(status, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			err := page.Execute(w, map[string]any{"Section": "connections", "Connections": []map[string]any{
-				{"ID": "oauth", "OAuth": true, "Health": upstream.Health{Status: status}},
-				{"ID": "public", "OAuth": false, "Health": upstream.Health{Status: "Not tested"}},
-			}})
+			attention := status != "Healthy" && status != "Not tested"
+			fix := ""
+			if attention {
+				fix = "Reconnect"
+			}
+			rows := []connectionRow{
+				{ID: "oauth", Auth: "OAuth", Attention: attention, Fix: fix, Health: upstream.Health{Status: status, Detail: "Safe health explanation", CheckedAt: time.Now()}},
+				{ID: "public", Auth: "No auth", Health: upstream.Health{Status: "Not tested"}},
+			}
+			err := page.Execute(w, map[string]any{"Section": "connections", "Connections": rows, "Summary": summarizeConnections(rows)})
 			if err != nil {
 				t.Fatal(err)
 			}
 			body := w.Body.String()
-			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, ">Test connection</button>") != 2 {
-				t.Fatal("missing status or test action")
+			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, `title="Test connection"`) != 2 || strings.Contains(body, "Safe health explanation") != attention {
+				t.Fatal("missing status or test action, or an explanation shown without needing attention")
+			}
+			if strings.Contains(body, `href="/connections/oauth/settings">Reconnect`) != attention {
+				t.Fatal("fix link must appear only for connections needing attention")
 			}
 			if strings.Contains(body, `formaction="/connections/oauth/connect"`) || strings.Contains(body, "OAuth endpoint") {
 				t.Fatal("dashboard exposed OAuth connect action without endpoint review")
@@ -781,7 +803,7 @@ func TestDashboardOAuthStatus(t *testing.T) {
 	}
 	h, cookie := adminUI(t, g, m)
 	w := formRequest(h, cookie, "GET", "/connections", nil)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), ">Not connected</span>") || !strings.Contains(w.Body.String(), `href="/connections/notes/settings">Connect →`) || !strings.Contains(w.Body.String(), "1 needs attention") {
 		t.Fatal("dashboard did not load credential status")
 	}
 	settings := formRequest(h, cookie, "GET", "/connections/notes/settings", nil)
@@ -871,5 +893,51 @@ func TestCatalogueRejectsExternalSchemaReferences(t *testing.T) {
 	cfg.Tools[0].InputSchema = map[string]any{"$ref": "file:///etc/passwd"}
 	if _, err := New(cfg, g.store, g.backend); err == nil {
 		t.Fatal("external schema reference accepted")
+	}
+}
+
+func TestConnectionListSummarizesPoliciesAndCalls(t *testing.T) {
+	g, s, _ := fixture(t)
+	g.cfg.Connections = append(g.cfg.Connections,
+		upstream.Connection{ID: "reference", URL: "http://localhost/read", NoAuth: true},
+		upstream.Connection{ID: "oauth", URL: "http://localhost/oauth", OAuth: &upstream.OAuthConfig{ClientID: "client", AuthURL: "https://auth.example/authorize", TokenURL: "https://auth.example/token"}},
+	)
+	g.cfg.Tools = append(g.cfg.Tools,
+		Tool{ID: "reference.read", Connection: "reference", Name: "read", Policy: "allow"},
+		Tool{ID: "reference.drop", Connection: "reference", Name: "drop", Policy: "deny"},
+		Tool{ID: "reference.list", Connection: "reference", Name: "list"},
+	)
+	g.cfg.ToolDefaults = map[string]string{"reference": "allow"}
+	g.cfg.PrivateConnections = map[string]bool{"reference": true}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := store.Operation{ID: "call", Tool: "notes.write", Connection: "notes", AmpUserID: "owner", Digest: "digest", Status: "ready", Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix(), Arguments: map[string]any{}}
+	if _, err := s.Submit(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(t.Context(), claimed, "succeeded", nil); err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	body := formRequest(h, cookie, "GET", "/connections", nil).Body.String()
+	oauth, notes, reference := strings.Index(body, `id="connection-oauth"`), strings.Index(body, `id="connection-notes"`), strings.Index(body, `id="connection-reference"`)
+	if oauth < 0 || oauth > notes || notes > reference {
+		t.Fatal("connections needing attention must sort first, then keep configured order")
+	}
+	for _, want := range []string{
+		"3 connections", "1 needs attention", "2 not tested",
+		`<span class="chip">Bearer</span>`, `<span class="chip">No auth</span>`, `<span class="chip">OAuth</span>`, `<span class="chip">Private threads</span>`,
+		"1 tool<span class=\"sub\">1 need approval</span>", "3 tools<span class=\"sub\">2 allowed · 1 blocked</span>",
+		"just now</time><span class=\"sub call-succeeded\">Succeeded", "No recent calls",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q", want)
+		}
 	}
 }
