@@ -180,8 +180,12 @@ credential bound to that extension install, share generation, and tab. Re-pairin
 revocation, or selecting a new share generation invalidates queued approvals.
 After upgrading from a version that kept pairings only in memory, pair once more
 to establish the persisted reconnect authority.
-Once a browser mutation is dispatched, a disconnect or extension-reported error
-marks its outcome unknown and is never replayed automatically.
+A mutation the extension rejects before sending any input, such as a changed tab
+URL, document or target element, is recorded as `failed` with the extension's
+message. Once input may have reached the page, a disconnect or extension-reported
+error marks the outcome `unknown`, stores the bounded extension message as
+`detail`, and is never replayed automatically. Extensions older than 0.2.1 do not
+report the pre-input distinction, so their rejections remain `unknown`.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
 orbs before using the extension outside the local demo.
 

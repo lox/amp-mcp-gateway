@@ -40,7 +40,7 @@ const context = {
   WebSocket: class {},
 };
 const source = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
-vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.commandForTest = command; this.executeForTest = execute; this.receiveForTest = receive; this.snapshotForTest = snapshot; this.screenshotForTest = screenshot; this.saveGatewayForTest = saveGateway; this.configForTest = () => currentConfig; this.drainForTest = () => operationQueue;`, context);
+vm.runInNewContext(`${source}\nthis.selectAllModifierForTest = selectAllModifier; this.BeforeInputErrorForTest = BeforeInputError; this.commandForTest = command; this.executeForTest = execute; this.receiveForTest = receive; this.snapshotForTest = snapshot; this.screenshotForTest = screenshot; this.saveGatewayForTest = saveGateway; this.configForTest = () => currentConfig; this.drainForTest = () => operationQueue;`, context);
 
 test("select-all uses Command on macOS and Control elsewhere", () => {
   assert.equal(context.selectAllModifierForTest("mac"), 4);
@@ -178,9 +178,31 @@ test("node mutations reject changed human-readable targets", async () => {
       "click",
       {document_id: "described-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
     ),
-    /target element changed/,
+    (error) => error instanceof context.BeforeInputErrorForTest && /target element changed/.test(error.message),
   );
   assert.deepEqual(sentCommands.splice(0).map((call) => call.method), ["Page.getFrameTree", "Accessibility.getPartialAXTree"]);
+});
+
+test("failures once the input phase starts stay ambiguous", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'input-failure', tabId: 202}", context);
+  const document = {frameTree: {frame: {loaderId: "input-document"}}};
+  const node = {nodes: [{backendDOMNodeId: 7, role: {value: "button"}, name: {value: "Save"}}]};
+  commandResponses.push(
+    document, node,
+    document, {},
+    document, node,
+    document, {model: {content: [0, 0, 10, 0, 10, 10, 0, 10]}},
+    {frameTree: {frame: {loaderId: "replaced-document"}}},
+  );
+  await assert.rejects(
+    context.executeForTest(
+      {shareID: "input-failure", tabId: 202},
+      "click",
+      {document_id: "input-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
+    ),
+    (error) => !(error instanceof context.BeforeInputErrorForTest) && /document changed/.test(error.message),
+  );
+  sentCommands.splice(0);
 });
 
 test("node mutations recheck matching human-readable targets after scrolling", async () => {

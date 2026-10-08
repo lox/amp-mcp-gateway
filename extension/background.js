@@ -8,6 +8,18 @@ const maxSnapshotBytes = 6 * 1024 * 1024;
 const maxSnapshotTextLength = 16 * 1024;
 const snapshotEncoder = new TextEncoder();
 
+// Marks a mutation that stopped before sending any click, key, focus or
+// navigation input to the page, so the gateway can record a definite failure.
+class BeforeInputError extends Error {}
+
+async function beforeInput(step) {
+  try {
+    return await step();
+  } catch (error) {
+    throw new BeforeInputError(String(error?.message || error));
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => serialized(reconnectStored));
 chrome.runtime.onStartup.addListener(() => serialized(reconnectStored));
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -195,7 +207,7 @@ async function receive(message, config) {
       const result = await execute(target, message.tool, message.arguments || {});
       send({type: "result", id: message.id, result});
     } catch (error) {
-      send({type: "result", id: message.id, error: String(error.message || error).slice(0, 1000)});
+      send({type: "result", id: message.id, error: String(error.message || error).slice(0, 1000), before_input: error instanceof BeforeInputError});
     }
   });
 }
@@ -280,13 +292,14 @@ async function screenshot(target) {
 }
 
 async function click(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName) {
-  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
-  await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
-  const {model} = await documentCommand(target, documentID, "DOM.getBoxModel", {backendNodeId});
-  const quad = model.content || model.border;
-  const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
-  const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+  const {x, y} = await beforeInput(async () => {
+    await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
+    await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+    await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
+    const {model} = await documentCommand(target, documentID, "DOM.getBoxModel", {backendNodeId});
+    const quad = model.content || model.border;
+    return {x: (quad[0] + quad[2] + quad[4] + quad[6]) / 4, y: (quad[1] + quad[3] + quad[5] + quad[7]) / 4};
+  });
   await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
   await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1});
   await documentCommand(target, documentID, "Input.dispatchMouseEvent", {type: "mouseReleased", x, y, button: "left", clickCount: 1});
@@ -294,12 +307,14 @@ async function click(target, documentID, backendNodeId, expectedURL, expectedRol
 }
 
 async function typeText(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName, text, submit) {
-  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
-  await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
-  await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
+  const modifiers = await beforeInput(async () => {
+    await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
+    await documentCommand(target, documentID, "DOM.scrollIntoViewIfNeeded", {backendNodeId});
+    await verifyNode(target, documentID, backendNodeId, expectedURL, expectedRole, expectedName);
+    const {os} = await chrome.runtime.getPlatformInfo();
+    return selectAllModifier(os);
+  });
   await documentCommand(target, documentID, "DOM.focus", {backendNodeId});
-  const {os} = await chrome.runtime.getPlatformInfo();
-  const modifiers = selectAllModifier(os);
   await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
   await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
   await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
@@ -343,15 +358,18 @@ function selectAllModifier(platform) {
 
 async function scroll(target, deltaY) {
   if (typeof deltaY !== "number" || !Number.isFinite(deltaY) || Math.abs(deltaY) > 10000) {
-    throw new Error("Scroll distance must be a finite number between -10000 and 10000.");
+    throw new BeforeInputError("Scroll distance must be a finite number between -10000 and 10000.");
   }
   await command(target, "Runtime.evaluate", {expression: `window.scrollBy(0, ${deltaY})`});
   return {scrolled: deltaY};
 }
 
 async function navigate(target, raw) {
-  const url = new URL(raw);
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Navigation requires an HTTP(S) URL.");
+  const url = await beforeInput(async () => {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Navigation requires an HTTP(S) URL.");
+    return parsed;
+  });
   const result = await command(target, "Page.navigate", {url: url.toString()});
   if (result.errorText) throw new Error(result.errorText);
   return {url: url.toString(), frame_id: result.frameId};

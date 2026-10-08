@@ -98,17 +98,25 @@ type wireMessage struct {
 	Arguments   map[string]any  `json:"arguments,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
 	Error       string          `json:"error,omitempty"`
+	BeforeInput bool            `json:"before_input,omitempty"`
 }
 
 type response struct {
 	result       json.RawMessage
 	err          string
+	beforeInput  bool
 	disconnected bool
 }
 
 type beforeDispatchError struct{ message string }
 
 func (e *beforeDispatchError) Error() string { return e.message }
+
+// OutcomeError reports a dispatched browser mutation whose effect is unknown.
+// Message is bounded extension or bridge text, safe to store with the operation.
+type OutcomeError struct{ Message string }
+
+func (e *OutcomeError) Error() string { return "browser outcome unknown: " + e.Message }
 
 // New creates a browser-aware backend and restores persisted reconnect
 // authority. Non-browser connections are delegated to fallback.
@@ -445,10 +453,12 @@ func (c *client) wait(ctx context.Context, id, tool string, result <-chan respon
 
 func finishResponse(tool string, r response) (response, error) {
 	if r.disconnected {
-		return response{}, errors.New("browser disconnected before returning an outcome")
+		return response{}, &OutcomeError{"Browser disconnected before returning an outcome."}
 	}
-	if r.err != "" && !readOnlyTool(tool) {
-		return response{}, fmt.Errorf("browser %s outcome unknown after extension error: %s", tool, r.err)
+	// The extension sets beforeInput only when it stopped before sending any
+	// click, key, focus, scroll or navigation input, so the failure is definite.
+	if r.err != "" && !readOnlyTool(tool) && !r.beforeInput {
+		return response{}, &OutcomeError{r.err}
 	}
 	return r, nil
 }
@@ -481,7 +491,7 @@ func (c *client) readLoop() {
 		c.mu.Lock()
 		result := c.pending[message.ID]
 		if result != nil {
-			result <- response{result: message.Result, err: truncate(message.Error, 1000)}
+			result <- response{result: message.Result, err: truncate(message.Error, 1000), beforeInput: message.BeforeInput}
 		}
 		delete(c.pending, message.ID)
 		c.mu.Unlock()

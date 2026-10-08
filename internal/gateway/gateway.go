@@ -497,10 +497,16 @@ func (g *Gateway) Run(ctx context.Context) error {
 				status = "unknown"
 				var diagnostic *upstream.Failure
 				errors.As(callErr, &diagnostic)
+				var browserErr *browserbridge.OutcomeError
+				detail := ""
+				if errors.As(callErr, &browserErr) {
+					detail = browserErr.Message
+				}
 				raw, err = json.Marshal(struct {
 					Message    string            `json:"message"`
 					Diagnostic *upstream.Failure `json:"diagnostic,omitempty"`
-				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic})
+					Detail     string            `json:"detail,omitempty"`
+				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic, detail})
 				if err != nil {
 					return err
 				}
