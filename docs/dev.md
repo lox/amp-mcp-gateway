@@ -326,12 +326,15 @@ registration, consent or real calls have succeeded.
 ### X
 
 In **Add MCP**, use connection name `x`, URL `https://api.x.com/mcp` and
-**OAuth**. X requires your own developer app and does not advertise dynamic client
-registration. Register the callback shown by the gateway in the X developer portal,
-then expand **Use an existing OAuth client** and supply the OAuth 2.0 client ID and,
-for a confidential client, its secret. The gateway requests X's advertised
-`offline.access` scope so X can issue refresh tokens. Review all advertised scopes
-carefully: the MCP can expose write operations as well as reads.
+**Bearer token**, using the app-only token from an X developer app. This direct
+route is read-only and has no user context.
+
+X documents user-context access only through its local `xurl mcp` stdio bridge,
+which performs OAuth and forwards a fresh bearer token. The gateway supports remote
+Streamable HTTP, not local command-based servers, so that full user-context route is
+not supported here. Do not select OAuth for this connection even though X's live
+endpoint currently publishes OAuth metadata; X does not document native remote MCP
+OAuth as a supported connection method.
 
 ### Defaults, exceptions and refreshes
 

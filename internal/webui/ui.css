@@ -464,12 +464,12 @@
   }
   :where(html.dashboard) .policy-columns {
     background: #f5f7f3;
-    @apply p-[10px_8px];
+    @apply m-[0_-22px] p-[10px_30px];
     border-block: 1px solid #e7ebe5;
     @apply text-[12px];
   }
   :where(html.dashboard) .policy-row {
-    @apply p-[12px_8px];
+    @apply m-[0_-22px] p-[12px_30px];
     border-bottom: 1px solid #e7ebe5;
   }
   :where(html.dashboard) .policy-row summary {
@@ -615,6 +615,7 @@
     :where(html.dashboard) .policy-columns,
     :where(html.dashboard) .policy-row {
       @apply grid-cols-[minmax(0,1fr)_32px] gap-[10px];
+      @apply m-[0_-16px] px-6;
     }
     :where(html.dashboard) .policy-columns .permission-column {
       @apply hidden;

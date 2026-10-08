@@ -14,6 +14,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var ErrOAuthClientIDRequired = errors.New("this provider does not support dynamic client registration; enter an existing OAuth client ID and register the callback URL below, or choose Bearer token if the provider issued one")
+
 // DiscoverOAuth uses MCP metadata and optionally registers a public OAuth client.
 // User-supplied credentials are sent only to the discovered authorization server.
 func DiscoverOAuth(ctx context.Context, endpoint, callback, clientID, secret string) (*OAuthConfig, error) {
@@ -111,7 +113,7 @@ func discoverOAuth(ctx context.Context, endpoint, callback, clientID, secret str
 	o := &OAuthConfig{ClientID: clientID, ClientSecret: secret, AuthURL: meta.AuthorizationEndpoint, TokenURL: meta.TokenEndpoint, Scopes: scopes, Resource: resource}
 	if clientID == "" {
 		if meta.RegistrationEndpoint == "" {
-			return nil, errors.New("this provider requires an existing OAuth client ID; register the callback URL shown below")
+			return nil, ErrOAuthClientIDRequired
 		}
 		registered, err := oauthex.RegisterClient(ctx, meta.RegistrationEndpoint, &oauthex.ClientRegistrationMetadata{
 			RedirectURIs: []string{callback}, ClientName: "amp-mcp-gateway", TokenEndpointAuthMethod: "none",

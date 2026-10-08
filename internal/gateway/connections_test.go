@@ -130,6 +130,26 @@ func TestAddConnectionPersistsWithoutPublishingTools(t *testing.T) {
 	}
 }
 
+func TestExistingOAuthClientFallbackIsVisible(t *testing.T) {
+	w := httptest.NewRecorder()
+	err := page.Execute(w, map[string]any{
+		"AddConnection":               true,
+		"ExistingOAuthClientRequired": true,
+		"BaseURL":                     "https://gateway.example",
+		"Values":                      map[string]string{"id": "x", "url": "https://api.x.com/mcp", "auth": "oauth"},
+		"Error":                       upstream.ErrOAuthClientIDRequired.Error(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`<details open>`, `id="client-id"`, `id="client-secret"`, `https://gateway.example/connections/x/callback`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("existing OAuth client fallback missing %q", want)
+		}
+	}
+}
+
 func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	g, s, _ := fixture(t)
 	remote := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
