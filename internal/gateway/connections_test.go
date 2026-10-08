@@ -783,8 +783,8 @@ func TestDashboardOAuthStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := w.Body.String()
-			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, `title="Test connection"`) != 2 || strings.Contains(body, "Safe health explanation") == (status == "Healthy") {
-				t.Fatal("missing status, explanation or test action")
+			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, `title="Test connection"`) != 2 || strings.Contains(body, "Safe health explanation") != attention {
+				t.Fatal("missing status or test action, or an explanation shown without needing attention")
 			}
 			if strings.Contains(body, `href="/connections/oauth/settings">Reconnect`) != attention {
 				t.Fatal("fix link must appear only for connections needing attention")
@@ -934,7 +934,7 @@ func TestConnectionListSummarizesPoliciesAndCalls(t *testing.T) {
 		"3 connections", "1 needs attention", "2 not tested",
 		`<span class="chip">Bearer</span>`, `<span class="chip">No auth</span>`, `<span class="chip">OAuth</span>`, `<span class="chip">Private threads</span>`,
 		"1 tool<span class=\"sub\">1 need approval</span>", "3 tools<span class=\"sub\">2 allowed · 1 blocked</span>",
-		"just now</time><span class=\"sub\">Succeeded", "No recent calls",
+		"just now</time><span class=\"sub call-succeeded\">Succeeded", "No recent calls",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q", want)

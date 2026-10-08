@@ -177,10 +177,26 @@ if (connectionFilter) {
 }
 const testAll = document.querySelector('#test-all');
 if (testAll) {
+  let pending = 0;
   testAll.hidden = false;
   testAll.addEventListener('click', () => {
-    for (const button of document.querySelectorAll('.connection-row:not([hidden]) .connection-test button:enabled')) {
-      button.click();
-    }
+    const buttons = [...document.querySelectorAll('.connection-row:not([hidden]) .connection-test button:enabled')];
+    if (!buttons.length) return;
+    pending = buttons.length;
+    testAll.disabled = true;
+    testAll.textContent = 'Testing…';
+    for (const button of buttons) button.click();
   });
+  // A successful test replaces its row before htmx:afterRequest, detaching the button, so
+  // count the last events dispatched while it is still in the document.
+  const settled = event => {
+    if (!pending || !event.detail.elt.matches?.('.connection-row .icon-button') || --pending) return;
+    testAll.disabled = false;
+    testAll.textContent = 'Test all';
+    // Concurrent row responses can arrive out of order; reread the summary once all settle.
+    htmx.ajax('GET', '/connections', {target: '#connection-summary', select: '#connection-summary', swap: 'outerHTML'});
+  };
+  for (const name of ['htmx:beforeOnLoad', 'htmx:sendError', 'htmx:timeout', 'htmx:sendAbort']) {
+    document.addEventListener(name, settled);
+  }
 }

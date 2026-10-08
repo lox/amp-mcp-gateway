@@ -704,10 +704,13 @@
   }
   :where(html.dashboard) .connection-list {
     border: 1px solid;
-    @apply m-[16px_0] overflow-x-auto;
+    @apply m-[20px_0] overflow-x-auto;
   }
   :where(html.dashboard) .connections-heading {
     @apply items-start flex-wrap;
+  }
+  :where(html.dashboard) .connections-heading .sub {
+    @apply mb-[6px];
   }
   :where(html.dashboard) .connection-summary {
     @apply text-[13px] text-muted m-[4px_0_0];
@@ -725,7 +728,16 @@
     @apply min-w-180;
   }
   :where(html.dashboard) .connection-table th {
-    @apply p-[10px_16px] text-[12px] font-normal text-muted bg-inset;
+    @apply p-[10px_16px] text-[11px] font-semibold tracking-[.06em] text-muted bg-inset;
+  }
+  :where(html.dashboard) .connection-table th:first-child {
+    @apply w-[26%];
+  }
+  :where(html.dashboard) .connection-table th:nth-child(3) {
+    @apply w-[17%];
+  }
+  :where(html.dashboard) .connection-table th:nth-child(4) {
+    @apply w-[14%];
   }
   :where(html.dashboard) .connection-table td {
     @apply p-[14px_16px] align-middle text-ink;
@@ -741,13 +753,14 @@
   :where(html.dashboard) .connection-row {
     @apply relative;
   }
-  :where(html.dashboard) .connection-row:hover {
+  :where(html.dashboard) .connection-row:is(:hover, :has(.connection-name:focus-visible)) {
     background: #f7f6f1;
   }
   :where(html.dashboard) .connection-row.attention td:first-child {
     box-shadow: inset 3px 0 0 #e0a526;
   }
   :where(html.dashboard) .connection-identity {
+    @apply flex flex-wrap items-center gap-[4px_8px];
     overflow-wrap: anywhere;
   }
   :where(html.dashboard) .connection-name {
@@ -755,6 +768,12 @@
   }
   :where(html.dashboard) .connection-name:hover {
     @apply underline;
+  }
+  :where(html.dashboard) .connection-name:focus-visible {
+    @apply outline-offset-1;
+  }
+  :where(html.dashboard) .connection-table td:is(:nth-child(3), :nth-child(4)) {
+    @apply whitespace-nowrap;
   }
   /* The name link covers the row; row controls stay above it. */
   :where(html.dashboard) .connection-name::after {
@@ -764,30 +783,42 @@
   :where(html.dashboard) .connection-row :is(button, time, .connection-fix, .test-error) {
     @apply relative z-1;
   }
-  :where(html.dashboard) .connection-chips {
-    @apply flex flex-wrap gap-[6px] mt-2;
-  }
   :where(html.dashboard) .chip {
     font:
       11px ui-monospace,
       monospace;
-    @apply p-[2px_6px] rounded-[3px] text-muted whitespace-nowrap;
+    @apply p-[1px_6px] rounded-[3px] text-muted whitespace-nowrap;
     border: 1px solid #d5d7dc;
   }
   :where(html.dashboard) .badge.neutral {
     @apply bg-inset text-muted;
   }
   :where(html.dashboard) .connection-row .connection-health .help {
-    @apply text-[13px] m-[4px_0_0] max-w-[44ch];
+    @apply text-[13px] m-[4px_0_0] max-w-[64ch];
   }
   :where(html.dashboard) .connection-fix {
-    @apply inline-block text-[13px] font-semibold mt-1;
+    @apply font-semibold no-underline whitespace-nowrap;
+  }
+  :where(html.dashboard) .connection-fix:hover {
+    @apply underline;
+  }
+  :where(html.dashboard) .connection-table .call-failed {
+    color: #8a5a00;
+  }
+  :where(html.dashboard) .connection-table .call-unknown {
+    @apply text-negative-ink;
   }
   :where(html.dashboard) .connection-row .test-error {
     @apply text-[13px] m-[4px_0_0];
   }
+  /* Quiet until the row is hovered or focused, so the column does not read as a wall of buttons. */
   :where(html.dashboard) .connection-test .icon-button {
-    @apply inline-grid place-items-center size-9 min-h-9 p-0;
+    @apply inline-grid place-items-center size-9 min-h-9 p-0 text-muted;
+    border-color: transparent;
+  }
+  :where(html.dashboard) .connection-row:is(:hover, :focus-within) .icon-button {
+    @apply text-ink;
+    border-color: #c9ccd3;
   }
   :where(html.dashboard) .icon-button svg {
     @apply size-4;
@@ -907,6 +938,9 @@
     }
     :where(html.dashboard) .heading-actions input {
       @apply w-full;
+    }
+    :where(html.dashboard) .connection-test .icon-button {
+      border-color: #c9ccd3;
     }
     :where(html.dashboard) .connection-status {
       @apply flex-col;

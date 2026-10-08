@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../../internal/gateway/assets/live.js'), 'utf8');
 
-function fixture({hidden = false, enabled = false, hasList = true, focused = false} = {}) {
+function fixture({hidden = false, enabled = false, hasList = true, focused = false, elements = {}, all = {}} = {}) {
   const listeners = {};
   const sources = [];
   const triggers = [];
@@ -28,8 +28,9 @@ function fixture({hidden = false, enabled = false, hasList = true, focused = fal
       if (selector === '[data-live]') return hasList ? list : null;
       if (selector === '#notification-feed[data-notifications-enabled]') return enabled ? feed : null;
       if (selector === '.notification-error') return error;
-      return null;
+      return elements[selector] || null;
     },
+    querySelectorAll: selector => all[selector] || [],
     addEventListener(name, fn) { listeners[name] = fn; },
   };
   vm.runInNewContext(source, {
@@ -37,7 +38,10 @@ function fixture({hidden = false, enabled = false, hasList = true, focused = fal
     window: {getSelection: () => null, addEventListener() {}},
     queueMicrotask,
     setTimeout: (callback, delay) => timers.push({callback, delay}),
-    htmx: {trigger(target, event) { triggers.push({target, event}); }},
+    htmx: {
+      trigger(target, event) { triggers.push({target, event}); },
+      ajax(method, url, options) { triggers.push({method, url, options}); },
+    },
     EventSource: class {
       static OPEN = 1;
       static CLOSED = 2;
@@ -52,6 +56,7 @@ function fixture({hidden = false, enabled = false, hasList = true, focused = fal
     enable(value) { enabled = value; listeners['gateway:notifications'](); },
     visibility(value) { document.hidden = value; listeners.visibilitychange(); },
     afterRequest(elt, successful) { listeners['htmx:afterRequest']({detail: {elt, successful}}); },
+    dispatch(name, detail) { listeners[name]({detail}); },
     request(elt) {
       let prevented = false;
       listeners['htmx:beforeRequest']({detail: {elt}, preventDefault() { prevented = true; }});
@@ -141,4 +146,28 @@ test('icon test buttons keep their icon while testing', () => {
   assert.equal(error.hidden, true);
   f.afterRequest(button, true);
   assert.equal(button.textContent, 'icon');
+});
+
+test('test all stays busy until every row test settles, then rereads the summary', () => {
+  const testAll = {hidden: true, disabled: false, textContent: 'Test all', addEventListener(name, fn) { this[name] = fn; }};
+  const row = selector => selector === '.connection-row .icon-button';
+  const buttons = [1, 2].map(() => ({clicks: 0, click() { this.clicks++; }, matches: row}));
+  const f = fixture({
+    hasList: false,
+    elements: {'#test-all': testAll},
+    all: {'.connection-row:not([hidden]) .connection-test button:enabled': buttons},
+  });
+  assert.equal(testAll.hidden, false);
+  testAll.click();
+  assert.deepEqual(buttons.map(b => b.clicks), [1, 1]);
+  assert.equal(testAll.disabled, true);
+  // Unrelated htmx traffic must not settle the bulk test.
+  f.dispatch('htmx:beforeOnLoad', {elt: {matches: () => false}});
+  f.dispatch('htmx:beforeOnLoad', {elt: buttons[0]});
+  assert.equal(testAll.disabled, true);
+  f.dispatch('htmx:sendError', {elt: buttons[1]});
+  assert.equal(testAll.disabled, false);
+  assert.equal(testAll.textContent, 'Test all');
+  // Values created inside the vm context have a different Object prototype.
+  assert.deepEqual(JSON.parse(JSON.stringify(f.triggers.at(-1))), {method: 'GET', url: '/connections', options: {target: '#connection-summary', select: '#connection-summary', swap: 'outerHTML'}});
 });
