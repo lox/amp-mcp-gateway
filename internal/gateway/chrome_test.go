@@ -108,8 +108,8 @@ func TestChromeIntegrationPageAndPairingRoutes(t *testing.T) {
 		t.Fatalf("cross-origin browser pairing returned %d", w.Code)
 	}
 	w = formRequest(h, cookie, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {chromeConnectionID}})
-	match := regexp.MustCompile(`Pairing code for browser</dt><dd><code>([^<]+)</code>`).FindStringSubmatch(w.Body.String())
-	if w.Code != http.StatusOK || len(match) != 2 {
+	match := regexp.MustCompile(`<code id="pairing-code">([^<]+)</code>`).FindStringSubmatch(w.Body.String())
+	if w.Code != http.StatusOK || len(match) != 2 || !strings.Contains(w.Body.String(), `data-copy="pairing-code" aria-label="Copy pairing code"`) {
 		t.Fatalf("pairing page did not render its code: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if w := formRequest(h, cookie, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {"missing"}}); w.Code != http.StatusBadRequest {

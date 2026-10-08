@@ -126,7 +126,7 @@ func (g *Gateway) registerChrome(mux *http.ServeMux, browser *browserbridge.Mana
 			http.Error(w, "pairing unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		g.chromePage(w, r, browser, available, map[string]any{"PairingCode": code, "PairingConnection": connection})
+		g.chromePage(w, r, browser, available, map[string]any{"PairingCode": code})
 	})
 	mux.HandleFunc("POST /integrations/chrome/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !available {
