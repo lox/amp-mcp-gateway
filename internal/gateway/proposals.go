@@ -211,7 +211,7 @@ func (g *Gateway) decidePolicies(w http.ResponseWriter, r *http.Request, m *upst
 				native = true
 				next.Integrations[i].Policy = d.Default
 				for _, tool := range d.Tools {
-					if tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Policy != "" {
+					if tool.ID == integrationTool(next.Integrations[i], "").ID && tool.Policy != "" {
 						next.Integrations[i].Policy = tool.Policy
 					}
 				}

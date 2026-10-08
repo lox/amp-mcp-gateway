@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -143,6 +144,153 @@ func TestFlyIntegrationSetupAndCredentialLease(t *testing.T) {
 	}
 	if second := redeem(); second.Code != http.StatusGone {
 		t.Fatal("redemption URL was not single-use")
+	}
+}
+
+func TestSecretAccessUsesStandingApprovalsAndIdentityBoundRedemption(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	secret := "fixture-secret-value\nwith-second-line"
+	values := url.Values{"id": {"deploy_key"}, "name": {"Deployment key"}, "value_base64": {base64.StdEncoding.EncodeToString([]byte(secret))}, "policy": {"require_approval"}}
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/secrets?saved=1" {
+		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/integrations", "/secrets", "/approvals", "/audit"} {
+		page := formRequest(h, cookie, "GET", path, nil)
+		if page.Code != http.StatusOK || strings.Contains(page.Body.String(), secret) {
+			t.Fatalf("secret exposed on %s", path)
+		}
+	}
+	secretsPage := formRequest(h, cookie, "GET", "/secrets", nil).Body.String()
+	if !strings.Contains(secretsPage, `<title>Amp MCP Gateway · Secrets</title>`) || !strings.Contains(secretsPage, `href="/secrets" aria-current="page"`) {
+		t.Fatal("Secrets is not presented as a top-level page")
+	}
+	integrationsPage := formRequest(h, cookie, "GET", "/integrations", nil).Body.String()
+	if strings.Contains(integrationsPage, "<h2>Secrets</h2>") {
+		t.Fatal("Secrets still appears in the Integrations catalogue")
+	}
+	restored := g.cfg
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0].Credential != secret {
+		t.Fatalf("secret did not survive encrypted catalogue reload: %#v, %v", restored.Integrations, err)
+	}
+	if tool, ok := g.tools["deploy_key.request_secret"]; !ok || tool.Policy != "require_approval" {
+		t.Fatalf("secret tool not published: %#v", tool)
+	}
+
+	threadOne := ampIdentity{Subject: "amp:owner:thread:one", UserID: "owner", WorkspaceID: "workspace-one", ProjectID: "project-one", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+	threadTwo := threadOne
+	threadTwo.Subject = "amp:user-owner:thread:two"
+	threadTwo.ThreadID = "T-01a0b6d8-e50f-7723-941c-60bca63723bb"
+	otherProject := threadTwo
+	otherProject.ProjectID = "project-two"
+
+	request := func(id, purpose string) callInput {
+		var in callInput
+		in.RequestID = id
+		in.Calls = append(in.Calls, struct {
+			ToolID    string         `json:"tool_id"`
+			Arguments map[string]any `json:"arguments"`
+		}{ToolID: "deploy_key.request_secret", Arguments: map[string]any{"purpose": purpose}})
+		return in
+	}
+	first, err := g.submit(withAmpIdentity(t.Context(), threadOne), request("secret-first", "deploy reviewed build"))
+	if err != nil || first.Status != "pending" {
+		t.Fatalf("first request: %#v, %v", first, err)
+	}
+	if err := s.ApproveWithOptions(t.Context(), first.ID, "owner", store.ApprovalOptions{Breadth: "tool", Scope: "project", Expiry: "never"}); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	first = await(t, s, first.ID, "succeeded")
+	if strings.Contains(string(first.Result), secret) {
+		t.Fatal("secret returned in MCP operation result")
+	}
+	second, err := g.submit(withAmpIdentity(t.Context(), threadTwo), request("secret-second", "rotate deployment"))
+	if err != nil || second.Status != "ready" || second.ApprovalScope != "project" {
+		t.Fatalf("project grant did not authorize another thread: %#v, %v", second, err)
+	}
+	third, err := g.submit(withAmpIdentity(t.Context(), otherProject), request("secret-third", "deploy elsewhere"))
+	if err != nil || third.Status != "pending" {
+		t.Fatalf("project grant crossed project boundary: %#v, %v", third, err)
+	}
+
+	var result struct {
+		Structured struct {
+			RedemptionURL string `json:"redemption_url"`
+		} `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(first.Result, &result); err != nil || result.Structured.RedemptionURL == "" {
+		t.Fatalf("missing redemption URL: %s, %v", first.Result, err)
+	}
+	redeemURL, err := url.Parse(result.Structured.RedemptionURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseMux := http.NewServeMux()
+	leaseMux.HandleFunc("POST /leases/{id}", g.redeemLease)
+	redeem := func(identity ampIdentity) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", redeemURL.Path, nil)
+		r.Header.Set("Authorization", "Bearer gateway-test-token")
+		r = r.WithContext(withAmpIdentity(r.Context(), identity))
+		w := httptest.NewRecorder()
+		leaseMux.ServeHTTP(w, r)
+		return w
+	}
+	if wrong := redeem(threadTwo); wrong.Code != http.StatusGone {
+		t.Fatalf("lease redeemed by another thread: %d %s", wrong.Code, wrong.Body.String())
+	}
+	issued := redeem(threadOne)
+	if issued.Code != http.StatusOK || issued.Body.String() != secret || issued.Header().Get("Cache-Control") != "no-store" || issued.Header().Get("Content-Type") != "application/octet-stream" {
+		t.Fatalf("secret redemption: %d %q", issued.Code, issued.Body.String())
+	}
+	if second := redeem(threadOne); second.Code != http.StatusGone {
+		t.Fatal("secret redemption URL was not single-use")
+	}
+}
+
+func TestSecretRotationInvalidatesQueuedAuthorityAndLeases(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	values := url.Values{"id": {"api_key"}, "name": {"API key"}, "value_base64": {base64.StdEncoding.EncodeToString([]byte("first-value"))}, "policy": {"allow"}}
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
+		t.Fatalf("save secret: %d %s", w.Code, w.Body.String())
+	}
+	integration, _ := g.integration("api_key")
+	result, err := g.callIntegration(operationContext{Context: t.Context(), Operation: store.Operation{ID: "secret-lease"}}, integration, secretRequest, map[string]any{"purpose": "test rotation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redeemURL, err := url.Parse(result.StructuredContent.(map[string]any)["redemption_url"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values.Set("value_base64", base64.StdEncoding.EncodeToString([]byte("second-value")))
+	if w := formRequest(h, cookie, "POST", "/secrets", values); w.Code != http.StatusSeeOther {
+		t.Fatalf("rotate secret: %d %s", w.Code, w.Body.String())
+	}
+	r := httptest.NewRequest("POST", redeemURL.Path, nil)
+	r.Header.Set("Authorization", "Bearer gateway-test-token")
+	w := httptest.NewRecorder()
+	leaseMux := http.NewServeMux()
+	leaseMux.HandleFunc("POST /leases/{id}", g.redeemLease)
+	leaseMux.ServeHTTP(w, r)
+	if w.Code != http.StatusGone {
+		t.Fatalf("lease survived rotation: %d %s", w.Code, w.Body.String())
+	}
+	removed := formRequest(h, cookie, "POST", "/secrets/api_key/remove", nil)
+	if removed.Code != http.StatusSeeOther || removed.Header().Get("Location") != "/secrets" {
+		t.Fatalf("remove secret: %d %s", removed.Code, removed.Body.String())
+	}
+	if _, configured := g.integration("api_key"); configured {
+		t.Fatal("removed secret remains configured")
 	}
 }
 

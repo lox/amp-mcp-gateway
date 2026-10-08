@@ -15,7 +15,8 @@ The gateway exposes four tools to agents:
 It is self-hosted and supports isolated owner accounts on one shared host. Each
 account has separate connections, credentials, approvals, and history. Remote
 MCP connections can use OAuth or bearer tokens; native integrations and the
-Chrome extension use the same policy, approval, and audit path.
+Chrome extension use the same policy, approval, and audit path. Owners can also
+store encrypted secrets and approve access for individual Amp threads or projects.
 
 This is a prototype, not a production security certification. In particular,
 an upstream timeout may mean a write succeeded: the gateway records the outcome

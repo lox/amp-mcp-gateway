@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -76,6 +78,112 @@ func TestPrivatePoliciesRoundTrip(t *testing.T) {
 	}
 	if restored.Tools[0].Policy != "allow" || restored.Tools[1].Policy != "" || restored.ToolDefaults["notes"] != "require_approval" || !restored.PrivateConnections["notes"] {
 		t.Fatalf("private policies not restored: tools=%+v defaults=%+v", restored.Tools, restored.ToolDefaults)
+	}
+}
+
+func TestEmbeddedSecretFormatsMigrateAtStartup(t *testing.T) {
+	for _, field := range []string{"Integrations", "Secrets"} {
+		t.Run(field, func(t *testing.T) {
+			_, s, _ := fixture(t)
+			raw := []byte(`{"` + field + `":[{"ID":"deploy_key","Provider":"secret","Account":"Deployment key","Credential":"private-value","Policy":"require_approval"}]}`)
+			if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+				t.Fatal(err)
+			}
+			var cfg Config
+			if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+				t.Fatal(err)
+			}
+			migrated, err := s.LoadCatalogue(t.Context())
+			if err != nil || strings.Contains(string(migrated), "private-value") {
+				t.Fatalf("startup retained embedded secret: %s, %v", migrated, err)
+			}
+			stored, err := s.LoadSecrets(t.Context())
+			if err != nil || stored["deploy_key"] == nil {
+				t.Fatalf("startup did not migrate secret: %v", err)
+			}
+			if err := s.SaveCatalogue(t.Context(), []byte(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+			if err := LoadCatalogue(t.Context(), &cfg, s); err != nil || len(cfg.Integrations) != 1 || cfg.Integrations[0].Credential != "private-value" {
+				t.Fatalf("secret lost after rollback save: %v", err)
+			}
+		})
+	}
+}
+
+func TestSecretsPersistOutsideLegacyIntegrations(t *testing.T) {
+	_, s, b := fixture(t)
+	secret := Integration{ID: "deploy_key", Provider: secretProvider, Account: "Deployment key", Credential: "private-value", Policy: "require_approval"}
+	raw, _, err := encodeCatalogue(catalogue{Integrations: []Integration{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), secret.Credential) {
+		t.Fatal("secret persisted in the legacy catalogue")
+	}
+	var legacy struct {
+		Connections  []upstream.Connection
+		Integrations []Integration
+		Tools        []Tool
+		ToolDefaults map[string]string
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.Integrations) != 0 || len(legacy.Tools) != 0 {
+		t.Fatalf("rollback exposed an unsupported secret integration: integrations=%#v tools=%#v", legacy.Integrations, legacy.Tools)
+	}
+	if _, err := New(Config{AmpUserID: "owner", BaseURL: "http://localhost", Connections: legacy.Connections, Integrations: legacy.Integrations, Tools: legacy.Tools, ToolDefaults: legacy.ToolDefaults}, s, b); err != nil {
+		t.Fatalf("rollback configuration did not start: %v", err)
+	}
+	preRelease, err := json.Marshal(persistedCatalogue{Secrets: []Integration{secret}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), preRelease); err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0] != secret {
+		t.Fatalf("pre-release secret field not migrated: %#v, %v", restored.Integrations, err)
+	}
+	migrated, err := s.LoadCatalogue(t.Context())
+	if err != nil || strings.Contains(string(migrated), secret.Credential) || strings.Contains(string(migrated), "Secrets") {
+		t.Fatalf("migrated catalogue retained secrets: %s, %v", migrated, err)
+	}
+	// Simulate a browser-managed configuration save by the previous release.
+	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+		t.Fatal(err)
+	}
+	restored = Config{}
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Integrations) != 1 || restored.Integrations[0] != secret {
+		t.Fatalf("secret did not survive rollback save: %#v, %v", restored.Integrations, err)
+	}
+	// The rolled-back release cannot see secret IDs and may reuse one for a connection.
+	legacy.Connections = []upstream.Connection{
+		{ID: secret.ID, URL: "http://localhost/mcp", NoAuth: true},
+		{ID: "deploy_key_recovered", URL: "http://localhost/other", NoAuth: true},
+	}
+	rollbackCollision, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), rollbackCollision); err != nil {
+		t.Fatal(err)
+	}
+	restored = Config{AmpUserID: "owner", BaseURL: "http://localhost"}
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Connections) != 2 || restored.Connections[0].ID != secret.ID || len(restored.Integrations) != 1 || restored.Integrations[0].ID != "deploy_key_recovered_2" || restored.Integrations[0].Credential != secret.Credential {
+		t.Fatalf("rollback collision not recovered: connections=%#v integrations=%#v", restored.Connections, restored.Integrations)
+	}
+	if _, err := New(restored, s, b); err != nil {
+		t.Fatalf("recovered rollback configuration did not start: %v", err)
+	}
+	stored, err := s.LoadSecrets(t.Context())
+	if err != nil || stored["deploy_key_recovered_2"] == nil || stored[secret.ID] != nil {
+		t.Fatalf("recovered secret not migrated: keys=%v, %v", slices.Sorted(maps.Keys(stored)), err)
 	}
 }
 

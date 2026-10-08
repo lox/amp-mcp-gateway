@@ -82,8 +82,17 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	cfg.ToolDefaults = maps.Clone(cfg.ToolDefaults)
 	integrations := make(map[string]Integration, len(cfg.Integrations))
 	for i, integration := range cfg.Integrations {
-		if integration.ID != flyIntegrationID || integration.Provider != "fly" {
+		if !connectionID.MatchString(integration.ID) {
+			return nil, errors.New("invalid integration ID")
+		}
+		if integration.Provider != "fly" && integration.Provider != secretProvider {
 			return nil, errors.New("unsupported integration configuration")
+		}
+		if integration.Provider == "fly" && integration.ID != flyIntegrationID {
+			return nil, errors.New("invalid Fly.io integration ID")
+		}
+		if integration.Provider == secretProvider && integration.ID == flyIntegrationID {
+			return nil, errors.New("reserved secret ID")
 		}
 		if _, exists := integrations[integration.ID]; exists {
 			return nil, errors.New("duplicate integration ID")
@@ -93,8 +102,12 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				return nil, errors.New("connection and integration IDs must be unique")
 			}
 		}
-		if err := fly.ValidateToken(integration.Credential); err != nil {
-			return nil, errors.New("invalid Fly.io integration credential")
+		if integration.Provider == "fly" {
+			if err := fly.ValidateToken(integration.Credential); err != nil {
+				return nil, errors.New("invalid Fly.io integration credential")
+			}
+		} else if integration.Credential == "" || len(integration.Credential) > maxSecretBytes || integration.Account == "" || len(integration.Account) > 200 {
+			return nil, errors.New("invalid secret integration")
 		}
 		if integration.Policy == "" {
 			integration.Policy = cfg.defaultPolicy(integration.ID)
@@ -109,11 +122,12 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		cfg.ToolDefaults = map[string]string{}
 	}
 	for _, integration := range cfg.Integrations {
+		generated := integrationTool(integration, "")
 		cfg.Tools = slices.DeleteFunc(cfg.Tools, func(tool Tool) bool {
-			return tool.ID == flyIntegrationID+"."+flyRequestToken && tool.Connection == flyIntegrationID && tool.Name == flyRequestToken
+			return tool.ID == generated.ID && tool.Connection == generated.Connection && tool.Name == generated.Name
 		})
 		cfg.ToolDefaults[integration.ID] = integration.Policy
-		cfg.Tools = append(cfg.Tools, flyTool(""))
+		cfg.Tools = append(cfg.Tools, generated)
 	}
 	g := &Gateway{cfg: cfg, store: s, backend: b, tools: map[string]Tool{}, schemas: map[string]*jsonschema.Schema{}, bindings: map[string]string{}}
 	g.policyClient = policy.Client{Key: os.Getenv("TYPESAFE_API_KEY")}
@@ -146,8 +160,11 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		if connection == nil && !native {
 			return nil, fmt.Errorf("unknown connection for %s", t.ID)
 		}
-		if native && (t.ID != flyIntegrationID+"."+flyRequestToken || t.Name != flyRequestToken) {
-			return nil, errors.New("invalid Fly.io integration tool")
+		if native {
+			generated := integrationTool(integration, t.Policy)
+			if t.ID != generated.ID || t.Name != generated.Name {
+				return nil, errors.New("invalid native integration tool")
+			}
 		}
 		compiler := jsonschema.NewCompiler()
 		// Upstream schemas are untrusted: only references within this document are allowed.

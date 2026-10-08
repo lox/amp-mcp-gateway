@@ -72,6 +72,14 @@ maximum 15-minute lifetime. This proves native integration routing and controlle
 credential leasing; it does not yet prove a real Fly token, per-command Fly auditing,
 or generalize provider-specific configuration beyond Fly.
 
+The same pipeline now supports owner-managed generic secrets. Each encrypted secret
+publishes its own `<id>.request_secret` tool. A one-time or standing thread/project
+approval produces a five-minute, caller-bound, single-use redemption URL; the secret
+never enters MCP results or browser/audit presentation. Rotation or removal denies
+queued requests, revokes standing approvals and deletes unredeemed leases. This is
+controlled disclosure to an approved workload, not secret-use confinement: after
+redemption, a shell-capable workload can reveal or reuse the value.
+
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
 behavior before adding more onboarding features. Endpoint/credential editing,

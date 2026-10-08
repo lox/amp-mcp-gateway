@@ -89,3 +89,51 @@ func TestCatalogueEncryptionRestartAndRevocation(t *testing.T) {
 		t.Fatal("missing revocation audit")
 	}
 }
+
+func TestDedicatedSecretsAreEncryptedAtomicAndLegacySafe(t *testing.T) {
+	s, _, _ := testStore(t)
+	ctx := t.Context()
+	secret := []byte("private-secret-value")
+	if err := s.SaveCatalogueProtectingWithSecrets(ctx, []byte("catalogue-v1"), nil, map[string][]byte{"deploy_key": secret}); err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext []byte
+	if err := s.db.QueryRow("SELECT payload FROM secrets WHERE id='deploy_key'").Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(ciphertext, []byte("private-secret-value")) {
+		t.Fatal("secret stored in plaintext")
+	}
+	if err := s.SaveCatalogue(ctx, []byte("catalogue-v2")); err != nil {
+		t.Fatal(err)
+	}
+	assertSecret := func() {
+		t.Helper()
+		got, err := s.LoadSecrets(ctx)
+		if err != nil || !bytes.Equal(got["deploy_key"], secret) {
+			t.Fatalf("secret changed: %q, %v", got["deploy_key"], err)
+		}
+	}
+	assertSecret()
+	if _, err := s.Submit(ctx, operation("running-secret-save", "ready")); err != nil {
+		t.Fatal(err)
+	}
+	running, err := s.Claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogueProtectingWithSecrets(ctx, []byte("catalogue-v3"), nil, map[string][]byte{"deploy_key": []byte("replacement")}); err == nil {
+		t.Fatal("secret changed during dispatch")
+	}
+	assertSecret()
+	if err := s.Finish(ctx, running, "failed", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogueProtectingWithSecrets(ctx, []byte("catalogue-v3"), nil, map[string][]byte{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadSecrets(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("removed secret retained: %#v, %v", got, err)
+	}
+}
