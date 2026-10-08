@@ -177,8 +177,23 @@ func TestMutationErrorHasUnknownOutcome(t *testing.T) {
 		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "input command failed"})
 	}()
 	result, err := m.Call(t.Context(), "browser", "type", m.Binding("browser"), map[string]any{"backend_node_id": 7, "text": "changed"})
-	if err == nil || result != nil || !strings.Contains(err.Error(), "outcome unknown") {
+	var outcome *OutcomeError
+	if result != nil || !errors.As(err, &outcome) || outcome.Message != "input command failed" {
 		t.Fatalf("ambiguous mutation returned %#v, %v", result, err)
+	}
+}
+
+func TestMutationRejectedBeforeInputIsDefiniteToolFailure(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	go func() {
+		var command wireMessage
+		_ = ws.ReadJSON(&command)
+		_ = ws.WriteJSON(wireMessage{Type: "result", ID: command.ID, Error: "The shared tab URL changed after the accessibility snapshot.", BeforeInput: true})
+	}()
+	result, err := m.Call(t.Context(), "browser", "click", m.Binding("browser"), map[string]any{"backend_node_id": 7})
+	if err != nil || result == nil || !result.IsError || result.Content[0].(*mcp.TextContent).Text != "The shared tab URL changed after the accessibility snapshot." {
+		t.Fatalf("pre-input rejection returned %#v, %v", result, err)
 	}
 }
 
