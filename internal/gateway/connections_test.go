@@ -81,6 +81,36 @@ func TestPrivatePoliciesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSecretFormatsMigrateAtStartup(t *testing.T) {
+	for _, field := range []string{"Integrations", "Secrets"} {
+		t.Run(field, func(t *testing.T) {
+			_, s, _ := fixture(t)
+			raw := []byte(`{"` + field + `":[{"ID":"deploy_key","Provider":"secret","Account":"Deployment key","Credential":"private-value","Policy":"require_approval"}]}`)
+			if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+				t.Fatal(err)
+			}
+			var cfg Config
+			if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+				t.Fatal(err)
+			}
+			migrated, err := s.LoadCatalogue(t.Context())
+			if err != nil || strings.Contains(string(migrated), "private-value") {
+				t.Fatalf("startup retained embedded secret: %s, %v", migrated, err)
+			}
+			stored, err := s.LoadSecrets(t.Context())
+			if err != nil || stored["deploy_key"] == nil {
+				t.Fatalf("startup did not migrate secret: %v", err)
+			}
+			if err := s.SaveCatalogue(t.Context(), []byte(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+			if err := LoadCatalogue(t.Context(), &cfg, s); err != nil || len(cfg.Integrations) != 1 || cfg.Integrations[0].Credential != "private-value" {
+				t.Fatalf("secret lost after rollback save: %v", err)
+			}
+		})
+	}
+}
+
 func TestSecretsPersistOutsideLegacyIntegrations(t *testing.T) {
 	_, s, b := fixture(t)
 	secret := Integration{ID: "deploy_key", Provider: secretProvider, Account: "Deployment key", Credential: "private-value", Policy: "require_approval"}

@@ -61,11 +61,13 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		if err := json.Unmarshal(raw, &persisted); err != nil {
 			return err
 		}
-		hadEmbeddedSecrets = len(persisted.Secrets) > 0
 		c = catalogue{
 			Connections: persisted.Connections, Integrations: append(persisted.Integrations, persisted.Secrets...),
 			Tools: persisted.Tools, ToolDefaults: persisted.ToolDefaults, PrivateConnections: persisted.PrivateConnections,
 		}
+		hadEmbeddedSecrets = slices.ContainsFunc(c.Integrations, func(integration Integration) bool {
+			return integration.Provider == secretProvider
+		})
 	}
 	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
 	for _, id := range secretIDs {
