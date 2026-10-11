@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
+	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -208,6 +209,25 @@ func TestPolicyChangeAndUnknownOutcome(t *testing.T) {
 		returned, err := json.Marshal(g.result(o))
 		if err != nil || !strings.Contains(string(returned), "authentication_rejected") || b.calls.Load() != 1 {
 			t.Fatalf("diagnostic not returned or request retried: %s, %v", returned, err)
+		}
+	})
+	t.Run("browser outcome detail persisted", func(t *testing.T) {
+		g, s, b := fixture(t)
+		b.callErr = &browserbridge.OutcomeError{Message: "Input.dispatchMouseEvent failed"}
+		o, err := g.submit(t.Context(), input("browser-detail", "private"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+			t.Fatal(err)
+		}
+		runWorker(t, g)
+		o = await(t, s, o.ID, "unknown")
+		var result struct {
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal(o.Result, &result); err != nil || result.Detail != "Input.dispatchMouseEvent failed" || b.calls.Load() != 1 {
+			t.Fatalf("browser detail missing or retried: %s, %v", o.Result, err)
 		}
 	})
 	t.Run("changed account", func(t *testing.T) {
