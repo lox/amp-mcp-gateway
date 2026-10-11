@@ -333,10 +333,15 @@ async function verifyNode(target, documentID, backendNodeId, expectedURL, expect
   }
   const tab = await chrome.tabs.get(target.tabId);
   if (tab.url !== expectedURL) throw new Error("The shared tab URL changed after the accessibility snapshot.");
-  const tree = await documentCommand(target, documentID, "Accessibility.getPartialAXTree", {backendNodeId, fetchRelatives: false});
-  const node = tree.nodes?.find((candidate) => candidate.backendDOMNodeId === backendNodeId);
-  if (!node || node.role?.value !== expectedRole || node.name?.value !== expectedName) {
-    throw new Error("The target element changed after the accessibility snapshot.");
+  // Use the same full-tree query and text bounds as snapshot(); the partial-tree
+  // query can compute a different role or name for the same node.
+  const tree = await documentCommand(target, documentID, "Accessibility.getFullAXTree");
+  const node = tree.nodes?.find((candidate) => candidate.backendDOMNodeId === backendNodeId && (candidate.role?.value || candidate.name?.value || candidate.value?.value));
+  const role = boundedSnapshotText(node?.role?.value).value;
+  const name = boundedSnapshotText(node?.name?.value).value;
+  if (!node || role !== expectedRole || name !== expectedName) {
+    const describe = (value) => JSON.stringify(String(value ?? "").slice(0, 200));
+    throw new Error(`The target element changed after the accessibility snapshot: expected ${describe(expectedRole)} ${describe(expectedName)}, found ${node ? `${describe(role)} ${describe(name)}` : "no matching node"}.`);
   }
 }
 

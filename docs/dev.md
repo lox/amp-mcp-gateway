@@ -186,6 +186,9 @@ message. Once input may have reached the page, a disconnect or extension-reporte
 error marks the outcome `unknown`, stores the bounded extension message as
 `detail`, and is never replayed automatically. Extensions older than 0.2.1 do not
 report the pre-input distinction, so their rejections remain `unknown`.
+Before input, the extension rechecks the target against the same full accessibility
+tree used by `browser.snapshot`; a mismatch reports the expected and found role and
+name, each truncated to 200 characters.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
 orbs before using the extension outside the local demo.
 
