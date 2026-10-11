@@ -25,7 +25,6 @@ steps:
 
   - label: ":docker: Build deployment image"
     key: build-image
-    if: build.branch == "main" && build.pull_request.id == null
     plugins:
       - mise#v1.1.5:
           install_args: flyctl

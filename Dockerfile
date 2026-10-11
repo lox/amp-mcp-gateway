@@ -2,7 +2,7 @@
 FROM node:22.20.0-bookworm-slim AS styles
 WORKDIR /src
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --no-audit --no-fund
 COPY internal ./internal
 RUN npm run build:css
 
