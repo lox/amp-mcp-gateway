@@ -665,14 +665,16 @@ race tests, vet and build the gateway. A separate plugin-test job installs the
 pinned Bun version through mise and runs `mise run check-plugin`.
 It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
-fall back to normal downloads and compilation. On non-PR `main` builds, a parallel
-job uses Fly's remote Docker builder to publish an image tagged with the immutable
-Git commit. The deploy job installs only `flyctl` with the mise plugin and deploys
-that exact image after all checks pass.
+fall back to normal downloads and compilation. A parallel job builds the Docker
+image with Buildkite's hosted Docker builder, which keeps BuildKit layers and cache
+mounts between builds. Pull requests only verify that the image builds. Non-PR
+`main` builds push it to Fly's registry, tagged with the immutable Git commit. The
+deploy job installs only `flyctl` with the mise plugin and deploys that exact image
+after all checks pass.
 
 Only non-PR `main` builds publish deployment images or deploy. Image creation runs
-alongside checks so remote-builder startup and compilation stay off the deployment
-critical path; publishing an image does not change the running app. Deploys share
+alongside checks so compilation stays off the deployment critical path; publishing
+an image does not change the running app. Deploys share
 one concurrency slot, skip superseded main commits, use Fly's rolling strategy
 without HA, and check public `/healthz` afterwards. Running deployments are not
 automatically cancelled by a newer commit.
