@@ -661,6 +661,9 @@ func TestConnectionHealthTargetHasCSSSafePrefix(t *testing.T) {
 					t.Fatalf("missing %s", want)
 				}
 			}
+			if strings.Contains(w.Body.String(), "hx-request=") {
+				t.Fatal("ordinary HTTP tests must retain the default request timeout")
+			}
 		})
 	}
 }
@@ -787,6 +790,9 @@ func TestDashboardOAuthStatus(t *testing.T) {
 			body := w.Body.String()
 			if !strings.Contains(body, ">"+status+"</span>") || strings.Count(body, `title="Test connection"`) != 2 || strings.Contains(body, "Safe health explanation") != attention {
 				t.Fatal("missing status or test action, or an explanation shown without needing attention")
+			}
+			if strings.Contains(body, "hx-request=") {
+				t.Fatal("ordinary HTTP tests must retain the default request timeout")
 			}
 			if strings.Contains(body, `href="/connections/oauth/settings">Reconnect`) != attention {
 				t.Fatal("fix link must appear only for connections needing attention")
@@ -1012,9 +1018,16 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 		if !strings.Contains(body, "fresh, billable Fly sandbox") || !strings.Contains(body, "https://github.com/example/server") || strings.Contains(body, "management-canary") {
 			t.Fatal("sandbox page must disclose code execution without exposing credentials")
 		}
+		if !strings.Contains(body, `hx-request='{"timeout":270000}'`) {
+			t.Fatalf("%s: sandbox test must outlast execution and cleanup", path)
+		}
 	}
-	if !strings.Contains(formRequest(h, cookie, "GET", "/connections", nil).Body.String(), "Fly sandbox") {
+	body := formRequest(h, cookie, "GET", "/connections", nil).Body.String()
+	if !strings.Contains(body, "Fly sandbox") {
 		t.Fatal("sandbox not labelled on dashboard")
+	}
+	if !strings.Contains(body, `hx-request='{"timeout":270000}'`) {
+		t.Fatal("dashboard sandbox test must outlast execution and cleanup")
 	}
 	w := formRequest(h, cookie, "POST", "/connections/notes/discover", nil)
 	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())

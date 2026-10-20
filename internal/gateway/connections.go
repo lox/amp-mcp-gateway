@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
@@ -492,6 +493,7 @@ func (g *Gateway) connectionView(id string) map[string]any {
 			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil}
 			if c.Fly != nil {
 				connection["Fly"], connection["URL"] = true, c.Fly.Repository
+				connection["TestTimeout"] = (fly.SandboxTimeout + 30*time.Second).Milliseconds()
 			}
 			if c.OAuth != nil {
 				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
@@ -510,6 +512,7 @@ type connectionRow struct {
 	Tools                            int
 	LastCall                         string
 	LastCallAt                       time.Time
+	TestTimeout                      int64 // HTMX milliseconds, including cleanup headroom; zero uses the HTTP default.
 }
 
 type connectionSummary struct {
@@ -545,6 +548,7 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID)}
 		if c.Fly != nil {
 			row.Auth = "Fly sandbox"
+			row.TestTimeout = (fly.SandboxTimeout + 30*time.Second).Milliseconds()
 		} else if c.OAuth != nil {
 			row.Auth = "OAuth"
 		} else if c.NoAuth {
