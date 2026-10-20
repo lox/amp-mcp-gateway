@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.26.8-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal/sandbox ./internal/sandbox
+COPY cmd/mcp-sandbox ./cmd/mcp-sandbox
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /mcp-sandbox ./cmd/mcp-sandbox
+
+# Deliberately pin uv rather than installing a floating Python package.
+FROM ghcr.io/astral-sh/uv:0.9.4 AS uv
+FROM node:22.20.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod 0700 /root \
+    && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
+COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --from=build /mcp-sandbox /usr/local/bin/mcp-sandbox
+# The node base already provides uid/gid 1000. Only the supervisor runs as root.
+USER root
+ENTRYPOINT ["/usr/local/bin/mcp-sandbox"]

@@ -1,6 +1,6 @@
 # Amp MCP Gateway
 
-Amp MCP Gateway puts remote MCP servers and native integrations behind one
+Amp MCP Gateway puts remote MCP servers, sandboxed GitHub MCPs and native integrations behind one
 Streamable HTTP MCP connection. It centralizes credentials, lets owners review
 or deny consequential tool calls in a browser, and keeps a durable history of
 requests and outcomes.
@@ -50,6 +50,7 @@ it.
 
 - [Development guide](docs/dev.md): runnable examples, remote MCP setup, native
   integrations, Chrome sharing, deployment, identity, and security boundaries.
+- [Sandboxed MCPs](docs/sandbox.md): run public GitHub stdio servers in disposable Fly Machines.
 - [Feature matrix and TODOs](docs/todo.md): implemented capabilities, known gaps,
   and future work.
 - [Delivery plan](docs/plan.md): architecture decisions, sequencing, and acceptance

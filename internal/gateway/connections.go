@@ -21,8 +21,8 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
-// catalogue becomes the source of truth after the first browser save. Identity
-// and deployment settings remain in the startup configuration.
+// catalogue owns browser-managed connections and reviewed permissions. Identity,
+// deployment settings and Fly sandbox definitions remain startup-file managed.
 type catalogue struct {
 	Connections        []upstream.Connection
 	Integrations       []Integration `json:",omitempty"`
@@ -69,6 +69,41 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		hadEmbeddedSecrets = slices.ContainsFunc(c.Integrations, func(integration Integration) bool {
 			return integration.Provider == secretProvider
 		})
+	}
+	// Sandbox definitions are operator-managed; browser saves own only their tool
+	// permissions. Reconcile them on startup so existing catalogues can add,
+	// update or remove sandboxes without discarding HTTP connections or grants.
+	configured := map[string]upstream.Connection{}
+	for _, connection := range cfg.Connections {
+		if connection.Fly != nil {
+			configured[connection.ID] = connection
+		}
+	}
+	for _, connection := range c.Connections {
+		if connection.Fly == nil {
+			if _, exists := configured[connection.ID]; exists {
+				return errors.New("sandbox ID conflicts with a saved HTTP or browser connection")
+			}
+			continue
+		}
+		next, exists := configured[connection.ID]
+		if !exists {
+			c.Tools = slices.DeleteFunc(c.Tools, func(t Tool) bool { return t.Connection == connection.ID })
+			delete(c.ToolDefaults, connection.ID)
+			delete(c.PrivateConnections, connection.ID)
+		} else if digest(connection) != digest(next) {
+			for i := range c.Tools {
+				if c.Tools[i].Connection == connection.ID && c.Tools[i].Policy != "deny" {
+					c.Tools[i].Policy = "require_approval"
+				}
+			}
+		}
+	}
+	c.Connections = slices.DeleteFunc(c.Connections, func(connection upstream.Connection) bool { return connection.Fly != nil })
+	for _, connection := range cfg.Connections {
+		if connection.Fly != nil {
+			c.Connections = append(c.Connections, connection)
+		}
 	}
 	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
 	for _, id := range secretIDs {
@@ -428,6 +463,9 @@ func (g *Gateway) connectionView(id string) map[string]any {
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
 			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil}
+			if c.Fly != nil {
+				connection["Fly"], connection["URL"] = true, c.Fly.Repository
+			}
 			if c.OAuth != nil {
 				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
@@ -478,7 +516,9 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 			continue
 		}
 		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID)}
-		if c.OAuth != nil {
+		if c.Fly != nil {
+			row.Auth = "Fly sandbox"
+		} else if c.OAuth != nil {
 			row.Auth = "OAuth"
 		} else if c.NoAuth {
 			row.Auth = "No auth"

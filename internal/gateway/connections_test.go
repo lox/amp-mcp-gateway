@@ -18,6 +18,8 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
+	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
+	"ampcode.com/lox/amp-mcp-gateway/internal/sandbox"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -939,5 +941,170 @@ func TestConnectionListSummarizesPoliciesAndCalls(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q", want)
 		}
+	}
+}
+
+func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
+	t.Setenv("SANDBOX_TEST_TOKEN", "management-canary")
+	g, s, _ := fixture(t)
+	cfg := g.cfg
+	cfg.Connections = []upstream.Connection{{ID: "notes", Account: "Disposable code", Fly: &fly.Sandbox{App: "isolated-mcp", Image: "runner", TokenEnv: "SANDBOX_TEST_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}}}
+	cfg.Tools = nil
+	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err = New(cfg, s, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var creates, destroys atomic.Int32
+	var request sandbox.Request
+	originalTransport := http.DefaultTransport
+	// The real upstream and Fly client run against a fake Machines API. No Fly
+	// credential or request can escape to the internet during this test.
+	http.DefaultTransport = suggestionTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if r.URL.Host != "api.machines.dev" {
+			t.Errorf("unexpected external request: %s", r.URL.Host)
+			http.Error(w, "unexpected host", 500)
+			return w.Result(), nil
+		}
+		switch {
+		case r.Method == "GET":
+			_ = json.NewEncoder(w).Encode(map[string]any{"network": "isolated-code"})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/machines"):
+			creates.Add(1)
+			var create struct {
+				Config struct {
+					Files []struct {
+						RawValue string `json:"raw_value"`
+					}
+				}
+			}
+			if json.NewDecoder(r.Body).Decode(&create) != nil || len(create.Config.Files) != 1 {
+				t.Error("invalid creation request")
+			} else {
+				raw, decodeErr := base64.StdEncoding.DecodeString(create.Config.Files[0].RawValue)
+				if decodeErr != nil || json.Unmarshal(raw, &request) != nil {
+					t.Error("invalid runner request")
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "abc123"})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/exec"):
+			response := sandbox.Response{Tools: []*mcp.Tool{{Name: "write", Description: "Write", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}}}}
+			if request.Tool != "" {
+				response = sandbox.Response{Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: request.Arguments["text"].(string)}}}}
+			}
+			raw, _ := json.Marshal(response)
+			_ = json.NewEncoder(w).Encode(map[string]any{"stdout": string(raw), "exit_code": 0})
+		case r.Method == "DELETE":
+			destroys.Add(1)
+		default:
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		return w.Result(), nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	h, cookie := adminUI(t, g, m)
+	for _, path := range []string{"/connections/notes/settings", "/connections/notes/tools"} {
+		body := formRequest(h, cookie, "GET", path, nil).Body.String()
+		if !strings.Contains(body, "fresh, billable Fly sandbox") || !strings.Contains(body, "https://github.com/example/server") || strings.Contains(body, "management-canary") {
+			t.Fatal("sandbox page must disclose code execution without exposing credentials")
+		}
+	}
+	if !strings.Contains(formRequest(h, cookie, "GET", "/connections", nil).Body.String(), "Fly sandbox") {
+		t.Fatal("sandbox not labelled on dashboard")
+	}
+	w := formRequest(h, cookie, "POST", "/connections/notes/discover", nil)
+	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	if w.Code != 200 || len(match) != 2 {
+		t.Fatalf("discovery failed: %d", w.Code)
+	}
+	if _, err := g.submit(t.Context(), input("sandbox-unreviewed", "original")); err == nil {
+		t.Fatal("discovered tools became executable before review")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {match[1]}, "default_policy": {"require_approval"}, "policy_0": {"require_approval"}}); w.Code != 303 {
+		t.Fatalf("save failed: %s", w.Body.String())
+	}
+	restored := Config{Connections: cfg.Connections}
+	if err := LoadCatalogue(t.Context(), &restored, s); err != nil || len(restored.Connections) != 1 || restored.Connections[0].Fly == nil {
+		t.Fatal("sandbox configuration did not survive catalogue save")
+	}
+	runWorker(t, g)
+	in := input("sandbox-approved", "original")
+	o, err := g.submit(t.Context(), in)
+	if err != nil || o.Status != "pending" || creates.Load() != 1 {
+		t.Fatal("pending call launched code before approval")
+	}
+	if _, err := g.submit(t.Context(), input(in.RequestID, "substituted")); err == nil {
+		t.Fatal("accepted substituted arguments")
+	}
+	if err := s.Decide(t.Context(), o.ID, "human", true); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, o.ID, "succeeded")
+	if !strings.Contains(string(done.Result), "original") || creates.Load() != 2 || destroys.Load() != 2 {
+		t.Fatalf("wrong sandbox outcome: %s, created=%d destroyed=%d", done.Result, creates.Load(), destroys.Load())
+	}
+	if _, err := g.submit(t.Context(), in); err != nil || creates.Load() != 2 {
+		t.Fatal("replayed a completed sandbox call")
+	}
+}
+
+func TestStartupSandboxDefinitionsOverrideSavedCatalogue(t *testing.T) {
+	_, s, _ := fixture(t)
+	old := upstream.Connection{ID: "sandbox", Fly: &fly.Sandbox{App: "isolated", Image: "runner", TokenEnv: "TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node old.js"}}}
+	saved := catalogue{Connections: []upstream.Connection{{ID: "remote", URL: "https://example.com/mcp", NoAuth: true}, old}, Tools: []Tool{{ID: "sandbox.allowed", Connection: "sandbox", Policy: "allow"}, {ID: "sandbox.blocked", Connection: "sandbox", Policy: "deny"}}, ToolDefaults: map[string]string{"sandbox": "allow"}, PrivateConnections: map[string]bool{"sandbox": true}}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"unchanged", "changed", "removed", "new", "collision"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := Config{Connections: []upstream.Connection{old}}
+			switch mode {
+			case "changed":
+				changed := *old.Fly
+				changed.RunCmd = "node new.js"
+				cfg.Connections[0].Fly = &changed
+			case "removed":
+				cfg.Connections = nil
+			case "new":
+				cfg.Connections[0].ID = "new-sandbox"
+			case "collision":
+				cfg.Connections[0].ID = "remote"
+			}
+			err := LoadCatalogue(t.Context(), &cfg, s)
+			if mode == "collision" {
+				if err == nil {
+					t.Fatal("overwrote an existing remote connection")
+				}
+				return
+			}
+			if err != nil || cfg.Connections[0].URL != "https://example.com/mcp" {
+				t.Fatalf("lost saved remote connection: %v", err)
+			}
+			switch mode {
+			case "removed", "new":
+				if len(cfg.Tools) != 0 || cfg.PrivateConnections[old.ID] || cfg.ToolDefaults[old.ID] != "" {
+					t.Fatal("removed sandbox retained tools or policies")
+				}
+				if mode == "new" && (len(cfg.Connections) != 2 || cfg.Connections[1].ID != "new-sandbox") {
+					t.Fatal("new sandbox not imported")
+				}
+			case "changed":
+				if cfg.Tools[0].Policy != "require_approval" || cfg.Tools[1].Policy != "deny" || cfg.Connections[1].Fly.RunCmd != "node new.js" {
+					t.Fatal("sandbox change did not revoke allowed authority and preserve blocks")
+				}
+			case "unchanged":
+				if cfg.Tools[0].Policy != "allow" || cfg.Tools[1].Policy != "deny" {
+					t.Fatal("unchanged sandbox lost reviewed permissions")
+				}
+			}
+		})
 	}
 }
