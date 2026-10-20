@@ -33,6 +33,7 @@ type Sandbox struct {
 
 var appName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 var githubPath = regexp.MustCompile(`^/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)
+var pinnedImage = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
 
 // Validate checks configuration without contacting Fly or running untrusted code.
 func (s Sandbox) Validate() error {
@@ -40,8 +41,11 @@ func (s Sandbox) Validate() error {
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !githubPath.MatchString(u.Path) {
 		return errors.New("sandbox Repository must be a public https://github.com/owner/repository URL")
 	}
-	if !appName.MatchString(s.App) || s.App == os.Getenv("FLY_APP_NAME") || s.Image == "" || s.TokenEnv == "" || strings.TrimSpace(s.RunCmd) == "" || strings.HasPrefix(s.Revision, "-") {
-		return errors.New("sandbox requires a separate Fly App, Image, TokenEnv and RunCmd, and a revision without a leading dash")
+	if !pinnedImage.MatchString(s.Image) {
+		return errors.New("sandbox Image must be pinned with @sha256:<64 lowercase hex characters>")
+	}
+	if !appName.MatchString(s.App) || s.App == os.Getenv("FLY_APP_NAME") || s.TokenEnv == "" || strings.TrimSpace(s.RunCmd) == "" || strings.HasPrefix(s.Revision, "-") {
+		return errors.New("sandbox requires a separate Fly App, TokenEnv and RunCmd, and a revision without a leading dash")
 	}
 	if s.MemoryMB != 0 && (s.MemoryMB < 256 || s.MemoryMB > 2048 || s.MemoryMB%256 != 0) {
 		return errors.New("sandbox MemoryMB must be a multiple of 256 between 256 and 2048")

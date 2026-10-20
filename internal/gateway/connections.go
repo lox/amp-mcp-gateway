@@ -31,15 +31,25 @@ type catalogue struct {
 	PrivateConnections map[string]bool   `json:",omitempty"`
 }
 
-// persistedCatalogue reads records written by earlier versions of the secrets
-// branch so they can move to dedicated rollback-safe storage.
+// Sandbox reviews stay outside the legacy catalogue fields so older binaries
+// can still load HTTP/browser connections after a rollback. Definitions remain
+// startup-file managed; only their digest is needed to invalidate changed reviews.
+type sandboxCatalogue struct {
+	ID, DefinitionDigest string
+	Tools                []Tool
+	DefaultPolicy        string `json:",omitempty"`
+	Private              bool   `json:",omitempty"`
+}
+
+// persistedCatalogue also reads legacy embedded secrets for migration.
 type persistedCatalogue struct {
 	Connections        []upstream.Connection
 	Integrations       []Integration `json:",omitempty"`
 	Secrets            []Integration `json:",omitempty"`
 	Tools              []Tool
-	ToolDefaults       map[string]string `json:",omitempty"`
-	PrivateConnections map[string]bool   `json:",omitempty"`
+	ToolDefaults       map[string]string  `json:",omitempty"`
+	PrivateConnections map[string]bool    `json:",omitempty"`
+	Sandboxes          []sandboxCatalogue `json:",omitempty"`
 }
 
 // LoadCatalogue restores saved connections and policies before startup validation.
@@ -56,9 +66,9 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		return nil
 	}
 	var c catalogue
+	var persisted persistedCatalogue
 	hadEmbeddedSecrets := false
 	if raw != nil {
-		var persisted persistedCatalogue
 		if err := json.Unmarshal(raw, &persisted); err != nil {
 			return err
 		}
@@ -70,40 +80,39 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 			return integration.Provider == secretProvider
 		})
 	}
-	// Sandbox definitions are operator-managed; browser saves own only their tool
-	// permissions. Reconcile them on startup so existing catalogues can add,
-	// update or remove sandboxes without discarding HTTP connections or grants.
-	configured := map[string]upstream.Connection{}
+	// Only configured sandboxes restore reviews. Removed definitions disappear;
+	// changed definitions retain blocks but lose automatic execution authority.
 	for _, connection := range cfg.Connections {
-		if connection.Fly != nil {
-			configured[connection.ID] = connection
-		}
-	}
-	for _, connection := range c.Connections {
 		if connection.Fly == nil {
-			if _, exists := configured[connection.ID]; exists {
-				return errors.New("sandbox ID conflicts with a saved HTTP or browser connection")
-			}
 			continue
 		}
-		next, exists := configured[connection.ID]
-		if !exists {
-			c.Tools = slices.DeleteFunc(c.Tools, func(t Tool) bool { return t.Connection == connection.ID })
-			delete(c.ToolDefaults, connection.ID)
-			delete(c.PrivateConnections, connection.ID)
-		} else if digest(connection) != digest(next) {
-			for i := range c.Tools {
-				if c.Tools[i].Connection == connection.ID && c.Tools[i].Policy != "deny" {
-					c.Tools[i].Policy = "require_approval"
+		if slices.ContainsFunc(c.Connections, func(saved upstream.Connection) bool { return saved.ID == connection.ID }) {
+			return errors.New("sandbox ID conflicts with a saved HTTP or browser connection")
+		}
+		for _, saved := range persisted.Sandboxes {
+			if saved.ID != connection.ID {
+				continue
+			}
+			for _, tool := range saved.Tools {
+				if saved.DefinitionDigest != digest(connection) && tool.Policy != "deny" {
+					tool.Policy = "require_approval"
 				}
+				c.Tools = append(c.Tools, tool)
+			}
+			if saved.DefaultPolicy != "" {
+				if c.ToolDefaults == nil {
+					c.ToolDefaults = map[string]string{}
+				}
+				c.ToolDefaults[connection.ID] = saved.DefaultPolicy
+			}
+			if saved.Private {
+				if c.PrivateConnections == nil {
+					c.PrivateConnections = map[string]bool{}
+				}
+				c.PrivateConnections[connection.ID] = true
 			}
 		}
-	}
-	c.Connections = slices.DeleteFunc(c.Connections, func(connection upstream.Connection) bool { return connection.Fly != nil })
-	for _, connection := range cfg.Connections {
-		if connection.Fly != nil {
-			c.Connections = append(c.Connections, connection)
-		}
+		c.Connections = append(c.Connections, connection)
 	}
 	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
 	for _, id := range secretIDs {
@@ -193,8 +202,26 @@ func (cfg Config) defaultPolicy(id string) string {
 }
 
 func encodeCatalogue(c catalogue) ([]byte, map[string][]byte, error) {
-	persisted := c
-	persisted.Integrations = slices.DeleteFunc(slices.Clone(c.Integrations), func(integration Integration) bool { return integration.Provider == secretProvider })
+	persisted := persistedCatalogue{
+		Integrations: slices.DeleteFunc(slices.Clone(c.Integrations), func(integration Integration) bool { return integration.Provider == secretProvider }),
+		Tools:        slices.Clone(c.Tools), ToolDefaults: maps.Clone(c.ToolDefaults), PrivateConnections: maps.Clone(c.PrivateConnections),
+	}
+	for _, connection := range c.Connections {
+		if connection.Fly == nil {
+			persisted.Connections = append(persisted.Connections, connection)
+			continue
+		}
+		saved := sandboxCatalogue{ID: connection.ID, DefinitionDigest: digest(connection), DefaultPolicy: c.ToolDefaults[connection.ID], Private: c.PrivateConnections[connection.ID]}
+		for _, tool := range c.Tools {
+			if tool.Connection == connection.ID {
+				saved.Tools = append(saved.Tools, tool)
+			}
+		}
+		persisted.Sandboxes = append(persisted.Sandboxes, saved)
+		persisted.Tools = slices.DeleteFunc(persisted.Tools, func(tool Tool) bool { return tool.Connection == connection.ID })
+		delete(persisted.ToolDefaults, connection.ID)
+		delete(persisted.PrivateConnections, connection.ID)
+	}
 	raw, err := json.Marshal(persisted)
 	if err != nil {
 		return nil, nil, err

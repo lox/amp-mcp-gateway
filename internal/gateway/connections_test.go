@@ -948,7 +948,7 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 	t.Setenv("SANDBOX_TEST_TOKEN", "management-canary")
 	g, s, _ := fixture(t)
 	cfg := g.cfg
-	cfg.Connections = []upstream.Connection{{ID: "notes", Account: "Disposable code", Fly: &fly.Sandbox{App: "isolated-mcp", Image: "runner", TokenEnv: "SANDBOX_TEST_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}}}
+	cfg.Connections = []upstream.Connection{{ID: "notes", Account: "Disposable code", Fly: &fly.Sandbox{App: "isolated-mcp", Image: "runner@sha256:" + strings.Repeat("a1", 32), TokenEnv: "SANDBOX_TEST_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}}}
 	cfg.Tools = nil
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
@@ -1054,16 +1054,32 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 
 func TestStartupSandboxDefinitionsOverrideSavedCatalogue(t *testing.T) {
 	_, s, _ := fixture(t)
-	old := upstream.Connection{ID: "sandbox", Fly: &fly.Sandbox{App: "isolated", Image: "runner", TokenEnv: "TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node old.js"}}}
-	saved := catalogue{Connections: []upstream.Connection{{ID: "remote", URL: "https://example.com/mcp", NoAuth: true}, old}, Tools: []Tool{{ID: "sandbox.allowed", Connection: "sandbox", Policy: "allow"}, {ID: "sandbox.blocked", Connection: "sandbox", Policy: "deny"}}, ToolDefaults: map[string]string{"sandbox": "allow"}, PrivateConnections: map[string]bool{"sandbox": true}}
-	raw, err := json.Marshal(saved)
+	old := upstream.Connection{ID: "sandbox", Fly: &fly.Sandbox{App: "isolated", Image: "runner@sha256:" + strings.Repeat("a1", 32), TokenEnv: "TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node old.js"}}}
+	saved := catalogue{Connections: []upstream.Connection{{ID: "remote", URL: "https://example.com/mcp", NoAuth: true}, old}, Tools: []Tool{{ID: "sandbox.allowed", Connection: "sandbox", Policy: "allow"}, {ID: "sandbox.blocked", Connection: "sandbox", Policy: "deny"}, {ID: "remote.read", Connection: "remote", Name: "read", Policy: "deny", InputSchema: map[string]any{"type": "object"}}}, ToolDefaults: map[string]string{"sandbox": "allow", "remote": "deny"}, PrivateConnections: map[string]bool{"sandbox": true, "remote": true}}
+	raw, _, err := encodeCatalogue(saved)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The previous binary ignores unknown fields. Its legacy catalogue must
+	// contain only supported connections/tools, not partial sandbox records.
+	legacy := Config{AmpUserID: "owner", BaseURL: "http://localhost"}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.Connections) != 1 || legacy.Connections[0].ID != "remote" || len(legacy.Tools) != 1 || legacy.Tools[0].ID != "remote.read" || legacy.ToolDefaults[old.ID] != "" || legacy.PrivateConnections[old.ID] {
+		t.Fatal("rollback exposes unsupported sandbox definitions, tools or policies")
+	}
+	m, err := upstream.New(legacy.BaseURL, legacy.Connections, s)
+	if err != nil {
+		t.Fatalf("rollback upstream configuration did not start: %v", err)
+	}
+	if _, err := New(legacy, s, m); err != nil {
+		t.Fatalf("rollback catalogue did not start: %v", err)
 	}
 	if err := s.SaveCatalogue(t.Context(), raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"unchanged", "changed", "removed", "new", "collision"} {
+	for _, mode := range []string{"unchanged", "changed", "removed", "new", "collision", "rollback-save"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg := Config{Connections: []upstream.Connection{old}}
 			switch mode {
@@ -1077,6 +1093,14 @@ func TestStartupSandboxDefinitionsOverrideSavedCatalogue(t *testing.T) {
 				cfg.Connections[0].ID = "new-sandbox"
 			case "collision":
 				cfg.Connections[0].ID = "remote"
+			case "rollback-save":
+				raw, err := json.Marshal(legacy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.SaveCatalogue(t.Context(), raw); err != nil {
+					t.Fatal(err)
+				}
 			}
 			err := LoadCatalogue(t.Context(), &cfg, s)
 			if mode == "collision" {
@@ -1088,20 +1112,27 @@ func TestStartupSandboxDefinitionsOverrideSavedCatalogue(t *testing.T) {
 			if err != nil || cfg.Connections[0].URL != "https://example.com/mcp" {
 				t.Fatalf("lost saved remote connection: %v", err)
 			}
+			tools := map[string]Tool{}
+			for _, tool := range cfg.Tools {
+				tools[tool.ID] = tool
+			}
+			if tools["remote.read"].Policy != "deny" || cfg.ToolDefaults["remote"] != "deny" || !cfg.PrivateConnections["remote"] {
+				t.Fatal("sandbox reconciliation changed HTTP tools or policies")
+			}
 			switch mode {
-			case "removed", "new":
-				if len(cfg.Tools) != 0 || cfg.PrivateConnections[old.ID] || cfg.ToolDefaults[old.ID] != "" {
+			case "removed", "new", "rollback-save":
+				if len(cfg.Tools) != 1 || cfg.PrivateConnections[old.ID] || cfg.ToolDefaults[old.ID] != "" {
 					t.Fatal("removed sandbox retained tools or policies")
 				}
 				if mode == "new" && (len(cfg.Connections) != 2 || cfg.Connections[1].ID != "new-sandbox") {
 					t.Fatal("new sandbox not imported")
 				}
 			case "changed":
-				if cfg.Tools[0].Policy != "require_approval" || cfg.Tools[1].Policy != "deny" || cfg.Connections[1].Fly.RunCmd != "node new.js" {
+				if tools["sandbox.allowed"].Policy != "require_approval" || tools["sandbox.blocked"].Policy != "deny" || cfg.Connections[1].Fly.RunCmd != "node new.js" {
 					t.Fatal("sandbox change did not revoke allowed authority and preserve blocks")
 				}
 			case "unchanged":
-				if cfg.Tools[0].Policy != "allow" || cfg.Tools[1].Policy != "deny" {
+				if tools["sandbox.allowed"].Policy != "allow" || tools["sandbox.blocked"].Policy != "deny" || cfg.ToolDefaults[old.ID] != "allow" || !cfg.PrivateConnections[old.ID] {
 					t.Fatal("unchanged sandbox lost reviewed permissions")
 				}
 			}

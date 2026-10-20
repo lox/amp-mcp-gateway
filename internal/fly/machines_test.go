@@ -20,7 +20,7 @@ func TestSandbox(t *testing.T) {
 	for _, mode := range []string{"discover", "call", "tool-error", "pending", "cold-start", "boot-cancel", "boot-deadline", "boot-failed", "default-network", "create-ambiguous", "create-timeout", "exec-ambiguous", "exec-timeout", "cancel", "cleanup-failure", "runner-error", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("SANDBOX_FLY_TOKEN", "management-secret-canary")
-			s := Sandbox{App: "sandbox-test", Image: "runner@sha256:fixture", TokenEnv: "SANDBOX_FLY_TOKEN", Region: "syd", Server: sandbox.Server{Repository: "https://github.com/example/server", InstallCmd: "npm ci", RunCmd: "node index.js"}}
+			s := Sandbox{App: "sandbox-test", Image: "runner@sha256:" + strings.Repeat("a1", 32), TokenEnv: "SANDBOX_FLY_TOKEN", Region: "syd", Server: sandbox.Server{Repository: "https://github.com/example/server", InstallCmd: "npm ci", RunCmd: "node index.js"}}
 			req := sandbox.Request{}
 			if mode != "discover" && mode != "pending" {
 				req.Tool, req.Arguments = "sum", map[string]any{"a": 19, "b": -7}
@@ -206,7 +206,7 @@ func TestSandbox(t *testing.T) {
 func TestSandboxConfiguration(t *testing.T) {
 	t.Setenv("FLY_APP_NAME", "gateway")
 	t.Setenv("FLY_SANDBOX_TOKEN", "")
-	valid := Sandbox{App: "separate", Image: "runner", TokenEnv: "FLY_SANDBOX_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}
+	valid := Sandbox{App: "separate", Image: "runner@sha256:" + strings.Repeat("a1", 32), TokenEnv: "FLY_SANDBOX_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +219,11 @@ func TestSandboxConfiguration(t *testing.T) {
 		func(s *Sandbox) { s.Repository = "https://attacker.example/server" },
 		func(s *Sandbox) { s.Revision = "--help" },
 		func(s *Sandbox) { s.MemoryMB = 4096 },
+		func(s *Sandbox) { s.Image = "runner:latest" },
+		func(s *Sandbox) { s.Image = "runner" },
+		func(s *Sandbox) { s.Image = "runner@sha256:" + strings.Repeat("a", 63) },
+		func(s *Sandbox) { s.Image = "runner@sha256:" + strings.Repeat("g", 64) },
+		func(s *Sandbox) { s.Image = "@sha256:" + strings.Repeat("a", 64) },
 	} {
 		s := valid
 		edit(&s)

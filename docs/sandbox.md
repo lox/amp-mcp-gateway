@@ -30,7 +30,8 @@ fly tokens create deploy --app YOUR-MCP-RUNNER
 Store the resulting app-scoped token as `FLY_MCP_RUNNER_TOKEN` in the gateway's
 environment using your deployment secret mechanism. Never put the token in JSON,
 command strings, source or screenshots. The image must be accessible to Fly;
-the example assumes a public image. Use its immutable digest in configuration.
+the example assumes a public image. Configuration requires an immutable
+`@sha256:` digest with 64 lowercase hex characters; mutable tags are rejected.
 The image contains Node.js, Python, git, uv and the Go SDK-based runner; it is
 distinct from the gateway image and must be built/published separately.
 
@@ -79,6 +80,11 @@ policies. Existing HTTP connections remain browser-managed. A conflicting saved
 HTTP/browser connection ID is rejected rather than overwritten. In a shared-host
 deployment, startup connections belong to the configured primary Amp account,
 not every account provisioned by login.
+
+Sandbox reviews, defaults, privacy and definition digests are stored in an optional
+catalogue section that older binaries ignore, leaving supported HTTP/browser
+connections available on rollback. A browser save from an older binary drops those
+sandbox reviews; after upgrading again, rediscover and review sandbox tools.
 
 ## Execution and failure boundaries
 
