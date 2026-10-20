@@ -16,13 +16,14 @@ import (
 	"strings"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
 
-// catalogue becomes the source of truth after the first browser save. Identity
-// and deployment settings remain in the startup configuration.
+// catalogue owns browser-managed connections and reviewed permissions. Identity,
+// deployment settings and Fly sandbox definitions remain startup-file managed.
 type catalogue struct {
 	Connections        []upstream.Connection
 	Integrations       []Integration `json:",omitempty"`
@@ -31,15 +32,25 @@ type catalogue struct {
 	PrivateConnections map[string]bool   `json:",omitempty"`
 }
 
-// persistedCatalogue reads records written by earlier versions of the secrets
-// branch so they can move to dedicated rollback-safe storage.
+// Sandbox reviews stay outside the legacy catalogue fields so older binaries
+// can still load HTTP/browser connections after a rollback. Definitions remain
+// startup-file managed; only their digest is needed to invalidate changed reviews.
+type sandboxCatalogue struct {
+	ID, DefinitionDigest string
+	Tools                []Tool
+	DefaultPolicy        string `json:",omitempty"`
+	Private              bool   `json:",omitempty"`
+}
+
+// persistedCatalogue also reads legacy embedded secrets for migration.
 type persistedCatalogue struct {
 	Connections        []upstream.Connection
 	Integrations       []Integration `json:",omitempty"`
 	Secrets            []Integration `json:",omitempty"`
 	Tools              []Tool
-	ToolDefaults       map[string]string `json:",omitempty"`
-	PrivateConnections map[string]bool   `json:",omitempty"`
+	ToolDefaults       map[string]string  `json:",omitempty"`
+	PrivateConnections map[string]bool    `json:",omitempty"`
+	Sandboxes          []sandboxCatalogue `json:",omitempty"`
 }
 
 // LoadCatalogue restores saved connections and policies before startup validation.
@@ -56,9 +67,9 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		return nil
 	}
 	var c catalogue
+	var persisted persistedCatalogue
 	hadEmbeddedSecrets := false
 	if raw != nil {
-		var persisted persistedCatalogue
 		if err := json.Unmarshal(raw, &persisted); err != nil {
 			return err
 		}
@@ -69,6 +80,40 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		hadEmbeddedSecrets = slices.ContainsFunc(c.Integrations, func(integration Integration) bool {
 			return integration.Provider == secretProvider
 		})
+	}
+	// Only configured sandboxes restore reviews. Removed definitions disappear;
+	// changed definitions retain blocks but lose automatic execution authority.
+	for _, connection := range cfg.Connections {
+		if connection.Fly == nil {
+			continue
+		}
+		if slices.ContainsFunc(c.Connections, func(saved upstream.Connection) bool { return saved.ID == connection.ID }) {
+			return errors.New("sandbox ID conflicts with a saved HTTP or browser connection")
+		}
+		for _, saved := range persisted.Sandboxes {
+			if saved.ID != connection.ID {
+				continue
+			}
+			for _, tool := range saved.Tools {
+				if saved.DefinitionDigest != digest(connection) && tool.Policy != "deny" {
+					tool.Policy = "require_approval"
+				}
+				c.Tools = append(c.Tools, tool)
+			}
+			if saved.DefaultPolicy != "" {
+				if c.ToolDefaults == nil {
+					c.ToolDefaults = map[string]string{}
+				}
+				c.ToolDefaults[connection.ID] = saved.DefaultPolicy
+			}
+			if saved.Private {
+				if c.PrivateConnections == nil {
+					c.PrivateConnections = map[string]bool{}
+				}
+				c.PrivateConnections[connection.ID] = true
+			}
+		}
+		c.Connections = append(c.Connections, connection)
 	}
 	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
 	for _, id := range secretIDs {
@@ -158,8 +203,26 @@ func (cfg Config) defaultPolicy(id string) string {
 }
 
 func encodeCatalogue(c catalogue) ([]byte, map[string][]byte, error) {
-	persisted := c
-	persisted.Integrations = slices.DeleteFunc(slices.Clone(c.Integrations), func(integration Integration) bool { return integration.Provider == secretProvider })
+	persisted := persistedCatalogue{
+		Integrations: slices.DeleteFunc(slices.Clone(c.Integrations), func(integration Integration) bool { return integration.Provider == secretProvider }),
+		Tools:        slices.Clone(c.Tools), ToolDefaults: maps.Clone(c.ToolDefaults), PrivateConnections: maps.Clone(c.PrivateConnections),
+	}
+	for _, connection := range c.Connections {
+		if connection.Fly == nil {
+			persisted.Connections = append(persisted.Connections, connection)
+			continue
+		}
+		saved := sandboxCatalogue{ID: connection.ID, DefinitionDigest: digest(connection), DefaultPolicy: c.ToolDefaults[connection.ID], Private: c.PrivateConnections[connection.ID]}
+		for _, tool := range c.Tools {
+			if tool.Connection == connection.ID {
+				saved.Tools = append(saved.Tools, tool)
+			}
+		}
+		persisted.Sandboxes = append(persisted.Sandboxes, saved)
+		persisted.Tools = slices.DeleteFunc(persisted.Tools, func(tool Tool) bool { return tool.Connection == connection.ID })
+		delete(persisted.ToolDefaults, connection.ID)
+		delete(persisted.PrivateConnections, connection.ID)
+	}
 	raw, err := json.Marshal(persisted)
 	if err != nil {
 		return nil, nil, err
@@ -428,6 +491,10 @@ func (g *Gateway) connectionView(id string) map[string]any {
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
 			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil}
+			if c.Fly != nil {
+				connection["Fly"], connection["URL"] = true, c.Fly.Repository
+				connection["TestTimeout"] = (fly.SandboxTimeout + 30*time.Second).Milliseconds()
+			}
 			if c.OAuth != nil {
 				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
@@ -445,6 +512,7 @@ type connectionRow struct {
 	Tools                            int
 	LastCall                         string
 	LastCallAt                       time.Time
+	TestTimeout                      int64 // HTMX milliseconds, including cleanup headroom; zero uses the HTTP default.
 }
 
 type connectionSummary struct {
@@ -478,7 +546,10 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 			continue
 		}
 		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID)}
-		if c.OAuth != nil {
+		if c.Fly != nil {
+			row.Auth = "Fly sandbox"
+			row.TestTimeout = (fly.SandboxTimeout + 30*time.Second).Milliseconds()
+		} else if c.OAuth != nil {
 			row.Auth = "OAuth"
 		} else if c.NoAuth {
 			row.Auth = "No auth"

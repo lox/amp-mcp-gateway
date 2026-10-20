@@ -475,6 +475,12 @@ func (g *Gateway) Run(ctx context.Context) error {
 			if valid && o.ConnectionBinding != "" {
 				valid = g.connectionBindingWith(t.Connection, expectedBinding) == o.ConnectionBinding
 			}
+			timeout := 45 * time.Second
+			for _, c := range g.cfg.Connections {
+				if c.ID == o.Connection && c.Fly != nil {
+					timeout = fly.SandboxTimeout
+				}
+			}
 			g.mu.RUnlock()
 			if !valid {
 				if err := g.store.Finish(ctx, o, "denied", nil); err != nil {
@@ -482,7 +488,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			callCtx, cancel := context.WithTimeout(ctx, timeout)
 			var result *mcp.CallToolResult
 			var callErr error
 			if native {

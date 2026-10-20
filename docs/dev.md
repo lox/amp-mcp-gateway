@@ -267,8 +267,9 @@ client secrets are rejected; registration renewal is not implemented.
 
 Only public HTTPS port 443 is accepted through the browser. Private-network
 addresses, redirects and proxies are blocked; DNS is checked at connection time.
-Local stdio and legacy SSE servers are not supported by this flow. Static trusted
-configuration can still use loopback fixtures. Discovery is limited to 500 tools,
+Local stdio and legacy SSE servers are not supported by this browser flow.
+[Sandboxed GitHub stdio servers](sandbox.md) can be configured separately on Fly.
+Static trusted configuration can still use loopback fixtures. HTTP discovery is limited to 500 tools,
 2 MiB of tool definitions plus pagination cursors and a 30-second timeout. Schemas
 must be self-contained.
 
@@ -504,9 +505,10 @@ hidden secret's ID, the upgrade preserves the value under an available
 The first browser save copies the current connections, integrations and tools into
 encrypted SQLite storage. After that, the saved catalogue replaces `Connections`,
 `Integrations`, `Tools` and `ToolDefaults` from the startup JSON, including after a
-deploy or restart.
-Identity, listen and
-deployment settings still come from the file/environment. Editing those JSON
+deploy or restart. Operator-managed [Fly sandbox definitions](sandbox.md) are the
+exception: their definitions come from startup JSON while reviewed tool permissions
+remain in the saved catalogue. Identity, listen and deployment settings still come
+from the file/environment. Editing startup HTTP connection, integration or tool
 fields will no longer change the running catalogue. Defaults are stored separately
 from upstream credentials, so changing them does not discard OAuth grants.
 An empty tool `Policy` means inherit; explicit policies remain exceptions.
@@ -997,7 +999,7 @@ concurrent approval/claim, unknown outcomes, restart recovery, ciphertext integr
 OIDC claim rejection/PKCE/state replay, OAuth refresh rotation and CSRF.
 
 Deferred: shared team connections, per-agent identities and delegation chains, verified model
-attestation, semantic/Jev discovery, batch calls, stdio/legacy-SSE upstreams,
+attestation, semantic/Jev discovery, batch calls, host-local stdio/legacy-SSE upstreams,
 provider-specific account introspection, signed audit exports, retention and key
 rotation, policy expressions and production deployment hardening. Keep each account
 owner-only and low-volume; public ingress is not a claim of production certification.

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
+	"ampcode.com/lox/amp-mcp-gateway/internal/sandbox"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/oauth2"
 )
@@ -25,7 +27,7 @@ const (
 	stateLifetime  = 10 * time.Minute
 )
 
-// Connection describes one remote MCP endpoint and its authentication.
+// Connection describes a remote endpoint, browser bridge or idle-expiring Fly sandbox.
 type Connection struct {
 	ID       string
 	URL      string
@@ -33,6 +35,7 @@ type Connection struct {
 	TokenEnv string
 	Browser  bool
 	OAuth    *OAuthConfig
+	Fly      *fly.Sandbox `json:",omitempty"`
 	// Browser-managed configuration is encrypted at rest; never render these secrets.
 	BearerToken string `json:",omitempty"`
 	NoAuth      bool   `json:",omitempty"`
@@ -69,6 +72,7 @@ type Manager struct {
 
 type managedConnection struct {
 	config Connection
+	runner *fly.Runner
 	mu     sync.Mutex
 	check  Health
 	grant  uint64
@@ -97,9 +101,19 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 		}
 		seen[c.ID] = true
 		if c.Browser {
-			if c.URL != "" || c.TokenEnv != "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
+			if c.URL != "" || c.TokenEnv != "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly || c.Fly != nil {
 				return nil, fmt.Errorf("browser connection %q cannot configure URL or authentication", c.ID)
 			}
+			continue
+		}
+		if c.Fly != nil {
+			if c.URL != "" || c.TokenEnv != "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
+				return nil, fmt.Errorf("sandbox connection %q cannot configure URL or HTTP authentication", c.ID)
+			}
+			if err := c.Fly.Validate(); err != nil {
+				return nil, fmt.Errorf("sandbox connection %q: %w", c.ID, err)
+			}
+			m.conns[c.ID] = &managedConnection{config: c, runner: fly.NewRunner(*c.Fly)}
 			continue
 		}
 		if _, err := validatedURL(c.URL); err != nil {
@@ -168,52 +182,66 @@ func (m *Manager) connection(id string) (*managedConnection, bool) {
 // Binding returns no dynamic authority for regular HTTP upstreams.
 func (m *Manager) Binding(string) string { return "" }
 
-// ListTools initializes a fresh MCP session and returns all pages of tools.
+// ListTools returns all pages of tools, reusing the session for Fly connections.
 func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
 	c, ok := m.connection(connection)
 	if !ok {
 		return nil, errors.New("unknown connection")
 	}
+	timeout := requestTimeout
+	if c.config.Fly != nil {
+		timeout = fly.SandboxTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	c.mu.Lock()
 	grant := c.grant
 	c.mu.Unlock()
 	var tools []*mcp.Tool
-	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
-		cursor := ""
-		seen := map[string]bool{}
-		bytes := 0
-		for {
-			result, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
-			if err != nil {
-				return err
+	var err error
+	if c.config.Fly != nil {
+		var response sandbox.Response
+		response, err = c.runner.Run(ctx, sandbox.Request{})
+		tools = response.Tools
+	} else {
+		err = m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
+			cursor := ""
+			seen := map[string]bool{}
+			bytes := 0
+			for {
+				result, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+				if err != nil {
+					return err
+				}
+				raw, err := json.Marshal(result.Tools)
+				if err != nil {
+					return err
+				}
+				bytes += len(raw) + len(result.NextCursor)
+				if bytes > 2<<20 {
+					return errors.New("tool catalogue exceeds 2 MiB")
+				}
+				tools = append(tools, result.Tools...)
+				if len(tools) > 500 {
+					return errors.New("server returned more than 500 tools")
+				}
+				if result.NextCursor == "" {
+					return nil
+				}
+				cursor = result.NextCursor
+				if seen[cursor] || len(seen) >= 50 {
+					return errors.New("invalid or excessive tool pagination")
+				}
+				seen[cursor] = true
 			}
-			raw, err := json.Marshal(result.Tools)
-			if err != nil {
-				return err
-			}
-			bytes += len(raw) + len(result.NextCursor)
-			if bytes > 2<<20 {
-				return errors.New("tool catalogue exceeds 2 MiB")
-			}
-			tools = append(tools, result.Tools...)
-			if len(tools) > 500 {
-				return errors.New("server returned more than 500 tools")
-			}
-			if result.NextCursor == "" {
-				return nil
-			}
-			cursor = result.NextCursor
-			if seen[cursor] || len(seen) >= 50 {
-				return errors.New("invalid or excessive tool pagination")
-			}
-			seen[cursor] = true
-		}
-	})
+		})
+	}
 	c.mu.Lock()
 	if c.grant == grant {
 		c.check = Health{Status: "Healthy", Detail: "MCP initialization and tool listing succeeded. No tools were executed.", CheckedAt: time.Now().UTC()}
+		if c.config.Fly != nil {
+			c.check.Detail = "Sandbox installation, MCP initialization and tool listing succeeded. No MCP tools were called; install/start commands ran."
+		}
 		if err != nil {
 			c.check.Status, c.check.Detail = "Test failed", "Could not initialize MCP or list tools. Check the provider and try again."
 			var f *Failure
@@ -226,8 +254,15 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 	return tools, err
 }
 
-// Call initializes a fresh MCP session and invokes one tool exactly once.
+// Call invokes one tool exactly once, reusing the session for Fly connections.
 func (m *Manager) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
+	if c, ok := m.connection(connection); ok && c.config.Fly != nil {
+		response, err := c.runner.Run(ctx, sandbox.Request{Tool: tool, Arguments: args})
+		if err != nil {
+			return nil, failure("sandbox", err, 0)
+		}
+		return response.Result, nil
+	}
 	var result *mcp.CallToolResult
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		var err error
