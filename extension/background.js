@@ -333,8 +333,7 @@ async function verifyNode(target, documentID, backendNodeId, expectedURL, expect
   }
   const tab = await chrome.tabs.get(target.tabId);
   if (tab.url !== expectedURL) throw new Error("The shared tab URL changed after the accessibility snapshot.");
-  // Use the same full-tree query and text bounds as snapshot(); the partial-tree
-  // query can compute a different role or name for the same node.
+  // Use the same full-tree query, node filtering, and text bounds as snapshot().
   const tree = await documentCommand(target, documentID, "Accessibility.getFullAXTree");
   const node = tree.nodes?.find((candidate) => candidate.backendDOMNodeId === backendNodeId && (candidate.role?.value || candidate.name?.value || candidate.value?.value));
   const role = boundedSnapshotText(node?.role?.value).value;
