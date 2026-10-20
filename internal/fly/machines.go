@@ -52,7 +52,8 @@ func (s Sandbox) Validate() error {
 // Run starts exactly one Machine and collects its root-owned result using read-only
 // exec requests. Machine creation and MCP execution are never retried.
 func (s Sandbox) Run(ctx context.Context, request sandbox.Request) (sandbox.Response, error) {
-	return s.run(ctx, "https://api.machines.dev/v1", &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, request)
+	// Leave headroom for the readiness endpoint's 30-second server-side wait.
+	return s.run(ctx, "https://api.machines.dev/v1", &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, request)
 }
 
 func (s Sandbox) run(ctx context.Context, endpoint string, client *http.Client, request sandbox.Request) (sandbox.Response, error) {
@@ -62,12 +63,17 @@ func (s Sandbox) run(ctx context.Context, endpoint string, client *http.Client, 
 	if token == "" {
 		return sandbox.Response{}, errors.New("sandbox Fly token is unavailable")
 	}
+	requestTimeout := errors.New("Fly API returned HTTP 408")
 	api := func(ctx context.Context, method, path string, input, output any) error {
-		raw, err := json.Marshal(input)
-		if err != nil {
-			return errors.New("encode sandbox request")
+		var body io.Reader
+		if input != nil {
+			raw, err := json.Marshal(input)
+			if err != nil {
+				return errors.New("encode sandbox request")
+			}
+			body = bytes.NewReader(raw)
 		}
-		r, err := http.NewRequestWithContext(ctx, method, endpoint+"/apps/"+s.App+path, bytes.NewReader(raw))
+		r, err := http.NewRequestWithContext(ctx, method, endpoint+"/apps/"+s.App+path, body)
 		if err != nil {
 			return errors.New("create Fly API request")
 		}
@@ -79,13 +85,16 @@ func (s Sandbox) run(ctx context.Context, endpoint string, client *http.Client, 
 			return errors.New("Fly API request failed; execution may have occurred")
 		}
 		defer res.Body.Close()
+		if res.StatusCode == http.StatusRequestTimeout {
+			return requestTimeout
+		}
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			return fmt.Errorf("Fly API returned HTTP %d", res.StatusCode)
 		}
 		if output == nil {
 			return nil
 		}
-		raw, err = io.ReadAll(io.LimitReader(res.Body, 8*sandbox.ResultLimit+1))
+		raw, err := io.ReadAll(io.LimitReader(res.Body, 8*sandbox.ResultLimit+1))
 		if err != nil || len(raw) > 8*sandbox.ResultLimit || json.Unmarshal(raw, output) != nil {
 			return errors.New("invalid or oversized Fly API response")
 		}
@@ -134,8 +143,21 @@ func (s Sandbox) run(ctx context.Context, endpoint string, client *http.Client, 
 			slog.Warn("sandbox Machine cleanup failed; inspect the runner app", "app", s.App, "machine", machine.ID)
 		}
 	}()
-	if err := api(ctx, "GET", path+"/wait?state=started&timeout=30", nil, nil); err != nil {
-		return sandbox.Response{}, err
+	for {
+		err := api(ctx, "GET", path+"/wait?state=started&timeout=30", nil, nil)
+		if err == nil {
+			break
+		}
+		// Only a read-only readiness timeout can repeat, for the same Machine.
+		// Creation and execution remain outside this loop and are never retried.
+		if !errors.Is(err, requestTimeout) {
+			return sandbox.Response{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return sandbox.Response{}, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 	for {
 		var result struct {

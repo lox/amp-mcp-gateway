@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestSandbox(t *testing.T) {
-	for _, mode := range []string{"discover", "call", "tool-error", "pending", "default-network", "create-ambiguous", "exec-ambiguous", "cancel", "cleanup-failure", "runner-error", "oversized"} {
+	for _, mode := range []string{"discover", "call", "tool-error", "pending", "cold-start", "boot-cancel", "boot-deadline", "boot-failed", "default-network", "create-ambiguous", "create-timeout", "exec-ambiguous", "exec-timeout", "cancel", "cleanup-failure", "runner-error", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("SANDBOX_FLY_TOKEN", "management-secret-canary")
 			s := Sandbox{App: "sandbox-test", Image: "runner@sha256:fixture", TokenEnv: "SANDBOX_FLY_TOKEN", Region: "syd", Server: sandbox.Server{Repository: "https://github.com/example/server", InstallCmd: "npm ci", RunCmd: "node index.js"}}
@@ -24,9 +25,14 @@ func TestSandbox(t *testing.T) {
 			if mode != "discover" && mode != "pending" {
 				req.Tool, req.Arguments = "sum", map[string]any{"a": 19, "b": -7}
 			}
-			created, collected, destroyed := 0, 0, 0
+			created, waited, collected, destroyed := 0, 0, 0, 0
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+			if mode == "boot-deadline" {
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				defer deadlineCancel()
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer management-secret-canary" {
 					t.Error("missing management authentication")
@@ -85,8 +91,26 @@ func TestSandbox(t *testing.T) {
 						http.Error(w, "management-secret-canary", 502)
 						return
 					}
+					if mode == "create-timeout" {
+						http.Error(w, "management-secret-canary", http.StatusRequestTimeout)
+						return
+					}
 					fmt.Fprint(w, `{"id":"abc123"}`)
 				case "GET /apps/sandbox-test/machines/abc123/wait":
+					waited++
+					if mode == "cold-start" && waited < 3 || mode == "boot-cancel" && waited == 1 || mode == "boot-deadline" {
+						http.Error(w, "management-secret-canary", http.StatusRequestTimeout)
+						return
+					}
+					if mode == "boot-cancel" {
+						cancel()
+						<-r.Context().Done()
+						return
+					}
+					if mode == "boot-failed" {
+						http.Error(w, "management-secret-canary", http.StatusForbidden)
+						return
+					}
 					fmt.Fprint(w, `{}`)
 				case "POST /apps/sandbox-test/machines/abc123/exec":
 					collected++
@@ -96,6 +120,10 @@ func TestSandbox(t *testing.T) {
 					}
 					if mode == "exec-ambiguous" {
 						http.Error(w, "management-secret-canary", 502)
+						return
+					}
+					if mode == "exec-timeout" {
+						http.Error(w, "management-secret-canary", http.StatusRequestTimeout)
 						return
 					}
 					if mode == "cancel" {
@@ -134,7 +162,7 @@ func TestSandbox(t *testing.T) {
 			}))
 			defer server.Close()
 			response, err := s.run(ctx, server.URL, server.Client(), req)
-			wantError := mode == "default-network" || mode == "create-ambiguous" || mode == "exec-ambiguous" || mode == "cancel" || mode == "runner-error" || mode == "oversized"
+			wantError := mode == "default-network" || mode == "create-ambiguous" || mode == "create-timeout" || mode == "exec-ambiguous" || mode == "exec-timeout" || mode == "cancel" || mode == "boot-cancel" || mode == "boot-deadline" || mode == "boot-failed" || mode == "runner-error" || mode == "oversized"
 			if (err != nil) != wantError {
 				t.Fatalf("error=%v, wantError=%t", err, wantError)
 			}
@@ -156,11 +184,20 @@ func TestSandbox(t *testing.T) {
 			} else if created != 1 {
 				t.Fatalf("created %d Machines; must never retry creation", created)
 			}
-			if mode != "default-network" && mode != "create-ambiguous" && destroyed != 1 {
+			if mode != "default-network" && mode != "create-ambiguous" && mode != "create-timeout" && destroyed != 1 {
 				t.Fatalf("destroyed %d Machines, want 1", destroyed)
 			}
-			if mode == "exec-ambiguous" && collected != 1 {
+			if (mode == "exec-ambiguous" || mode == "exec-timeout") && collected != 1 {
 				t.Fatal("retried ambiguous execution")
+			}
+			if mode == "cold-start" && (waited != 3 || collected != 1) {
+				t.Fatalf("cold start must wait for the same Machine then collect once: waited=%d collected=%d", waited, collected)
+			}
+			if mode == "boot-cancel" && (waited != 2 || collected != 0) || mode == "boot-failed" && (waited != 1 || collected != 0) {
+				t.Fatalf("boot failure must stop waiting without collecting: waited=%d collected=%d", waited, collected)
+			}
+			if mode == "boot-deadline" && (!errors.Is(err, context.DeadlineExceeded) || collected != 0) {
+				t.Fatalf("readiness waits exceeded caller deadline: err=%v collected=%d", err, collected)
 			}
 		})
 	}

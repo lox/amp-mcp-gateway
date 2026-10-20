@@ -91,8 +91,10 @@ not every account provisioned by login.
 - The request/result files are root-owned; results are published atomically and
   collected through read-only Fly exec commands. No public bridge is needed.
 - Clone, installation and one MCP request have a combined three-minute timeout;
-  the gateway permits four minutes including boot/collection. Results are capped
-  at 4 MiB; discovery is capped at 500 tools and 2 MiB.
+  the gateway permits four minutes including boot/collection. Read-only readiness
+  waits repeat on Fly's HTTP 408 until that overall deadline; they never recreate
+  the Machine or retry a tool. Results are capped at 4 MiB; discovery is capped at
+  500 tools and 2 MiB.
 - The gateway force-destroys the Machine after collection or failure, using an
   independent cleanup context. The supervisor exits after five minutes with
   `auto_destroy` enabled as fallback for gateway crashes or lost create responses.
