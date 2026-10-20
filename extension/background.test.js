@@ -178,9 +178,34 @@ test("node mutations reject changed human-readable targets", async () => {
       "click",
       {document_id: "described-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
     ),
-    (error) => error instanceof context.BeforeInputErrorForTest && /target element changed/.test(error.message),
+    (error) => error instanceof context.BeforeInputErrorForTest && error.message.includes('expected "button" "Save", found "button" "Delete account"'),
   );
-  assert.deepEqual(sentCommands.splice(0).map((call) => call.method), ["Page.getFrameTree", "Accessibility.getPartialAXTree"]);
+  assert.deepEqual(sentCommands.splice(0).map((call) => call.method), ["Page.getFrameTree", "Accessibility.getFullAXTree"]);
+});
+
+test("node mutations match the snapshot's node rather than an empty duplicate", async () => {
+  vm.runInNewContext("currentConfig = {shareID: 'duplicate-node', tabId: 203}", context);
+  const document = {frameTree: {frame: {loaderId: "duplicate-document"}}};
+  const tree = {nodes: [
+    {backendDOMNodeId: 7, ignored: true},
+    {backendDOMNodeId: 7, role: {value: "link"}, name: {value: "Pull requests  (1)"}},
+  ]};
+  commandResponses.push(
+    document, tree,
+    document, {},
+    document, tree,
+    document, {model: {content: [0, 0, 10, 0, 10, 10, 0, 10]}},
+    document, {},
+    document, {},
+    document, {},
+  );
+  const result = await context.executeForTest(
+    {shareID: "duplicate-node", tabId: 203},
+    "click",
+    {document_id: "duplicate-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "link", expected_name: "Pull requests  (1)"},
+  );
+  assert.equal(result.clicked, 7);
+  sentCommands.splice(0);
 });
 
 test("failures once the input phase starts stay ambiguous", async () => {
@@ -224,7 +249,7 @@ test("node mutations recheck matching human-readable targets after scrolling", a
     {document_id: "matching-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "button", expected_name: "Save"},
   );
   assert.equal(result.clicked, 7);
-  assert.equal(sentCommands.splice(0).filter((call) => call.method === "Accessibility.getPartialAXTree").length, 2);
+  assert.equal(sentCommands.splice(0).filter((call) => call.method === "Accessibility.getFullAXTree").length, 2);
 });
 
 test("scroll moves the document without hit testing a page element", async () => {
