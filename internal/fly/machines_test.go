@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,7 +26,8 @@ func TestSandbox(t *testing.T) {
 			if mode != "discover" && mode != "pending" {
 				req.Tool, req.Arguments = "sum", map[string]any{"a": 19, "b": -7}
 			}
-			created, waited, collected, destroyed := 0, 0, 0, 0
+			created, waited, submitted, collected, destroyed := 0, 0, 0, 0, 0
+			var guestRequest sandbox.Request
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if mode == "boot-deadline" {
@@ -74,18 +76,15 @@ func TestSandbox(t *testing.T) {
 					if create.Region != "syd" || c.Image != s.Image || !c.AutoDestroy || c.Restart.Policy != "no" || c.Guest.CPUs != 1 || c.Guest.MemoryMB != 512 || len(c.Processes) != 1 || !c.Processes[0].IgnoreAppSecrets || c.Processes[0].Exec[0] != "/usr/local/bin/mcp-sandbox" || c.Env != nil || c.Services != nil || c.Mounts != nil {
 						t.Errorf("unsafe Machine configuration: %+v", create)
 					}
-					if len(c.Files) != 1 || c.Files[0].GuestPath != sandbox.RequestPath {
-						t.Error("missing guest request")
+					if len(c.Files) != 1 || c.Files[0].GuestPath != sandbox.ConfigPath {
+						t.Error("missing guest definition")
 						http.Error(w, "invalid request", 400)
 						return
 					}
 					data, err := base64.StdEncoding.DecodeString(c.Files[0].RawValue)
-					var guest sandbox.Request
-					if err != nil || json.Unmarshal(data, &guest) != nil || guest.Server != s.Server || guest.Tool != req.Tool || strings.Contains(string(data), "management-secret-canary") {
-						t.Errorf("incorrect or secret-bearing guest request: %s", data)
-					}
-					if req.Tool != "" && (guest.Arguments["a"] != float64(19) || guest.Arguments["b"] != float64(-7)) {
-						t.Errorf("lost tool arguments: %+v", guest.Arguments)
+					var guest sandbox.Server
+					if err != nil || json.Unmarshal(data, &guest) != nil || guest != s.Server || strings.Contains(string(data), "management-secret-canary") {
+						t.Errorf("incorrect or secret-bearing guest definition: %s", data)
 					}
 					if mode == "create-ambiguous" {
 						http.Error(w, "management-secret-canary", 502)
@@ -113,18 +112,35 @@ func TestSandbox(t *testing.T) {
 					}
 					fmt.Fprint(w, `{}`)
 				case "POST /apps/sandbox-test/machines/abc123/exec":
-					collected++
 					var read struct{ Command []string }
-					if json.NewDecoder(r.Body).Decode(&read) != nil || len(read.Command) != 3 || read.Command[2] != "test -f "+sandbox.ResultPath+" && cat "+sandbox.ResultPath {
-						t.Error("exec must only read the result, never re-execute the tool")
-					}
-					if mode == "exec-ambiguous" {
-						http.Error(w, "management-secret-canary", 502)
+					if json.NewDecoder(r.Body).Decode(&read) != nil || len(read.Command) != 3 {
+						t.Error("invalid exec command")
 						return
 					}
-					if mode == "exec-timeout" {
-						http.Error(w, "management-secret-canary", http.StatusRequestTimeout)
+					if encoded, ok := strings.CutPrefix(read.Command[2], "umask 077; printf '%s' '"); ok {
+						submitted++
+						encoded, _, _ = strings.Cut(encoded, "'")
+						raw, err := base64.StdEncoding.DecodeString(encoded)
+						if err != nil || json.Unmarshal(raw, &guestRequest) != nil || guestRequest.ID == "" || guestRequest.Tool != req.Tool || strings.Contains(string(raw), "management-secret-canary") {
+							t.Error("invalid submitted request")
+						}
+						if req.Tool != "" && (guestRequest.Arguments["a"] != float64(19) || guestRequest.Arguments["b"] != float64(-7)) {
+							t.Errorf("lost tool arguments: %+v", guestRequest.Arguments)
+						}
+						if mode == "exec-ambiguous" || mode == "exec-timeout" {
+							status := 502
+							if mode == "exec-timeout" {
+								status = http.StatusRequestTimeout
+							}
+							http.Error(w, "management-secret-canary", status)
+							return
+						}
+						fmt.Fprint(w, `{"exit_code":0}`)
 						return
+					}
+					collected++
+					if read.Command[2] != "test -f "+sandbox.ResultPath+" && cat "+sandbox.ResultPath {
+						t.Error("polling must only read results")
 					}
 					if mode == "cancel" {
 						cancel()
@@ -135,12 +151,12 @@ func TestSandbox(t *testing.T) {
 						fmt.Fprint(w, `{"exit_code":1}`)
 						return
 					}
-					response := sandbox.Response{Tools: []*mcp.Tool{{Name: "sum", InputSchema: map[string]any{"type": "object"}}}}
+					response := sandbox.Response{ID: guestRequest.ID, Tools: []*mcp.Tool{{Name: "sum", InputSchema: map[string]any{"type": "object"}}}}
 					if req.Tool != "" {
-						response = sandbox.Response{Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "12"}}, IsError: mode == "tool-error"}}
+						response = sandbox.Response{ID: guestRequest.ID, Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "12"}}, IsError: mode == "tool-error"}}
 					}
-					if mode == "runner-error" {
-						response = sandbox.Response{Error: "management-secret-canary"}
+					if mode == "runner-error" || mode == "cleanup-failure" {
+						response = sandbox.Response{ID: guestRequest.ID, Error: "management-secret-canary"}
 					}
 					out, _ := json.Marshal(response)
 					if mode == "oversized" {
@@ -161,8 +177,8 @@ func TestSandbox(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			response, err := s.run(ctx, server.URL, server.Client(), req)
-			wantError := mode == "default-network" || mode == "create-ambiguous" || mode == "create-timeout" || mode == "exec-ambiguous" || mode == "exec-timeout" || mode == "cancel" || mode == "boot-cancel" || mode == "boot-deadline" || mode == "boot-failed" || mode == "runner-error" || mode == "oversized"
+			response, err := NewRunner(s).run(ctx, server.URL, server.Client(), req)
+			wantError := mode == "default-network" || mode == "create-ambiguous" || mode == "create-timeout" || mode == "exec-ambiguous" || mode == "exec-timeout" || mode == "cancel" || mode == "boot-cancel" || mode == "boot-deadline" || mode == "boot-failed" || mode == "runner-error" || mode == "cleanup-failure" || mode == "oversized"
 			if (err != nil) != wantError {
 				t.Fatalf("error=%v, wantError=%t", err, wantError)
 			}
@@ -184,10 +200,14 @@ func TestSandbox(t *testing.T) {
 			} else if created != 1 {
 				t.Fatalf("created %d Machines; must never retry creation", created)
 			}
-			if mode != "default-network" && mode != "create-ambiguous" && mode != "create-timeout" && destroyed != 1 {
-				t.Fatalf("destroyed %d Machines, want 1", destroyed)
+			wantDestroyed := 0
+			if wantError && mode != "default-network" && mode != "create-ambiguous" && mode != "create-timeout" {
+				wantDestroyed = 1
 			}
-			if (mode == "exec-ambiguous" || mode == "exec-timeout") && collected != 1 {
+			if destroyed != wantDestroyed {
+				t.Fatalf("destroyed %d Machines, want %d", destroyed, wantDestroyed)
+			}
+			if (mode == "exec-ambiguous" || mode == "exec-timeout") && (submitted != 1 || collected != 0) {
 				t.Fatal("retried ambiguous execution")
 			}
 			if mode == "cold-start" && (waited != 3 || collected != 1) {
@@ -200,6 +220,110 @@ func TestSandbox(t *testing.T) {
 				t.Fatalf("readiness waits exceeded caller deadline: err=%v collected=%d", err, collected)
 			}
 		})
+	}
+}
+
+func TestRunnerReuseAndRecovery(t *testing.T) {
+	t.Setenv("SANDBOX_FLY_TOKEN", "fake-management-token")
+	s := Sandbox{App: "sandbox-test", Image: "runner@sha256:" + strings.Repeat("a1", 32), TokenEnv: "SANDBOX_FLY_TOKEN", Server: sandbox.Server{Repository: "https://github.com/example/server", RunCmd: "node index.js"}}
+	var mu sync.Mutex
+	created, submissions, destroyed := 0, 0, 0
+	var result, previous sandbox.Response
+	expired, ambiguous, stale := false, false, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/wait"):
+			fmt.Fprint(w, `{}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/machines/"):
+			if expired {
+				expired = false
+				http.NotFound(w, r)
+			} else {
+				fmt.Fprint(w, `{"state":"started"}`)
+			}
+		case r.Method == "GET":
+			fmt.Fprint(w, `{"network":"isolated"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/machines"):
+			created++
+			fmt.Fprintf(w, `{"id":"%x"}`, created)
+		case r.Method == "DELETE":
+			destroyed++
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/exec"):
+			var exec struct{ Command []string }
+			if json.NewDecoder(r.Body).Decode(&exec) != nil || len(exec.Command) != 3 {
+				t.Error("invalid exec")
+				return
+			}
+			if encoded, ok := strings.CutPrefix(exec.Command[2], "umask 077; printf '%s' '"); ok {
+				submissions++
+				encoded, _, _ = strings.Cut(encoded, "'")
+				raw, err := base64.StdEncoding.DecodeString(encoded)
+				var req sandbox.Request
+				if err != nil || json.Unmarshal(raw, &req) != nil || req.ID == result.ID {
+					t.Error("request ID or payload was reused")
+				}
+				previous, result = result, sandbox.Response{ID: req.ID, Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: req.Arguments["text"].(string)}}}}
+				if ambiguous {
+					ambiguous = false
+					http.Error(w, "lost submission acknowledgement", 502)
+					return
+				}
+				fmt.Fprint(w, `{"exit_code":0}`)
+			} else {
+				response := result
+				if stale {
+					response, stale = previous, false
+				}
+				raw, _ := json.Marshal(response)
+				_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": string(raw)})
+			}
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	runner := NewRunner(s)
+	call := func(runner *Runner, text string, wantError bool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		response, err := runner.run(ctx, server.URL, server.Client(), sandbox.Request{Tool: "echo", Arguments: map[string]any{"text": text}})
+		if (err != nil) != wantError || err == nil && (response.Result == nil || response.Result.Content[0].(*mcp.TextContent).Text != text) {
+			t.Errorf("call %q: response=%+v error=%v", text, response, err)
+		}
+	}
+	var calls sync.WaitGroup
+	for _, text := range []string{"first", "second 'quoted'\n; $(false)"} {
+		calls.Go(func() { call(runner, text, false) })
+	}
+	calls.Wait()
+	if created != 1 || submissions != 2 || destroyed != 0 {
+		t.Fatalf("concurrent calls did not share one serialized Machine: %d %d %d", created, submissions, destroyed)
+	}
+	stale = true
+	call(runner, "third", false)
+	if created != 1 || submissions != 3 {
+		t.Fatal("stale result caused recreation or resubmission")
+	}
+	expired = true
+	call(runner, "after idle", false)
+	if created != 2 {
+		t.Fatal("expired Machine was not replaced")
+	}
+	ambiguous = true
+	call(runner, "ambiguous write", true)
+	if created != 2 || submissions != 5 || destroyed != 1 {
+		t.Fatal("ambiguous write was retried or Machine was retained")
+	}
+	call(runner, "new explicit call", false)
+	if created != 3 {
+		t.Fatal("failed Machine was reused")
+	}
+	call(NewRunner(s), "another owner/connection", false)
+	if created != 4 {
+		t.Fatal("separate runners shared a Machine")
 	}
 }
 
@@ -233,7 +357,7 @@ func TestSandboxConfiguration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := valid.Run(ctx, sandbox.Request{}); err == nil {
+	if _, err := NewRunner(valid).Run(ctx, sandbox.Request{}); err == nil {
 		t.Fatal("accepted missing Fly token")
 	}
 }

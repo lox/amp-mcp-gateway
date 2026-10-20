@@ -27,7 +27,7 @@ const (
 	stateLifetime  = 10 * time.Minute
 )
 
-// Connection describes a remote endpoint, browser bridge or disposable Fly sandbox.
+// Connection describes a remote endpoint, browser bridge or idle-expiring Fly sandbox.
 type Connection struct {
 	ID       string
 	URL      string
@@ -72,6 +72,7 @@ type Manager struct {
 
 type managedConnection struct {
 	config Connection
+	runner *fly.Runner
 	mu     sync.Mutex
 	check  Health
 	grant  uint64
@@ -112,7 +113,7 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 			if err := c.Fly.Validate(); err != nil {
 				return nil, fmt.Errorf("sandbox connection %q: %w", c.ID, err)
 			}
-			m.conns[c.ID] = &managedConnection{config: c}
+			m.conns[c.ID] = &managedConnection{config: c, runner: fly.NewRunner(*c.Fly)}
 			continue
 		}
 		if _, err := validatedURL(c.URL); err != nil {
@@ -181,7 +182,7 @@ func (m *Manager) connection(id string) (*managedConnection, bool) {
 // Binding returns no dynamic authority for regular HTTP upstreams.
 func (m *Manager) Binding(string) string { return "" }
 
-// ListTools initializes a fresh MCP session and returns all pages of tools.
+// ListTools returns all pages of tools, reusing the session for Fly connections.
 func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool, error) {
 	c, ok := m.connection(connection)
 	if !ok {
@@ -200,7 +201,7 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 	var err error
 	if c.config.Fly != nil {
 		var response sandbox.Response
-		response, err = c.config.Fly.Run(ctx, sandbox.Request{})
+		response, err = c.runner.Run(ctx, sandbox.Request{})
 		tools = response.Tools
 	} else {
 		err = m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
@@ -253,10 +254,10 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 	return tools, err
 }
 
-// Call initializes a fresh MCP session and invokes one tool exactly once.
+// Call invokes one tool exactly once, reusing the session for Fly connections.
 func (m *Manager) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
 	if c, ok := m.connection(connection); ok && c.config.Fly != nil {
-		response, err := c.config.Fly.Run(ctx, sandbox.Request{Tool: tool, Arguments: args})
+		response, err := c.runner.Run(ctx, sandbox.Request{Tool: tool, Arguments: args})
 		if err != nil {
 			return nil, failure("sandbox", err, 0)
 		}

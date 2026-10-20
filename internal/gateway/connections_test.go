@@ -977,6 +977,8 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 			return w.Result(), nil
 		}
 		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/machines/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "started"})
 		case r.Method == "GET":
 			_ = json.NewEncoder(w).Encode(map[string]any{"network": "isolated-code"})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/machines"):
@@ -992,15 +994,30 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 				t.Error("invalid creation request")
 			} else {
 				raw, decodeErr := base64.StdEncoding.DecodeString(create.Config.Files[0].RawValue)
-				if decodeErr != nil || json.Unmarshal(raw, &request) != nil {
-					t.Error("invalid runner request")
+				var definition sandbox.Server
+				if decodeErr != nil || json.Unmarshal(raw, &definition) != nil || definition != cfg.Connections[0].Fly.Server {
+					t.Error("invalid runner definition")
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "abc123"})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/exec"):
-			response := sandbox.Response{Tools: []*mcp.Tool{{Name: "write", Description: "Write", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}}}}
+			var exec struct{ Command []string }
+			if json.NewDecoder(r.Body).Decode(&exec) != nil || len(exec.Command) != 3 {
+				t.Error("invalid exec command")
+				return w.Result(), nil
+			}
+			if encoded, ok := strings.CutPrefix(exec.Command[2], "umask 077; printf '%s' '"); ok {
+				encoded, _, _ = strings.Cut(encoded, "'")
+				raw, err := base64.StdEncoding.DecodeString(encoded)
+				if err != nil || json.Unmarshal(raw, &request) != nil {
+					t.Error("invalid submitted request")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0})
+				return w.Result(), nil
+			}
+			response := sandbox.Response{ID: request.ID, Tools: []*mcp.Tool{{Name: "write", Description: "Write", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []string{"text"}}}}}
 			if request.Tool != "" {
-				response = sandbox.Response{Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: request.Arguments["text"].(string)}}}}
+				response = sandbox.Response{ID: request.ID, Result: &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: request.Arguments["text"].(string)}}}}
 			}
 			raw, _ := json.Marshal(response)
 			_ = json.NewEncoder(w).Encode(map[string]any{"stdout": string(raw), "exit_code": 0})
@@ -1015,7 +1032,7 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 	h, cookie := adminUI(t, g, m)
 	for _, path := range []string{"/connections/notes/settings", "/connections/notes/tools"} {
 		body := formRequest(h, cookie, "GET", path, nil).Body.String()
-		if !strings.Contains(body, "fresh, billable Fly sandbox") || !strings.Contains(body, "https://github.com/example/server") || strings.Contains(body, "management-canary") {
+		if !strings.Contains(body, "start or reuse a billable Fly sandbox") || !strings.Contains(body, "10 minutes idle") || !strings.Contains(body, "https://github.com/example/server") || strings.Contains(body, "management-canary") {
 			t.Fatal("sandbox page must disclose code execution without exposing credentials")
 		}
 		if !strings.Contains(body, `hx-request='{"timeout":270000}'`) {
@@ -1057,10 +1074,10 @@ func TestSandboxDiscoveryApprovalAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := await(t, s, o.ID, "succeeded")
-	if !strings.Contains(string(done.Result), "original") || creates.Load() != 2 || destroys.Load() != 2 {
+	if !strings.Contains(string(done.Result), "original") || creates.Load() != 1 || destroys.Load() != 0 {
 		t.Fatalf("wrong sandbox outcome: %s, created=%d destroyed=%d", done.Result, creates.Load(), destroys.Load())
 	}
-	if _, err := g.submit(t.Context(), in); err != nil || creates.Load() != 2 {
+	if _, err := g.submit(t.Context(), in); err != nil || creates.Load() != 1 {
 		t.Fatal("replayed a completed sandbox call")
 	}
 }

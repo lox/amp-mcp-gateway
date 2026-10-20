@@ -36,8 +36,9 @@ func TestSandboxChild(t *testing.T) {
 	if _, err := os.Stat("installed"); err != nil {
 		os.Exit(22)
 	}
-	if mode == "protected" {
-		for _, path := range []string{RequestPath, ResultPath} {
+	if mode == "protected" || mode == "warm" {
+		for _, name := range []string{"server.json", "request.json", "result.json"} {
+			path := filepath.Join(os.Args[5], name)
 			if os.WriteFile(path, []byte("tampered"), 0600) == nil || os.Remove(path) == nil {
 				os.Exit(26)
 			}
@@ -78,13 +79,16 @@ func TestSandboxChild(t *testing.T) {
 				return &mcp.ListToolsResult{Tools: tools, NextCursor: cursor}, nil
 			case "tools/call":
 				calls++
-				if calls != 1 || pages != 0 {
+				if mode != "warm" && (calls != 1 || pages != 0) {
 					os.Exit(24)
 				}
 				if mode == "error" {
 					return nil, fmt.Errorf("SANDBOX_SECRET arbitrary provider error")
 				}
 				text := "once"
+				if mode == "warm" {
+					text = strconv.Itoa(calls)
+				}
 				if mode == "result-big" {
 					text = strings.Repeat("x", ResultLimit)
 				}
@@ -151,8 +155,9 @@ func TestExecute(t *testing.T) {
 		{"normal", "tool0", 0, false}, {"error", "tool0", 0, true}, {"result-big", "tool0", 0, true},
 	} {
 		t.Run(tc.mode+"/"+tc.tool, func(t *testing.T) {
-			req := Request{Server: Server{Repository: httpRepo.URL, Revision: revision, InstallCmd: "test \"$(id -u)\" = 1000 && test -z \"$SANDBOX_SECRET\" && touch installed", RunCmd: fmt.Sprintf("exec ./child -test.run=TestSandboxChild sandbox-child %s %d", tc.mode, os.Getpid())}, Tool: tc.tool}
-			response := Execute(t.Context(), req)
+			definition := Server{Repository: httpRepo.URL, Revision: revision, InstallCmd: "test \"$(id -u)\" = 1000 && test -z \"$SANDBOX_SECRET\" && touch installed", RunCmd: fmt.Sprintf("exec ./child -test.run=TestSandboxChild sandbox-child %s %d", tc.mode, os.Getpid())}
+			send, _, _ := runnerFixture(t, t.Context(), definition, time.Second)
+			response := send(Request{Tool: tc.tool})
 			if (response.Error != "") != tc.wantError || len(response.Tools) != tc.wantTools {
 				t.Fatalf("tools=%d error=%q", len(response.Tools), response.Error)
 			}
@@ -165,7 +170,8 @@ func TestExecute(t *testing.T) {
 		})
 	}
 	t.Run("option injection", func(t *testing.T) {
-		response := Execute(t.Context(), Request{Server: Server{Repository: httpRepo.URL, Revision: "--help", RunCmd: "true"}})
+		send, _, _ := runnerFixture(t, t.Context(), Server{Repository: httpRepo.URL, Revision: "--help", RunCmd: "true"}, time.Second)
+		response := send(Request{})
 		if response.Error == "" {
 			t.Fatal("accepted option as revision")
 		}
@@ -179,41 +185,85 @@ func TestExecute(t *testing.T) {
 			if install {
 				server.InstallCmd = "sleep 60"
 			}
-			response := Execute(ctx, Request{Server: server})
+			send, _, _ := runnerFixture(t, ctx, server, time.Second)
+			response := send(Request{})
 			if response.Error == "" || time.Since(start) > 2*time.Second {
 				t.Fatal("execution did not respect timeout")
 			}
 		})
 	}
-	t.Run("root-only atomic result", func(t *testing.T) {
-		for _, path := range []string{RequestPath, ResultPath} {
-			if _, err := os.Lstat(path); !os.IsNotExist(err) {
-				t.Skip("reserved runner paths already in use")
+	t.Run("warm session and idle expiry", func(t *testing.T) {
+		definition := Server{Repository: httpRepo.URL, InstallCmd: "touch installed", RunCmd: fmt.Sprintf("exec ./child -test.run=TestSandboxChild sandbox-child warm %d", os.Getpid())}
+		send, done, directory := runnerFixture(t, t.Context(), definition, 600*time.Millisecond)
+		if response := send(Request{}); response.Error != "" || len(response.Tools) != 1 {
+			t.Fatalf("discovery failed: %+v", response)
+		}
+		for _, want := range []string{"1", "2"} {
+			time.Sleep(350 * time.Millisecond)
+			response := send(Request{Tool: "tool0"})
+			if response.Error != "" || response.Result == nil || response.Result.Content[0].(*mcp.TextContent).Text != want {
+				t.Fatalf("stdio process/session was not reused: %+v", response)
 			}
 		}
-		req := Request{Server: Server{Repository: httpRepo.URL, InstallCmd: "touch installed", RunCmd: fmt.Sprintf("exec ./child -test.run=TestSandboxChild sandbox-child protected %d", os.Getpid())}}
-		raw, err := json.Marshal(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for path, content := range map[string][]byte{RequestPath: raw, ResultPath: []byte("old result")} {
-			if err := os.WriteFile(path, content, 0600); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Remove(path) })
-		}
-		Run(t.Context())
-		info, err := os.Stat(ResultPath)
+		info, err := os.Stat(filepath.Join(directory, "result.json"))
 		if err != nil || info.Mode().Perm() != 0600 || info.Sys().(*syscall.Stat_t).Uid != 0 {
 			t.Fatalf("result is not root-only: %v %v", info, err)
 		}
-		result, err := os.ReadFile(ResultPath)
-		if err != nil {
-			t.Fatal(err)
+		select {
+		case <-done:
+			t.Fatal("expired before the idle deadline")
+		case <-time.After(400 * time.Millisecond):
 		}
-		var response Response
-		if err := json.Unmarshal(result, &response); err != nil || response.Error != "" || len(response.Tools) != 1 {
-			t.Fatalf("invalid result: %s (%v)", result, err)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("runner did not expire while idle without gateway assistance")
 		}
 	})
+}
+
+// runnerFixture drives the actual root-only mailbox and persistent SDK process.
+func runnerFixture(t *testing.T, parent context.Context, definition Server, idle time.Duration) (func(Request) Response, <-chan struct{}, string) {
+	t.Helper()
+	directory := t.TempDir()
+	if strings.Contains(definition.RunCmd, "TestSandboxChild") {
+		definition.RunCmd += " " + strconv.Quote(directory)
+	}
+	raw, err := json.Marshal(definition)
+	if err != nil || os.WriteFile(filepath.Join(directory, "server.json"), raw, 0600) != nil {
+		t.Fatal("could not write runner definition")
+	}
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() { defer close(done); Run(ctx, directory, idle) }()
+	t.Cleanup(func() { cancel(); <-done })
+	sequence := 0
+	return func(req Request) Response {
+		t.Helper()
+		sequence++
+		req.ID = strconv.Itoa(sequence)
+		raw, err := json.Marshal(req)
+		path := filepath.Join(directory, "request.json")
+		if err != nil || os.WriteFile(path+".tmp", raw, 0600) != nil || os.Rename(path+".tmp", path) != nil {
+			t.Fatal("could not submit runner request")
+		}
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			var response Response
+			raw, err := os.ReadFile(filepath.Join(directory, "result.json"))
+			if err == nil && json.Unmarshal(raw, &response) == nil && response.ID == req.ID {
+				return response
+			}
+			select {
+			case <-done:
+				return Response{Error: "runner exited"}
+			case <-deadline.C:
+				t.Fatal("runner did not return a result")
+			case <-tick.C:
+			}
+		}
+	}, done, directory
 }

@@ -15,6 +15,7 @@ FROM node:22.20.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && chmod 0700 /root \
+    && mkdir -m 0700 /run/mcp-sandbox \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=build /mcp-sandbox /usr/local/bin/mcp-sandbox

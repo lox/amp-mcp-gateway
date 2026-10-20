@@ -1,4 +1,4 @@
-// Package sandbox defines the request and result exchanged with a disposable MCP runner.
+// Package sandbox defines the requests exchanged with an idle-expiring MCP runner.
 package sandbox
 
 import (
@@ -8,14 +8,18 @@ import (
 )
 
 const (
-	// ExecutionTimeout includes cloning, installation, initialization and one MCP request.
+	// ExecutionTimeout bounds one MCP request, including installation on first use.
 	ExecutionTimeout = 3 * time.Minute
-	// MachineLifetime bounds orphaned Machines after loss of the gateway or API response.
-	MachineLifetime = 5 * time.Minute
+	// IdleTimeout bounds unused Machines, including after loss of the gateway.
+	IdleTimeout = 10 * time.Minute
+	// RequestLimit leaves room for base64 encoding within Fly exec's command arguments.
+	RequestLimit = 64 << 10
 	// ResultLimit bounds serialized MCP results crossing back into the gateway.
 	ResultLimit = 4 << 20
-	RequestPath = "/run/mcp-request.json"
-	ResultPath  = "/run/mcp-result.json"
+	Directory   = "/run/mcp-sandbox"
+	ConfigPath  = Directory + "/server.json"
+	RequestPath = Directory + "/request.json"
+	ResultPath  = Directory + "/result.json"
 )
 
 // Server describes public source code to install and run using MCP over stdio.
@@ -28,13 +32,14 @@ type Server struct {
 
 // Request lists tools when Tool is empty, otherwise invokes exactly that tool once.
 type Request struct {
-	Server    Server
+	ID        string
 	Tool      string         `json:",omitempty"`
 	Arguments map[string]any `json:",omitempty"`
 }
 
 // Response carries MCP data or a fixed, credential-free runner error.
 type Response struct {
+	ID     string
 	Tools  []*mcp.Tool         `json:",omitempty"`
 	Result *mcp.CallToolResult `json:",omitempty"`
 	Error  string              `json:",omitempty"`
