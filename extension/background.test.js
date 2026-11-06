@@ -276,6 +276,13 @@ test("registration survives stop, tab closure and Chrome restart without resumin
   assert.equal(context.chrome.storage.local.data.registeredBrowser.pairingCode, "browser-secret");
   assert.equal((await message({type: "status"})).registered, true);
 
+  await message({type: "pair", pairingCode: "mistyped-replacement"});
+  await sockets.at(-1).onclose({code: 1008});
+  const rejectedReplacement = await message({type: "status"});
+  assert.equal(rejectedReplacement.registered, true, "a rejected new code must not erase the saved registration");
+  assert.equal(rejectedReplacement.sharedTab, null);
+  assert.equal(context.chrome.storage.local.data.registeredBrowser.pairingCode, "browser-secret");
+
   await message({type: "share", tabId: 11});
   const first = await acknowledge();
   assert.equal(first.tab_id, 11);

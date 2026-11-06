@@ -219,9 +219,13 @@ function connect() {
     if (rejected) {
       await serialized(async () => {
         if (currentConfig !== config) return;
-        registeredBrowser = null;
-        await chrome.storage.local.remove("registeredBrowser");
-        await disconnect("Browser registration was rejected or revoked. Register again from the gateway.");
+        if (registeredBrowser?.pairingCode === config.pairingCode) {
+          registeredBrowser = null;
+          await chrome.storage.local.remove("registeredBrowser");
+        }
+        await disconnect(registeredBrowser
+          ? "Registration code rejected or expired. Your saved browser registration is unchanged; try another code or Share this tab."
+          : "Browser registration was rejected or revoked. Register again from the gateway.");
       });
       return;
     }
