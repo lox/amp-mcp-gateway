@@ -23,6 +23,24 @@ func (r *accountRegistry) browser(w http.ResponseWriter, req *http.Request) {
 	account.handler.ServeHTTP(w, req)
 }
 
+func (r *accountRegistry) reviewWebhook(w http.ResponseWriter, req *http.Request) {
+	r.mu.RLock()
+	var selected *accountRuntime
+	for _, account := range r.users {
+		if account.gateway.Reviews != nil && account.gateway.Reviews.Route() == req.PathValue("owner") {
+			selected = account
+			break
+		}
+	}
+	r.mu.RUnlock()
+	if selected == nil {
+		http.NotFound(w, req)
+		return
+	}
+	// The URL only routes; this account verifies its own App signature and ACL.
+	selected.gateway.Reviews.Webhook(w, req)
+}
+
 func (r *accountRegistry) workload(w http.ResponseWriter, req *http.Request) {
 	// The unverified hint selects a runtime, never grants access. Its Amp
 	// middleware verifies signature, audience, expiry, token use and exact user.

@@ -389,6 +389,13 @@ refresh or drift detection; upstream behavior can still change between calls.
 Editing endpoints, rotating pasted tokens, and removing connections in the UI
 are follow-up work.
 
+## Reviews integration
+
+**Integrations → Reviews** manages tenant-scoped GitHub Apps and review history.
+See [Reviews](reviews.md) for execution authority, lifecycle limits, plugin setup
+and the amp-reviewbot migration procedure. Reviews uses its own ledger rather
+than the MCP tool approval queue.
+
 ## Fly.io integration
 
 Open **Integrations → Fly.io**. Create the narrowest parent token that supports the

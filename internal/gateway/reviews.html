@@ -1,0 +1,49 @@
+{{define "reviews"}}
+<div class="reviews">
+<div class="heading"><div><a href="/integrations">← Integrations</a><h1>Reviews</h1><p class="sub">GitHub pull request reviews in Amp orbs. Each App belongs to your individual gateway account.</p></div><a class="button" href="/integrations/reviews">Add GitHub App</a></div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{if .Saved}}<p class="success" role="status">Review configuration saved. Existing jobs retain their frozen PR context; changed authorization cancels queued work.</p>{{end}}
+{{if .ReviewImported}}<p class="success" role="status">Imported {{.ReviewImported}} historical reviews. No reviews were queued.</p>{{end}}
+{{if .ReviewDemo}}<p class="note">Demo: use fake credentials only. Review execution is disabled; no GitHub or Amp requests are made.</p>{{end}}
+<div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">{{.Owner}} · App {{.AppID}} · installation {{.InstallationID}}</p><p>{{len .Projects}} mapped repositories · fail on {{.FailOn}}</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{end}}</div>
+<details class="card" {{if or .Error (not .ReviewExisting)}}open{{end}}><summary><strong>{{if .ReviewExisting}}Configure {{.ReviewApp.ID}}{{else}}Connect a GitHub App{{end}}</strong></summary>
+<p class="note">Amp login authorizes this page, not review execution. Supply an execution key whose account can launch orbs in every mapped project and has the <code>reviewbot-v1</code> plugin installed. GitHub credentials stay on the gateway.</p>
+<form method="post" action="/integrations/reviews" autocomplete="off">
+<div class="form-grid">
+<label>Integration ID<input name="id" value="{{.ReviewApp.ID}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" {{if .ReviewExisting}}readonly{{end}} placeholder="lox-reviews"></label>
+<label>Approved GitHub owner<input name="owner" value="{{.ReviewApp.Owner}}" required placeholder="lox" {{if .ReviewExisting}}readonly{{end}}></label>
+<label>GitHub App ID<input name="app_id" type="number" min="1" value="{{if .ReviewApp.AppID}}{{.ReviewApp.AppID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
+<label>Installation ID<input name="installation_id" type="number" min="1" value="{{if .ReviewApp.InstallationID}}{{.ReviewApp.InstallationID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
+</div>
+<label>GitHub App private key (PEM)<textarea name="private_key" rows="3" spellcheck="false" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}-----BEGIN RSA PRIVATE KEY-----{{end}}"></textarea></label>
+<label>Webhook secret<input name="webhook_secret" type="password" autocomplete="new-password" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}At least 16 characters{{end}}"></label>
+<label>Amp execution API key<input name="amp_key" type="password" autocomplete="new-password" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}Separate execution authority{{end}}"></label>
+<p class="help">Secrets are encrypted and never shown again. Rotating the execution key pauses cleanup for threads launched with the old key; drain first.</p>
+<label>Approved repositories (one owner/repo per line)<textarea name="repositories" rows="3" placeholder="lox/amp-mcp-gateway">{{.ReviewRepositories}}</textarea></label>
+<label><input name="owner_approved" type="checkbox" {{if .ReviewApp.OwnerApproved}}checked{{end}}> Approve the entire owner above (still requires an exact project mapping)</label>
+<label>Repository → Amp project mappings (JSON)<textarea name="projects" rows="5" spellcheck="false" required>{{.ReviewProjects}}</textarea></label>
+<p class="help">Example: <code>{"lox/amp-mcp-gateway":"lox/amp-mcp-gateway"}</code>. No implicit project, wildcard mapping or repository authorization.</p>
+<div class="form-grid"><label>Lowest failing severity<select name="fail_on">{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.ReviewApp.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
+<label>Thread visibility<select name="visibility"><option value="private" {{if eq .ReviewApp.Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .ReviewApp.Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
+<label>Timeout (minutes)<input name="timeout" type="number" min="5" max="120" value="{{.ReviewApp.TimeoutMinutes}}" required></label></div>
+<label><input name="enabled" type="checkbox" {{if .ReviewApp.Enabled}}checked{{end}} {{if .ReviewDemo}}disabled{{end}}> Enable intake and execution</label>
+<p class="help">One active review per gateway account; four across the host. Enabling also reconciles eligible open PRs updated between five minutes and seven days ago.</p>
+<button class="primary">Save review configuration</button>
+</form>
+{{if .ReviewExisting}}<p class="help">Webhook URL for this App:</p><p class="endpoint"><code>{{.ReviewWebhook}}{{.ReviewApp.ID}}</code></p>{{end}}
+</details>
+{{if and .ReviewExisting (not .ReviewApp.Enabled)}}<details class="card"><summary>Import amp-reviewbot history</summary><p class="help">Export with <code>docs/reviews-export.sql</code> after draining the old service. JSONL, at most 32 MiB and 10,000 records. Re-import skips existing records; history never launches reviews.</p><form method="post" action="/integrations/reviews/import" enctype="multipart/form-data"><input type="hidden" name="app" value="{{.ReviewApp.ID}}"><label>Historical export<input type="file" name="export" accept=".jsonl,.ndjson,application/json" required></label><label><input type="checkbox" name="confirmed" required> The source is drained and this App uses the original execution account.</label><button>Import history</button></form></details>{{end}}
+<section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>
+{{range .ReviewJobs}}<details class="card"><summary><span class="badge {{.Status}}">{{.Status}}</span> <strong>{{.Repository}}#{{.Number}}</strong> · {{.App}}{{if .Conclusion}} · {{.Conclusion}}{{end}}</summary>
+<p class="help">Created <time datetime="{{reviewTime .Created}}">{{reviewTime .Created}}</time>{{if gt .Completed 0}} · Completed <time datetime="{{iso .Completed}}">{{iso .Completed}}</time>{{end}}</p>
+<p><a href="https://github.com/{{.Repository}}/pull/{{.Number}}">Open pull request ↗</a>{{if .CheckID}} · <a href="https://github.com/{{.Repository}}/runs/{{.CheckID}}">GitHub check ↗</a>{{end}}</p>
+<p class="help">Base <code>{{.BaseSHA}}</code><br>Head <code>{{.HeadSHA}}</code><br>Project {{.Project}} · {{.Phase}} · {{.PromptVersion}}</p>
+{{if .Error}}<p class="note">{{.Error}}</p>{{end}}
+{{if eq .Status "unknown"}}<p class="note">An external action may have completed. Automatic replay is stopped. New reviews for this account wait until recovery or acknowledgement. Inspect GitHub and Amp, and stop any old execution before resolving or re-running.</p>{{end}}
+{{range .Threads}}<p><a href="https://ampcode.com/threads/{{.ID}}">{{.ID}} ↗</a> · {{if .Archived}}Archived{{else}}Archive pending{{end}}</p>{{if .Usage}}<p class="help">Amp credits: ${{printf "%.4f" .Usage.CostUSD}} · Provider estimate: {{reviewEstimate .Usage.ProviderEstimateUSD}}</p>{{else}}<p class="help">{{if .UsageError}}{{.UsageError}}{{else}}Usage pending{{end}}</p>{{end}}{{end}}
+{{if .Result}}<p>{{.Result.Summary}}</p>{{range .Result.Findings}}<p><strong>{{.Severity}} · {{.Title}}</strong><br>{{.Path}}:{{.StartLine}}<br>{{.Message}}<br>Suggested fix: {{.Suggestion}}</p>{{end}}{{end}}
+{{if or (eq .Status "queued") (eq .Status "running")}}<form method="post" action="/integrations/reviews/{{.ID}}/cancel"><button class="danger">Cancel review</button></form>{{else}}<form method="post" action="/integrations/reviews/{{.ID}}/rerun">{{if eq .Status "unknown"}}<label><input type="checkbox" name="acknowledge" required> I checked the external outcome and stopped any old execution.</label><button formaction="/integrations/reviews/{{.ID}}/cancel">Resolve without re-running</button>{{end}}<button>Re-run frozen review</button></form>{{end}}
+</details>{{else}}<p class="empty">No reviews yet. Configure an App and approve its repositories to begin.</p>{{end}}
+</section>
+</div>
+{{end}}

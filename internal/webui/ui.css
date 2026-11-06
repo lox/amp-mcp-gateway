@@ -230,6 +230,19 @@
   :where(html.dashboard) .field label {
     @apply font-semibold;
   }
+  :where(html.dashboard) .reviews label {
+    @apply block my-4 leading-[1.6];
+  }
+  :where(html.dashboard) .reviews .form-grid {
+    @apply grid gap-x-5;
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  }
+  :where(html.dashboard) .reviews input[type="checkbox"] {
+    @apply w-auto mr-2;
+  }
+  :where(html.dashboard) .reviews code {
+    overflow-wrap: anywhere;
+  }
   :where(html.dashboard) .field small,
   :where(html.dashboard) .help {
     color: #586b62;

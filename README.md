@@ -14,9 +14,10 @@ The gateway exposes four tools to agents:
 
 It is self-hosted and supports isolated owner accounts on one shared host. Each
 account has separate connections, credentials, approvals, and history. Remote
-MCP connections can use OAuth or bearer tokens; native integrations and the
+MCP connections can use OAuth or bearer tokens; governed native tools and the
 Chrome extension use the same policy, approval, and audit path. Owners can also
 store encrypted secrets and approve access for individual Amp threads or projects.
+The Reviews integration runs GitHub App reviews for explicitly approved repositories.
 
 This is a prototype, not a production security certification. In particular,
 an upstream timeout may mean a write succeeded: the gateway records the outcome
@@ -50,6 +51,8 @@ it.
 
 - [Development guide](docs/dev.md): runnable examples, remote MCP setup, native
   integrations, Chrome sharing, deployment, identity, and security boundaries.
+- [Reviews](docs/reviews.md): GitHub Apps, execution credentials, review lifecycle
+  and migration from amp-reviewbot.
 - [Feature matrix and TODOs](docs/todo.md): implemented capabilities, known gaps,
   and future work.
 - [Delivery plan](docs/plan.md): architecture decisions, sequencing, and acceptance
