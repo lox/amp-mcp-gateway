@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -177,6 +178,11 @@ func run() error {
 		handler = accountRouter(host, handler)
 	}
 	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	listener, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	startAccount := func(account *accountRuntime) {
 		group.Go(func() error { return account.gateway.Run(ctx) })
 		group.Go(func() error { return account.upstream.RunRefresh(ctx) })
@@ -197,7 +203,7 @@ func run() error {
 	}
 	group.Go(func() error {
 		slog.Info("gateway listening", "address", *listen, "demo", *demoMode, "account_linking", shared)
-		err := server.ListenAndServe()
+		err := server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}

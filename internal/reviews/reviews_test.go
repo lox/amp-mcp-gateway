@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -53,11 +55,12 @@ func (f *fakeAmp) Usage(_ context.Context, key, id string) (*Usage, error) {
 }
 
 type fakeGitHub struct {
-	mu                      sync.Mutex
-	checks                  map[int64]map[string]any
-	pulls                   map[string]pull
-	created, finished       int
-	loseCreate, losePublish bool
+	mu                          sync.Mutex
+	checks                      map[int64]map[string]any
+	pulls                       map[string]pull
+	created, finished           int
+	loseCreate, losePublish     bool
+	rejectCreate, rejectPublish int
 }
 
 func fixturePull(repo string, id int64) pull {
@@ -119,6 +122,10 @@ func newGitHub(t *testing.T) (*fakeGitHub, *GitHub) {
 		case parts[2] == "check-runs" && r.Method == "POST":
 			var input map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&input)
+			if f.rejectCreate != 0 {
+				http.Error(w, "rejected", f.rejectCreate)
+				return
+			}
 			f.created++
 			id := int64(f.created + 100)
 			input["id"] = id
@@ -142,6 +149,10 @@ func newGitHub(t *testing.T) (*fakeGitHub, *GitHub) {
 			}
 			var input map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&input)
+			if input["status"] == "completed" && f.rejectPublish != 0 {
+				http.Error(w, "rejected", f.rejectPublish)
+				return
+			}
 			for k, v := range input {
 				f.checks[id][k] = v
 			}
@@ -226,6 +237,29 @@ func history(t *testing.T, s *Service) []Job {
 	return jobs
 }
 
+func TestGitHubAppJWT(t *testing.T) {
+	a := fixtureApp(t, "lox")
+	encoded, err := appJWT(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := jwt.ParseSigned(encoded, []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := privateKey(a.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims jwt.Claims
+	if err := token.Claims(&key.PublicKey, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if err := claims.Validate(jwt.Expected{Issuer: fmt.Sprint(a.AppID), Time: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSignedLifecycleAndReruns(t *testing.T) {
 	f, gh := newGitHub(t)
 	amp := &fakeAmp{}
@@ -243,6 +277,11 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	if len(history(t, s)) != 1 {
 		t.Fatal("duplicate review")
 	}
+	// Advancing main does not replace the frozen review coordinates. The
+	// comparison fixture still requires the original a...b pair.
+	current := p
+	current.Base.SHA = strings.Repeat("c", 40)
+	f.pulls["lox/repo"] = current
 	if err := s.Step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +415,7 @@ func TestDraftCancellationAndConfigurationRevocation(t *testing.T) {
 }
 
 func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
-	for _, phase := range []string{"create", "publish", "launch"} {
+	for _, phase := range []string{"create", "publish", "published-checkpoint", "launch"} {
 		t.Run(phase, func(t *testing.T) {
 			f, gh := newGitHub(t)
 			amp := &fakeAmp{}
@@ -388,7 +427,7 @@ func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
 			if err := s.Save(t.Context(), a); err != nil {
 				t.Fatal(err)
 			}
-			f.loseCreate, f.losePublish = phase == "create", phase == "publish"
+			f.loseCreate, f.losePublish = phase == "create", phase == "publish" || phase == "published-checkpoint"
 			deliver(t, s, a, fixturePull("lox/repo", 44), "first", "pull_request", "opened", nil)
 			if err := s.Step(t.Context()); err != nil {
 				t.Fatal(err)
@@ -396,6 +435,14 @@ func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
 			j := history(t, s)[0]
 			if j.Status != "unknown" {
 				t.Fatalf("expected unknown, got %s", j.Status)
+			}
+			if phase == "published-checkpoint" {
+				// GitHub accepted publication, but the final success write failed.
+				// The fallback can retain the completed phase with unknown status.
+				j.Phase = "completed"
+				if err := s.update(t.Context(), &j); err != nil {
+					t.Fatal(err)
+				}
 			}
 			restarted, err := New(t.Context(), "user", st, amp, gh, semaphore.NewWeighted(4))
 			if err != nil {
@@ -409,7 +456,7 @@ func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
 			if phase == "create" {
 				want = "queued"
 			}
-			if phase == "publish" {
+			if phase == "publish" || phase == "published-checkpoint" {
 				want = "succeeded"
 			}
 			if j.Status != want {
@@ -424,15 +471,46 @@ func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
 			if f.created != 1 {
 				t.Fatal("ambiguous check creation replayed")
 			}
-			if phase == "publish" && f.finished != 1 {
+			if (phase == "publish" || phase == "published-checkpoint") && f.finished != 1 {
 				t.Fatal("annotations replayed")
 			}
 		})
 	}
 }
 
+func TestDefiniteGitHubRejectionsDoNotBlockAccount(t *testing.T) {
+	for _, phase := range []string{"create", "publish"} {
+		for _, code := range []int{401, 403, 422, 408} {
+			t.Run(fmt.Sprintf("%s/%d", phase, code), func(t *testing.T) {
+				f, gh := newGitHub(t)
+				s, _, _, _ := fixtureService(t, "user", &fakeAmp{}, gh, semaphore.NewWeighted(4))
+				a := fixtureApp(t, "lox")
+				if err := s.Save(t.Context(), a); err != nil {
+					t.Fatal(err)
+				}
+				if phase == "create" {
+					f.rejectCreate = code
+				} else {
+					f.rejectPublish = code
+				}
+				deliver(t, s, a, fixturePull("lox/repo", 44), "rejected", "pull_request", "opened", nil)
+				if err := s.Step(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				want := "failed"
+				if code == 408 {
+					want = "unknown" // A timeout is not a definite rejection.
+				}
+				if j := history(t, s)[0]; j.Status != want || f.finished != 0 {
+					t.Fatalf("status %s, want %s; completed writes %d", j.Status, want, f.finished)
+				}
+			})
+		}
+	}
+}
+
 func TestReconciliationDoesNotRepeatKnownHeads(t *testing.T) {
-	_, gh := newGitHub(t)
+	f, gh := newGitHub(t)
 	s, _, _, _ := fixtureService(t, "user", &fakeAmp{}, gh, semaphore.NewWeighted(4))
 	a := fixtureApp(t, "lox")
 	if err := s.Save(t.Context(), a); err != nil {
@@ -450,9 +528,12 @@ func TestReconciliationDoesNotRepeatKnownHeads(t *testing.T) {
 	if err := s.Step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	current := f.pulls["lox/repo"]
+	current.Base.SHA = strings.Repeat("c", 40)
+	f.pulls["lox/repo"] = current
 	s.Reconcile(t.Context())
 	if len(history(t, s)) != 1 {
-		t.Fatal("completed head repeated")
+		t.Fatal("completed head repeated after base advancement")
 	}
 }
 

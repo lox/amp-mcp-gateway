@@ -70,7 +70,7 @@ func (s *Service) recover(ctx context.Context, a App, j *Job) error {
 	if check.ID != j.CheckID || check.ExternalID != j.ID || check.HeadSHA != j.HeadSHA || check.App.ID != a.AppID || check.Status != "completed" {
 		return nil
 	}
-	if j.Phase == "publishing" && j.Result != nil && check.Conclusion == j.Conclusion {
+	if (j.Phase == "publishing" || j.Phase == "completed") && j.Result != nil && check.Conclusion == j.Conclusion {
 		j.Status, j.Phase, j.Error, j.Completed = "succeeded", "completed", "", time.Now().Unix()
 		return s.update(ctx, j)
 	}

@@ -99,15 +99,21 @@ func TestUsageDistinguishesCreditsAndProviderEstimate(t *testing.T) {
 func TestCLIRejectsDuplicateInitAndWrongContinuation(t *testing.T) {
 	init := `{"type":"system","subtype":"init","agent_mode":"reviewbot-v1","session_id":"` + testThread + `"}`
 	result := `{"type":"result","session_id":"` + testThread + `","result":"incorrect success"}`
-	for _, expected := range []string{"", "T-00000000-0000-0000-0000-000000000456"} {
+	other := "T-00000000-0000-0000-0000-000000000456"
+	for _, tc := range []struct{ expected, second string }{{"", testThread}, {other, testThread}, {"", other}} {
 		binary := filepath.Join(t.TempDir(), "amp")
-		script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" + init + "' '" + init + "' '" + result + "'\n"
+		second := strings.Replace(init, testThread, tc.second, 1)
+		script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" + init + "' '" + second + "' '" + result + "'\n"
 		if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := (CLI{Binary: binary}).execute(t.Context(), "fake-key", nil, "prompt", expected, func(string) error { return nil })
+		seen := map[string]bool{}
+		_, _, err := (CLI{Binary: binary}).execute(t.Context(), "fake-key", nil, "prompt", tc.expected, func(id string) error { seen[id] = true; return nil })
 		if !errors.Is(err, errAmbiguous) {
 			t.Fatalf("invalid stream became successful: %v", err)
+		}
+		if !seen[testThread] || tc.expected == "" && !seen[tc.second] {
+			t.Fatal("valid but unexpected thread was not recorded")
 		}
 	}
 }

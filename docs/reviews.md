@@ -91,12 +91,18 @@ operator control.
   gateway's existing process/volume lock remains required.
 - Live PR state is checked before launch, every ten seconds during execution and
   before publication. Exact base/head comparisons select changed right-side lines.
+  As in the source service, advancing the base does not invalidate a frozen review
+  or trigger another paid review of the same head. A new head supersedes it.
   Missing patches cannot produce annotations; comparisons at GitHub's 300-file
   limit fail explicitly. Validated JSON permits at most 20 findings; unanchored
   findings are omitted before calculating the conclusion. A blocking severity
-  yields `failure`, advisory findings `neutral`, none `success`.
+  yields `failure`, advisory findings `neutral`, none `success`. If findings are
+  omitted, the free-form summary is replaced with an omission notice, matching
+  the source check publisher so discarded claims do not remain in the summary.
 - Safe GitHub reads retry at most three times. Check creation/publication never
-  automatically replays an ambiguous write. Only an explicit terminal transient
+  automatically replays an ambiguous write. Definite HTTP rejections (such as
+  401/403/422) fail the job without pausing the account; timeouts, transport errors
+  and server errors remain ambiguous. Only an explicit terminal transient
   Amp result can continue the known thread, at most twice within the job timeout.
   Malformed/truncated streams or uncertain launches remain `unknown`. Cancellation
   signals the CLI; if remote cancellation cannot be confirmed, the outcome also

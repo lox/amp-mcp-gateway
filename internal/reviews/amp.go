@@ -134,14 +134,19 @@ func (c CLI) execute(ctx context.Context, key string, args []string, prompt, exp
 			if message.Subtype != "init" {
 				continue
 			}
-			if initialized || !threadPattern.MatchString(message.SessionID) || expected != "" && message.SessionID != expected {
+			if !threadPattern.MatchString(message.SessionID) {
 				finished = true
 				break
 			}
 			thread = message.SessionID
-			// Persist even the wrong-mode thread so cleanup cannot orphan it.
+			// Record even an unexpected continuation or duplicate-init thread:
+			// it may exist remotely despite violating this stream's contract.
 			if err := onThread(thread); err != nil {
 				outcome = errors.Join(errAmbiguous, errors.New("could not persist Amp thread"))
+				finished = true
+				break
+			}
+			if initialized || expected != "" && thread != expected {
 				finished = true
 				break
 			}

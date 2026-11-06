@@ -127,6 +127,8 @@ func finalize(result Result, changed map[string]map[int]bool, failOn string) (Re
 	}
 	omitted := len(result.Findings) - len(out.Findings)
 	if omitted > 0 {
+		// Preserve reviewbot's publication rule: the free-form summary may
+		// repeat an omitted issue, contradicting the validated findings.
 		out.Summary = fmt.Sprintf("_%d finding(s) omitted because they did not reference a changed line._", omitted)
 	}
 	return out, conclusion, omitted

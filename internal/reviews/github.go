@@ -27,6 +27,8 @@ type GitHub struct {
 	BaseURL string
 }
 
+var errGitHubRejected = errors.New("GitHub rejected request")
+
 type githubSession struct {
 	api         *GitHub
 	token, repo string
@@ -115,6 +117,11 @@ func (g *GitHub) request(ctx context.Context, token, method, path string, input,
 			return errors.New("GitHub response unavailable or too large")
 		}
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			// Authentication/validation/rate-limit rejections are definite. A
+			// timeout or server/proxy error can follow a successful write.
+			if res.StatusCode >= 400 && res.StatusCode < 500 && res.StatusCode != 408 {
+				return fmt.Errorf("%w: HTTP %d", errGitHubRejected, res.StatusCode)
+			}
 			return fmt.Errorf("GitHub returned HTTP %d", res.StatusCode)
 		}
 		if output != nil && json.Unmarshal(raw, output) != nil {

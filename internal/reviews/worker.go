@@ -139,7 +139,10 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 				return
 			}
 			if err := gh.finish(finishCtx, *j, conclusion, message); err != nil {
-				status = "unknown"
+				message = err.Error()
+				if !errors.Is(err, errGitHubRejected) {
+					status = "unknown"
+				}
 			}
 		}
 		j.Status, j.Error, j.Completed = status, message, time.Now().Unix()
@@ -168,6 +171,9 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 		j.CheckID, err = gh.createCheck(ctx, *j)
 		if err != nil {
 			status, message = "unknown", "GitHub check creation outcome unknown; no automatic retry."
+			if errors.Is(err, errGitHubRejected) {
+				status, message = "failed", err.Error()
+			}
 			return
 		}
 	}
@@ -249,6 +255,10 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 	}
 	if err := gh.finish(ctx, *j, j.Conclusion, result.Summary); err != nil {
 		status, message = "unknown", "GitHub result publication outcome unknown; annotations will not be replayed."
+		if errors.Is(err, errGitHubRejected) {
+			status, message = "failed", err.Error()
+			gh = nil // Do not resend a rejected publication in the finalizer.
+		}
 		return
 	}
 	j.Status, j.Completed, j.Phase = "succeeded", time.Now().Unix(), "completed"
