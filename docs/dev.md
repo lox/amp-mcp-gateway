@@ -159,8 +159,10 @@ enable Chrome.
    **Share this tab**. Use **Share this tab instead** to switch tabs. **Stop sharing**
    ends access without forgetting registration. **Forget browser** in the dashboard
    revokes the browser credential; **Replace registration** generates a new code
-   directly, without a separate disconnect step. One registered browser and one
-   active shared tab per account are supported today.
+   directly, without a separate disconnect step. In the extension, expand
+   **Enter replacement code** to use it, even when the old browser is still
+   registered locally. One registered browser and one active shared tab per account
+   are supported today.
 5. Find tools through MCP with query `browser` (search requires every term to match).
    Call `browser.status` before browser work; it reports registration/sharing and
    local-browser guidance even when no tab is connected. For login-dependent tasks,

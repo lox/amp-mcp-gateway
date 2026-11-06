@@ -16,6 +16,8 @@ h1 { font-size: 25px; letter-spacing: -.5px; margin: 4px 0 8px; }
 .gateway-row { align-items: center; display: grid; gap: 3px 10px; grid-template-columns: 1fr auto; }
 .gateway-row span { color: #586b62; font-size: 11px; font-weight: 650; text-transform: uppercase; }
 .gateway-row code { font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details { margin-top: 16px; }
+summary { color: #216442; cursor: pointer; }
 label { display: block; font-size: 12px; font-weight: 650; margin: 12px 0 5px; }
 input { background: white; border: 1px solid #bccdc0; border-radius: 6px; color: inherit; font: inherit; padding: 10px; width: 100%; }
 button { background: #216442; border: 1px solid #216442; border-radius: 6px; color: white; cursor: pointer; font: inherit; font-weight: 650; margin-top: 16px; padding: 10px 14px; width: 100%; }

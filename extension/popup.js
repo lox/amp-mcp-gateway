@@ -25,7 +25,10 @@ async function refreshStatus() {
     status.className = "status error";
   }
   const connecting = state.status === "connecting";
-  document.querySelector("#pair").hidden = state.registered || !gatewayConfigured;
+  const registration = document.querySelector("#registration");
+  registration.hidden = !gatewayConfigured;
+  registration.querySelector("summary").hidden = !state.registered;
+  if (!state.registered) registration.open = true;
   document.querySelector("#pair button[type=submit]").disabled = connecting;
   const browser = document.querySelector("#browser");
   browser.hidden = !state.registered;
@@ -85,7 +88,11 @@ document.querySelector("#disconnect").addEventListener("click", async () => {
   await refreshStatus();
 });
 
-chrome.storage.onChanged.addListener((_changes, area) => {
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.registeredBrowser?.newValue) {
+    document.querySelector("#registration").open = false;
+    document.querySelector("#code").value = "";
+  }
   if (area === "session" || area === "local") refreshStatus();
 });
 

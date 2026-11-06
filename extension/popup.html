@@ -14,13 +14,16 @@
     <div id="status" class="status" role="status" aria-live="polite">Checking connection…</div>
     <p id="browser" class="tab" hidden></p>
     <div class="gateway-row"><span>Gateway</span><code id="gateway">Not configured</code><button id="settings" class="text-button" type="button">Settings</button></div>
-    <form id="pair">
-      <p>Register this browser once, then share tabs without another code.</p>
-      <button id="setup" class="secondary" type="button">Open browser setup</button>
-      <label for="code">Browser registration code</label>
-      <input id="code" name="code" autocomplete="off" spellcheck="false" maxlength="200" required>
-      <button type="submit">Register browser</button>
-    </form>
+    <details id="registration">
+      <summary>Enter replacement code</summary>
+      <form id="pair">
+        <p>Register this browser once, then share tabs without another code.</p>
+        <button id="setup" class="secondary" type="button">Open browser setup</button>
+        <label for="code">Browser registration code</label>
+        <input id="code" name="code" autocomplete="off" spellcheck="false" maxlength="200" required>
+        <button type="submit">Register browser</button>
+      </form>
+    </details>
     <button id="share" type="button" hidden>Share this tab</button>
     <button id="disconnect" class="secondary" type="button" hidden>Stop sharing</button>
     <button id="manage" class="secondary" type="button" hidden>Manage browser</button>
