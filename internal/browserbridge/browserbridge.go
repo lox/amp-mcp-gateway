@@ -60,6 +60,8 @@ type pairing struct {
 	tabTitle string
 	tabURL   string
 	paired   bool
+	name     string
+	install  string // Empty for legacy tab-bound pairings.
 }
 
 type persistedPairing struct {
@@ -69,12 +71,15 @@ type persistedPairing struct {
 	TabTitle string `json:"tab_title,omitempty"`
 	TabURL   string `json:"tab_url,omitempty"`
 	Paired   bool   `json:"paired,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Install  string `json:"install,omitempty"`
 }
 
 type client struct {
 	manager    *Manager
 	connection string
 	binding    string
+	sharing    bool
 	ws         *websocket.Conn
 
 	writeMu sync.Mutex
@@ -86,6 +91,8 @@ type client struct {
 
 type wireMessage struct {
 	Type        string          `json:"type"`
+	Version     int             `json:"version,omitempty"`
+	BrowserName string          `json:"browser_name,omitempty"`
 	PairingCode string          `json:"pairing_code,omitempty"`
 	Reconnect   string          `json:"reconnect_code,omitempty"`
 	InstallID   string          `json:"install_id,omitempty"`
@@ -166,11 +173,11 @@ func decodePairing(raw []byte) (pairing, error) {
 	}
 	var hash [sha256.Size]byte
 	copy(hash[:], stored.Hash)
-	return pairing{hash: hash, created: time.Unix(stored.Created, 0), target: stored.Target, tabTitle: stored.TabTitle, tabURL: stored.TabURL, paired: stored.Paired}, nil
+	return pairing{hash: hash, created: time.Unix(stored.Created, 0), target: stored.Target, tabTitle: stored.TabTitle, tabURL: stored.TabURL, paired: stored.Paired, name: stored.Name, install: stored.Install}, nil
 }
 
 func (m *Manager) savePairing(ctx context.Context, id string, p pairing) error {
-	raw, err := json.Marshal(persistedPairing{Hash: p.hash[:], Created: p.created.Unix(), Target: p.target, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: p.paired})
+	raw, err := json.Marshal(persistedPairing{Hash: p.hash[:], Created: p.created.Unix(), Target: p.target, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: p.paired, Name: p.name, Install: p.install})
 	if err != nil {
 		return err
 	}
@@ -201,10 +208,25 @@ func (m *Manager) binding(connection string) string {
 func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding string, args map[string]any) (*mcp.CallToolResult, error) {
 	m.mu.Lock()
 	_, browser := m.connections[connection]
-	c := m.clients[connection]
-	if browser && (m.binding(connection) != expectedBinding || c == nil || c.binding != expectedBinding) {
+	if browser && tool == "status" {
+		status := m.status(connection)
 		m.mu.Unlock()
-		return toolError("Browser pairing changed or disconnected before dispatch."), nil
+		guidance := "Open the site in your local Chrome and choose Share this tab in the Amp MCP Gateway extension. Prefer your already-authenticated local browser over signing in again in an orb."
+		if status.Connected {
+			guidance = "Use the explicitly shared local tab. Sharing grants access, not permission to perform unrequested actions."
+		} else if !status.Paired || status.Legacy {
+			guidance = "Register this browser from /integrations/chrome, then choose Share this tab in the extension."
+		}
+		raw, err := json.Marshal(map[string]any{"registered": status.Paired && !status.Legacy, "browser_name": status.Account, "sharing": status.Connected, "tab_title": status.TabTitle, "tab_url": status.TabURL, "guidance": guidance})
+		if err != nil {
+			return nil, err
+		}
+		return resultToMCP(raw)
+	}
+	c := m.clients[connection]
+	if browser && (m.binding(connection) != expectedBinding || c == nil || !c.sharing || c.binding != expectedBinding) {
+		m.mu.Unlock()
+		return toolError("Browser share changed or disconnected before dispatch. Open the site in your local Chrome and choose Share this tab in the Amp MCP Gateway extension."), nil
 	}
 	if !browser {
 		m.mu.Unlock()
@@ -308,7 +330,7 @@ func socketRouter(selectManager func(string) *Manager, unauthenticated chan stru
 		ws.SetReadLimit(maxHelloSize)
 		_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
 		var hello wireMessage
-		if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.PairingCode == "" || len(hello.PairingCode) > 200 || hello.InstallID == "" || len(hello.InstallID) > 200 || hello.ShareID == "" || len(hello.ShareID) > 200 || hello.TabID <= 0 || len(hello.TabTitle) > 200 || len(hello.TabURL) > 2000 {
+		if err := ws.ReadJSON(&hello); err != nil || !validHello(hello) {
 			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "invalid hello"), time.Now().Add(time.Second))
 			ws.Close()
 			return
@@ -333,14 +355,30 @@ func socketRouter(selectManager func(string) *Manager, unauthenticated chan stru
 		ws.SetReadLimit(maxMessageSize)
 		_ = ws.SetReadDeadline(time.Time{})
 		release()
-		c := &client{manager: m, connection: connection, binding: binding, ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
-		m.install(c)
-		if err := c.write(wireMessage{Type: "paired", Reconnect: reconnect}); err != nil {
+		c := &client{manager: m, connection: connection, binding: binding, sharing: hello.ShareID != "", ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
+		if !m.install(c) {
+			c.revoke()
+			return
+		}
+		m.mu.Lock()
+		name := m.pairings[connection].name
+		m.mu.Unlock()
+		if err := c.write(wireMessage{Type: "paired", Version: hello.Version, Reconnect: reconnect, BrowserName: name}); err != nil {
 			c.close()
 			return
 		}
 		c.readLoop()
 	})
+}
+
+func validHello(h wireMessage) bool {
+	if h.Type != "hello" || h.PairingCode == "" || len(h.PairingCode) > 200 || h.InstallID == "" || len(h.InstallID) > 200 || len(h.ShareID) > 200 || len(h.TabTitle) > 200 || len(h.TabURL) > 2000 {
+		return false
+	}
+	if h.Version == 2 && h.ShareID == "" {
+		return h.TabID == 0 && h.TabTitle == "" && h.TabURL == ""
+	}
+	return (h.Version == 0 || h.Version == 2) && h.ShareID != "" && h.TabID > 0
 }
 
 func (m *Manager) accept(ctx context.Context, hello wireMessage) (string, string, string, bool, error) {
@@ -361,11 +399,24 @@ func (m *Manager) accept(ctx context.Context, hello wireMessage) (string, string
 		if subtle.ConstantTimeCompare(p.hash[:], hash[:]) != 1 {
 			continue
 		}
-		if p.paired && p.target != target {
-			return "", "", "", false, nil
+		if p.paired {
+			if p.install != "" {
+				if hello.Version != 2 || p.install != hello.InstallID {
+					return "", "", "", false, nil
+				}
+			} else if hello.Version != 0 || p.target != target {
+				return "", "", "", false, nil
+			}
 		}
 		reconnect := hello.PairingCode
 		if !p.paired {
+			// Browser registration is separate from granting access to a tab.
+			if hello.Version == 2 {
+				if hello.ShareID != "" {
+					return "", "", "", false, nil
+				}
+				p.install = hello.InstallID
+			}
 			var err error
 			reconnect, err = randomString(32)
 			if err != nil {
@@ -400,14 +451,19 @@ func (m *Manager) MatchesPairing(code string) bool {
 	return false
 }
 
-func (m *Manager) install(c *client) {
+func (m *Manager) install(c *client) bool {
 	m.mu.Lock()
+	if m.binding(c.connection) != c.binding {
+		m.mu.Unlock()
+		return false
+	}
 	old := m.clients[c.connection]
 	m.clients[c.connection] = c
 	m.mu.Unlock()
 	if old != nil {
 		old.revoke()
 	}
+	return true
 }
 
 func (c *client) revoke() {
@@ -539,20 +595,24 @@ func truncate(value string, max int) string {
 	return value
 }
 
-// Pair replaces any existing authority with a one-time pairing code.
-func (m *Manager) Pair(ctx context.Context, connection string) (string, bool, error) {
+// Pair replaces any existing browser registration with a named, one-time code.
+func (m *Manager) Pair(ctx context.Context, connection, name string) (string, bool, error) {
 	m.mu.Lock()
 	_, ok := m.connections[connection]
 	m.mu.Unlock()
 	if !ok {
 		return "", false, nil
 	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 80 {
+		return "", true, errors.New("browser name must be between 1 and 80 bytes")
+	}
 	code, err := randomString(24)
 	if err != nil {
 		return "", true, err
 	}
 	hash := sha256.Sum256([]byte(code))
-	p := pairing{hash: hash, created: m.now()}
+	p := pairing{hash: hash, created: m.now(), name: name}
 	m.mu.Lock()
 	if err := m.savePairing(ctx, connection, p); err != nil {
 		m.mu.Unlock()
@@ -592,7 +652,22 @@ func (m *Manager) Revoke(ctx context.Context, connection string) (bool, error) {
 // Status describes persisted and live state for one browser connection.
 type Status struct {
 	ID, Account, TabTitle, TabURL string
-	Paired, Connected             bool
+	Paired, Connected, Legacy     bool
+}
+
+func (m *Manager) status(id string) Status {
+	p := m.pairings[id]
+	s := Status{ID: id, Account: p.name, Paired: p.paired, Legacy: p.paired && p.install == ""}
+	if s.Account == "" {
+		s.Account = m.connections[id].Account
+	}
+	if c := m.clients[id]; c != nil && c.sharing && c.binding == m.binding(id) {
+		s.Connected = true
+		s.TabTitle, s.TabURL = p.tabTitle, p.tabURL
+	} else if s.Legacy {
+		s.TabTitle, s.TabURL = p.tabTitle, p.tabURL
+	}
+	return s
 }
 
 // Statuses returns browser connection state for presentation.
@@ -600,9 +675,8 @@ func (m *Manager) Statuses() []Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	statuses := make([]Status, 0, len(m.connections))
-	for id, connection := range m.connections {
-		p, paired := m.pairings[id]
-		statuses = append(statuses, Status{ID: id, Account: connection.Account, TabTitle: p.tabTitle, TabURL: p.tabURL, Paired: paired && p.paired, Connected: m.clients[id] != nil})
+	for id := range m.connections {
+		statuses = append(statuses, m.status(id))
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
 	return statuses

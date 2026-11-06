@@ -298,7 +298,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
 	})
-	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Every query term must match. Returns schemas and approval policies. For authenticated browser work, search browser and check browser.status; prefer the user's shared local Chrome tab over asking them to sign in again in an orb."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
 		words, err := searchTerms(in.Query)
 		if err != nil {
 			return nil, nil, err

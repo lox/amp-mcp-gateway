@@ -28,10 +28,10 @@ func TestConfigureChromeAddsCanonicalToolsAndPreservesPolicies(t *testing.T) {
 	if len(cfg.Connections) != 2 || cfg.Connections[1].ID != chromeConnectionID || !cfg.Connections[1].Browser {
 		t.Fatalf("browser connection not configured: %#v", cfg.Connections)
 	}
-	if len(cfg.Tools) != 7 || cfg.Tools[1].ID != "browser.snapshot" || cfg.Tools[1].Policy != "deny" || cfg.Tools[1].Description == "stale" || cfg.Tools[6].ID != "browser.navigate" {
+	if len(cfg.Tools) != 8 || cfg.Tools[1].ID != "browser.snapshot" || cfg.Tools[1].Policy != "deny" || cfg.Tools[1].Description == "stale" || cfg.Tools[7].ID != "browser.status" {
 		t.Fatalf("canonical browser tools not configured: %#v", cfg.Tools)
 	}
-	if !ConfigureChrome(&cfg) || len(cfg.Connections) != 2 || len(cfg.Tools) != 7 {
+	if !ConfigureChrome(&cfg) || len(cfg.Connections) != 2 || len(cfg.Tools) != 8 {
 		t.Fatalf("repeated configuration changed catalogue: connections=%d tools=%d", len(cfg.Connections), len(cfg.Tools))
 	}
 }
@@ -107,7 +107,10 @@ func TestChromeIntegrationPageAndPairingRoutes(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin browser pairing returned %d", w.Code)
 	}
-	w = formRequest(h, cookie, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {chromeConnectionID}})
+	if invalid := formRequest(h, cookie, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {chromeConnectionID}, "name": {" "}}); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("blank browser name returned %d", invalid.Code)
+	}
+	w = formRequest(h, cookie, http.MethodPost, "/integrations/chrome/pair", url.Values{"connection": {chromeConnectionID}, "name": {"Work Chrome"}})
 	match := regexp.MustCompile(`<code id="pairing-code">([^<]+)</code>`).FindStringSubmatch(w.Body.String())
 	if w.Code != http.StatusOK || len(match) != 2 || !strings.Contains(w.Body.String(), `data-copy="pairing-code" aria-label="Copy pairing code"`) {
 		t.Fatalf("pairing page did not render its code: status=%d body=%s", w.Code, w.Body.String())

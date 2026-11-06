@@ -11,15 +11,20 @@
     <div class="eyebrow">Amp MCP Gateway</div>
     <h1>Share this tab</h1>
     <p id="tab" class="tab">Loading active tab…</p>
-    <div id="status" class="status">Checking connection…</div>
+    <div id="status" class="status" role="status" aria-live="polite">Checking connection…</div>
+    <p id="browser" class="tab" hidden></p>
     <div class="gateway-row"><span>Gateway</span><code id="gateway">Not configured</code><button id="settings" class="text-button" type="button">Settings</button></div>
     <form id="pair">
-      <label for="code">Pairing code</label>
+      <p>Register this browser once, then share tabs without another code.</p>
+      <button id="setup" class="secondary" type="button">Open browser setup</button>
+      <label for="code">Browser registration code</label>
       <input id="code" name="code" autocomplete="off" spellcheck="false" maxlength="200" required>
-      <button type="submit">Pair and share</button>
+      <button type="submit">Register browser</button>
     </form>
+    <button id="share" type="button" hidden>Share this tab</button>
     <button id="disconnect" class="secondary" type="button" hidden>Stop sharing</button>
-    <p class="footnote">Only this tab is shared. Chrome shows a debugging banner while control is active.</p>
+    <button id="manage" class="secondary" type="button" hidden>Manage browser</button>
+    <p class="footnote">Only the tab you choose is shared. Stopping or restarting Chrome ends sharing, not browser registration. Chrome shows a debugging banner while control is active.</p>
   </main>
   <script src="popup.js"></script>
 </body>

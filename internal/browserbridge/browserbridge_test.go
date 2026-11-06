@@ -513,7 +513,7 @@ func TestRevokeSendsPolicyClose(t *testing.T) {
 
 func TestPairAndStatus(t *testing.T) {
 	m, _ := browserManager(t)
-	code, found, err := m.Pair(t.Context(), "browser")
+	code, found, err := m.Pair(t.Context(), "browser", "Work Chrome")
 	if err != nil || !found || code == "" {
 		t.Fatalf("pair = code %q, found %v, error %v", code, found, err)
 	}
@@ -528,10 +528,105 @@ func TestPairAndStatus(t *testing.T) {
 
 func TestPairAndRevokeRejectUnknownConnection(t *testing.T) {
 	m, _ := browserManager(t)
-	if _, found, err := m.Pair(t.Context(), "missing"); err != nil || found {
+	if _, found, err := m.Pair(t.Context(), "missing", "Work Chrome"); err != nil || found {
 		t.Fatalf("unknown pair = found %v, error %v", found, err)
 	}
 	if found, err := m.Revoke(t.Context(), "missing"); err != nil || found {
 		t.Fatalf("unknown revoke = found %v, error %v", found, err)
+	}
+}
+
+func TestRegisteredBrowserSharesNewTabsWithoutPairingAgain(t *testing.T) {
+	store := newMemoryPairingStore()
+	m, _ := browserManagerWithStore(t, store)
+	code, _, err := m.Pair(t.Context(), "browser", "Work Chrome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dial := func(manager *Manager, hello wireMessage, wantOK bool) wireMessage {
+		t.Helper()
+		server := httptest.NewServer(manager.Socket())
+		t.Cleanup(server.Close)
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), http.Header{"Origin": {"chrome-extension://extension-id"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ws.Close() })
+		if err := ws.WriteJSON(hello); err != nil {
+			t.Fatal(err)
+		}
+		var reply wireMessage
+		err = ws.ReadJSON(&reply)
+		if (err == nil && reply.Type == "paired") != wantOK {
+			t.Fatalf("handshake accepted=%v, want %v (error %v)", err == nil, wantOK, err)
+		}
+		return reply
+	}
+	hello := wireMessage{Type: "hello", Version: 2, PairingCode: code, InstallID: "work-install"}
+	// Enrollment alone cannot dispatch page commands, even with a live socket.
+	reply := dial(m, hello, true)
+	if reply.Version != 2 || reply.BrowserName != "Work Chrome" || reply.Reconnect == "" || reply.Reconnect == code {
+		t.Fatal("registration did not return a named browser credential")
+	}
+	if result, err := m.Call(t.Context(), "browser", "snapshot", m.Binding("browser"), nil); err != nil || !result.IsError {
+		t.Fatalf("registration granted tab access: %#v, %v", result, err)
+	}
+	dial(m, hello, false) // The enrollment code is single-use.
+	hello.PairingCode = reply.Reconnect
+	wrongInstall := hello
+	wrongInstall.InstallID = "personal-install"
+	dial(m, wrongInstall, false)
+	downgrade := hello
+	downgrade.Version, downgrade.ShareID, downgrade.TabID = 0, "legacy-share", 66
+	dial(m, downgrade, false)
+
+	hello.ShareID, hello.TabID = "share-one", 11
+	hello.TabTitle, hello.TabURL = "Amex review", "https://example.com/review"
+	dial(m, hello, true)
+	firstBinding := m.Binding("browser")
+	dial(m, hello, true) // A transport reconnect retains the same authority.
+	if m.Binding("browser") != firstBinding {
+		t.Fatal("transport reconnect changed share authority")
+	}
+	hello.ShareID, hello.TabID = "share-two", 22
+	hello.TabTitle = "Statements"
+	dial(m, hello, true)
+	if m.Binding("browser") == firstBinding {
+		t.Fatal("switching tabs retained old approval authority")
+	}
+	if result, err := m.Call(t.Context(), "browser", "click", firstBinding, nil); err != nil || !result.IsError {
+		t.Fatalf("old approval reached new tab: %#v, %v", result, err)
+	}
+	status := m.Statuses()[0]
+	if !status.Connected || status.Account != "Work Chrome" || status.TabTitle != "Statements" || status.Legacy {
+		t.Fatalf("shared status = %#v", status)
+	}
+
+	restarted, _ := browserManagerWithStore(t, store)
+	status = restarted.Statuses()[0]
+	if !status.Paired || status.Connected || status.Account != "Work Chrome" || status.TabURL != "" {
+		t.Fatalf("restart lost registration or exposed a stale share: %#v", status)
+	}
+	hello.ShareID, hello.TabID, hello.TabTitle, hello.TabURL = "", 0, "", ""
+	dial(restarted, hello, true)
+	result, err := restarted.Call(t.Context(), "browser", "status", "", nil)
+	if err != nil || result.IsError {
+		t.Fatalf("idle browser status: %#v, %v", result, err)
+	}
+	var state struct {
+		Registered bool   `json:"registered"`
+		Sharing    bool   `json:"sharing"`
+		Name       string `json:"browser_name"`
+	}
+	if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &state); err != nil || !state.Registered || state.Sharing || state.Name != "Work Chrome" {
+		t.Fatalf("idle browser state = %#v, %v", state, err)
+	}
+	if _, err := restarted.Revoke(t.Context(), "browser"); err != nil {
+		t.Fatal(err)
+	}
+	dial(restarted, hello, false)
+	forgotten, _ := browserManagerWithStore(t, store)
+	if forgotten.Statuses()[0].Paired {
+		t.Fatal("forgotten browser registration survived restart")
 	}
 }

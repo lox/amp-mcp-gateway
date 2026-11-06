@@ -14,7 +14,7 @@ document.querySelector("#settings").addEventListener("submit", async (event) => 
     const result = await chrome.runtime.sendMessage({type: "configureGateway", gatewayURL: document.querySelector("#gateway").value.trim()});
     if (!result.ok) throw new Error(result.error);
     document.querySelector("#gateway").value = result.gatewayURL;
-    status.textContent = "Gateway saved. You can close this tab and pair from the extension.";
+    status.textContent = "Gateway saved. You can close this tab and register your browser from the extension.";
   } catch (error) {
     status.textContent = error.message;
     status.className = "status error";

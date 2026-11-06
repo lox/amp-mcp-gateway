@@ -2,6 +2,7 @@ let socket = null;
 let heartbeat = null;
 let reconnectTimer = null;
 let currentConfig = null;
+let registeredBrowser = null;
 let operationQueue = Promise.resolve();
 const completedCommands = new Set();
 const maxSnapshotBytes = 6 * 1024 * 1024;
@@ -37,7 +38,7 @@ function disconnectIfCurrent(tabId, message, detachDebugger = true) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "status") {
-    status().then(sendResponse);
+    serialized(status).then(sendResponse);
     return true;
   }
   if (message.type === "pair") {
@@ -45,11 +46,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === "configureGateway") {
-    saveGateway(message.gatewayURL).then((gatewayURL) => sendResponse({ok: true, gatewayURL})).catch((error) => sendResponse({ok: false, error: error.message}));
+    serialized(() => saveGateway(message.gatewayURL)).then((gatewayURL) => sendResponse({ok: true, gatewayURL})).catch((error) => sendResponse({ok: false, error: error.message}));
+    return true;
+  }
+  if (message.type === "share") {
+    serialized(() => share(message.tabId)).then(() => sendResponse({ok: true})).catch((error) => sendResponse({ok: false, error: error.message}));
     return true;
   }
   if (message.type === "disconnect") {
-    serialized(() => disconnect("Disconnected.")).then(() => sendResponse({ok: true}));
+    serialized(() => disconnect("No tab is shared. This browser is still registered.")).then(() => sendResponse({ok: true}));
     return true;
   }
 });
@@ -61,38 +66,56 @@ function serialized(action) {
 }
 
 async function reconnectStored() {
+  await chrome.storage.local.setAccessLevel({accessLevel: "TRUSTED_CONTEXTS"});
+  const local = await chrome.storage.local.get("registeredBrowser");
+  registeredBrowser = local.registeredBrowser || null;
   const stored = await chrome.storage.session.get("bridgeConfig");
-  if (!stored.bridgeConfig) return;
+  if (!stored.bridgeConfig || !registeredBrowser || stored.bridgeConfig.pairingCode !== registeredBrowser.pairingCode) {
+    await chrome.storage.session.remove("bridgeConfig");
+    await setStatus("disconnected", registeredBrowser ? "Browser registered. No tab is shared." : "Register this browser to start sharing.");
+    return;
+  }
   currentConfig = stored.bridgeConfig;
   try {
     await chrome.tabs.get(currentConfig.tabId);
     await attach(currentConfig.tabId);
     connect();
   } catch (error) {
-    await setStatus("disconnected", error.message);
+    await disconnect(`Sharing stopped: ${error.message}`);
   }
 }
 
 async function pair(message) {
   const stored = await chrome.storage.local.get(["gatewayURL", "installID"]);
   const gatewayURL = normalizeGatewayURL(message.gatewayURL || stored.gatewayURL);
-  const tab = await chrome.tabs.get(message.tabId);
-  if (!/^https?:/.test(tab.url || "")) throw new Error("Chrome can only share HTTP(S) tabs.");
   const pairingCode = typeof message.pairingCode === "string" ? message.pairingCode.trim() : "";
   if (!pairingCode || pairingCode.length > 200) throw new Error("Enter the pairing code from the gateway.");
-  if (currentConfig?.tabId && currentConfig.tabId !== tab.id) {
-    await detach(currentConfig.tabId);
-  }
-  await attach(tab.id);
+  await disconnect("Registering browser…");
   const installID = stored.installID || crypto.randomUUID();
   await chrome.storage.local.set({gatewayURL, installID});
   currentConfig = {
     gatewayURL,
     pairingCode,
     installID,
-    shareID: crypto.randomUUID(),
-    tabId: tab.id,
+    shareID: "",
+    tabId: 0,
   };
+  await setStatus("connecting", "Registering this browser…");
+  connect();
+}
+
+async function share(tabId) {
+  if (!registeredBrowser) throw new Error("Register this browser first.");
+  const tab = await chrome.tabs.get(tabId);
+  if (!/^https?:/.test(tab.url || "")) throw new Error("Chrome can only share HTTP(S) tabs.");
+  await disconnect("Starting a new tab share…");
+  try {
+    await attach(tab.id);
+  } catch (error) {
+    await detach(tab.id);
+    throw error;
+  }
+  currentConfig = {...registeredBrowser, shareID: crypto.randomUUID(), tabId: tab.id};
   await chrome.storage.session.set({bridgeConfig: currentConfig});
   await setStatus("connecting", `Connecting ${tab.title || tab.url}`);
   connect();
@@ -100,6 +123,11 @@ async function pair(message) {
 
 async function saveGateway(raw) {
   const gatewayURL = normalizeGatewayURL(raw);
+  if ((currentConfig && currentConfig.gatewayURL !== gatewayURL) || (registeredBrowser && registeredBrowser.gatewayURL !== gatewayURL)) {
+    await disconnect("Gateway changed. Register this browser with the new gateway.");
+    registeredBrowser = null;
+    await chrome.storage.local.remove("registeredBrowser");
+  }
   await chrome.storage.local.set({gatewayURL});
   return gatewayURL;
 }
@@ -149,10 +177,18 @@ function connect() {
   const connectedSocket = new WebSocket(url.toString());
   socket = connectedSocket;
   connectedSocket.onopen = async () => {
-    if (socket !== connectedSocket || currentConfig?.shareID !== config.shareID) return;
-    const tab = await chrome.tabs.get(config.tabId);
+    if (socket !== connectedSocket || currentConfig !== config) return;
+    let tab = {};
+    try {
+      if (config.tabId) tab = await chrome.tabs.get(config.tabId);
+    } catch (_) {
+      await serialized(() => disconnect("The shared tab is no longer available."));
+      return;
+    }
+    if (socket !== connectedSocket || currentConfig !== config) return;
     send({
       type: "hello",
+      version: 2,
       pairing_code: config.pairingCode,
       install_id: config.installID,
       share_id: config.shareID,
@@ -164,7 +200,13 @@ function connect() {
     heartbeat = setInterval(() => send({type: "ping"}, connectedSocket), 20000);
   };
   connectedSocket.onmessage = (event) => {
-    if (socket === connectedSocket) receive(JSON.parse(event.data), config);
+    if (socket !== connectedSocket) return;
+    const message = JSON.parse(event.data);
+    if (message.type === "paired") {
+      serialized(() => receive(message, config)).catch(() => disconnect("Could not save browser registration. Please register again."));
+    } else {
+      receive(message, config);
+    }
   };
   connectedSocket.onerror = () => {};
   connectedSocket.onclose = async (event) => {
@@ -175,7 +217,12 @@ function connect() {
     if (!currentConfig) return;
     const rejected = event.code === 1008;
     if (rejected) {
-      await serialized(() => disconnect("Pairing was rejected or revoked."));
+      await serialized(async () => {
+        if (currentConfig !== config) return;
+        registeredBrowser = null;
+        await chrome.storage.local.remove("registeredBrowser");
+        await disconnect("Browser registration was rejected or revoked. Register again from the gateway.");
+      });
       return;
     }
     await setStatus("offline", "Gateway connection lost; reconnecting.");
@@ -185,11 +232,19 @@ function connect() {
 
 async function receive(message, config) {
   if (message.type === "paired") {
-    if (currentConfig?.shareID !== config.shareID) return;
-    if (message.reconnect_code) {
-      currentConfig.pairingCode = message.reconnect_code;
-      await chrome.storage.session.set({bridgeConfig: currentConfig});
+    if (currentConfig !== config) return;
+    if (message.version !== 2 || !message.reconnect_code) {
+      await disconnect("Update the gateway before registering this browser.");
+      return;
     }
+    registeredBrowser = {gatewayURL: config.gatewayURL, installID: config.installID, pairingCode: message.reconnect_code, name: message.browser_name || "Chrome"};
+    await chrome.storage.local.set({registeredBrowser});
+    currentConfig.pairingCode = message.reconnect_code;
+    if (!config.tabId) {
+      await disconnect("Browser registered. Choose Share this tab to give Amp access.");
+      return;
+    }
+    await chrome.storage.session.set({bridgeConfig: currentConfig});
     const tab = await chrome.tabs.get(config.tabId);
     await setStatus("connected", `Sharing ${tab.title || tab.url}`);
     return;
@@ -403,11 +458,23 @@ async function disconnect(message, detachDebugger = true) {
 
 async function status() {
   const stored = await chrome.storage.session.get(["bridgeStatus", "bridgeMessage", "bridgeConfig"]);
+  let sharedTab = null;
+  if (currentConfig?.tabId) {
+    try {
+      const tab = await chrome.tabs.get(currentConfig.tabId);
+      sharedTab = {id: tab.id, title: tab.title, url: tab.url};
+    } catch (_) {
+      // A tab-removal event will finish stopping this share.
+    }
+  }
   return {
     status: stored.bridgeStatus || "disconnected",
     message: stored.bridgeMessage || "No tab is shared.",
     connected: stored.bridgeStatus === "connected",
     configured: Boolean(stored.bridgeConfig),
+    registered: Boolean(registeredBrowser),
+    browserName: registeredBrowser?.name || "",
+    sharedTab,
   };
 }
 
@@ -417,4 +484,4 @@ async function setStatus(value, message) {
   await chrome.action.setBadgeBackgroundColor({color: "#216442"});
 }
 
-reconnectStored();
+serialized(reconnectStored);
