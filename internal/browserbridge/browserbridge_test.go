@@ -536,6 +536,42 @@ func TestPairAndRevokeRejectUnknownConnection(t *testing.T) {
 	}
 }
 
+func TestStatusTracksSharedTabMetadataWithoutChangingAuthority(t *testing.T) {
+	m, _ := browserManager(t)
+	ws := connectExtension(t, m, "pairing-secret", "install-one", "share-one", 42)
+	binding := m.Binding("browser")
+	for _, metadata := range []struct{ title, url string }{
+		{"Statements", "https://bank.example/statements"},
+		{"", "https://bank.example/untitled"},
+	} {
+		if err := ws.WriteJSON(wireMessage{Type: "tab", TabTitle: metadata.title, TabURL: metadata.url}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ws.WriteJSON(wireMessage{Type: "ping"}); err != nil {
+			t.Fatal(err)
+		}
+		var pong wireMessage
+		if err := ws.ReadJSON(&pong); err != nil || pong.Type != "pong" {
+			t.Fatalf("metadata update barrier failed: %v", err)
+		}
+		status := m.Statuses()[0]
+		if status.TabTitle != metadata.title || status.TabURL != metadata.url || !status.Connected {
+			t.Fatalf("dashboard status did not follow navigation: %+v", status)
+		}
+		result, err := m.Call(t.Context(), "browser", "status", "", nil)
+		if err != nil || result.IsError {
+			t.Fatalf("status call failed: %v", err)
+		}
+		state := result.StructuredContent.(map[string]any)
+		if state["tab_title"] != metadata.title || state["tab_url"] != metadata.url || state["sharing"] != true {
+			t.Fatalf("MCP status did not follow navigation: %+v", state)
+		}
+		if m.Binding("browser") != binding {
+			t.Fatal("tab metadata changed the share's operation authority")
+		}
+	}
+}
+
 func TestRegisteredBrowserSharesNewTabsWithoutPairingAgain(t *testing.T) {
 	store := newMemoryPairingStore()
 	m, _ := browserManagerWithStore(t, store)

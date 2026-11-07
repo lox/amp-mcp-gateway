@@ -81,6 +81,9 @@ type client struct {
 	binding    string
 	sharing    bool
 	ws         *websocket.Conn
+	// Live tab metadata is protected by manager.mu, like the client registry.
+	tabTitle string
+	tabURL   string
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -355,7 +358,7 @@ func socketRouter(selectManager func(string) *Manager, unauthenticated chan stru
 		ws.SetReadLimit(maxMessageSize)
 		_ = ws.SetReadDeadline(time.Time{})
 		release()
-		c := &client{manager: m, connection: connection, binding: binding, sharing: hello.ShareID != "", ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
+		c := &client{manager: m, connection: connection, binding: binding, sharing: hello.ShareID != "", tabTitle: truncate(hello.TabTitle, 200), tabURL: truncate(hello.TabURL, 2000), ws: ws, pending: make(map[string]chan response), closed: make(chan struct{})}
 		if !m.install(c) {
 			c.revoke()
 			return
@@ -541,6 +544,14 @@ func (c *client) readLoop() {
 			}
 			continue
 		}
+		if message.Type == "tab" {
+			c.manager.mu.Lock()
+			if c.sharing && c.manager.clients[c.connection] == c && c.binding == c.manager.binding(c.connection) {
+				c.tabTitle, c.tabURL = truncate(message.TabTitle, 200), truncate(message.TabURL, 2000)
+			}
+			c.manager.mu.Unlock()
+			continue
+		}
 		if message.Type != "result" || message.ID == "" {
 			continue
 		}
@@ -663,7 +674,7 @@ func (m *Manager) status(id string) Status {
 	}
 	if c := m.clients[id]; c != nil && c.sharing && c.binding == m.binding(id) {
 		s.Connected = true
-		s.TabTitle, s.TabURL = p.tabTitle, p.tabURL
+		s.TabTitle, s.TabURL = c.tabTitle, c.tabURL
 	} else if s.Legacy {
 		s.TabTitle, s.TabURL = p.tabTitle, p.tabURL
 	}

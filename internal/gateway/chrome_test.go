@@ -15,6 +15,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func TestChromePageShowsTitlelessSharedTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	err := page.Execute(w, map[string]any{
+		"ChromeIntegration": true,
+		"ChromeAvailable":   true,
+		"Connections":       []browserbridge.Status{{ID: "browser", Account: "Work Chrome", Connected: true, Paired: true, TabURL: "https://bank.example/untitled"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(w.Body.String(), `<span class="endpoint">https://bank.example/untitled</span>`) {
+		t.Fatal("the shared tab URL is hidden when its title is empty")
+	}
+}
+
 func TestBrowserStatusObservesNewShareButRemainsBoundToCatalogue(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		name := "new share"

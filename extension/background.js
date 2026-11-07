@@ -26,9 +26,31 @@ chrome.runtime.onStartup.addListener(() => serialized(reconnectStored));
 chrome.tabs.onRemoved.addListener((tabId) => {
   disconnectIfCurrent(tabId, "The shared tab was closed.");
 });
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (tabId === currentConfig?.tabId && ("title" in change || "url" in change)) {
+    serialized(() => updateTabMetadata(tabId));
+  }
+});
 chrome.debugger.onDetach.addListener((source) => {
   disconnectIfCurrent(source.tabId, "Chrome detached the debugger.", false);
 });
+
+async function updateTabMetadata(tabId) {
+  const config = currentConfig;
+  const destination = socket;
+  // Do not send before the hello is acknowledged, or after switching shares.
+  if (!config?.tabId || config.tabId !== tabId || !destination?.paired) return;
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_) {
+    // Tab removal will finish stopping this share.
+    return;
+  }
+  if (currentConfig !== config || socket !== destination) return;
+  send({type: "tab", tab_title: (tab.title || "").slice(0, 200), tab_url: (tab.url || "").slice(0, 2000)}, destination);
+  return tab;
+}
 
 function disconnectIfCurrent(tabId, message, detachDebugger = true) {
   if (currentConfig?.tabId === tabId) serialized(() => {
@@ -203,6 +225,7 @@ function connect() {
     if (socket !== connectedSocket) return;
     const message = JSON.parse(event.data);
     if (message.type === "paired") {
+      connectedSocket.paired = true;
       serialized(() => receive(message, config)).catch(() => disconnect("Could not save browser registration. Please register again."));
     } else {
       receive(message, config);
@@ -249,8 +272,9 @@ async function receive(message, config) {
       return;
     }
     await chrome.storage.session.set({bridgeConfig: currentConfig});
-    const tab = await chrome.tabs.get(config.tabId);
-    await setStatus("connected", `Sharing ${tab.title || tab.url}`);
+    // Refresh again after acknowledgement to include changes during the handshake.
+    const tab = await updateTabMetadata(config.tabId);
+    if (tab) await setStatus("connected", `Sharing ${tab.title || tab.url}`);
     return;
   }
   if (message.type !== "command" || !message.id) return;

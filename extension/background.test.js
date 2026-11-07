@@ -10,6 +10,7 @@ function event() {
 }
 const debuggerDetach = event();
 const tabRemoved = event();
+const tabUpdated = event();
 const storedWrites = [];
 function storage() {
   const data = {};
@@ -41,7 +42,7 @@ const context = {
     }},
     runtime: {getPlatformInfo: async () => ({os: "linux"}), onInstalled: event(), onMessage: event(), onStartup: event()},
     storage: {local: storage(), session: storage()},
-    tabs: {get: async (id) => ({id, title: "Example", url: "https://example.com"}), onRemoved: tabRemoved},
+    tabs: {get: async (id) => ({id, title: "Example", url: "https://example.com"}), onRemoved: tabRemoved, onUpdated: tabUpdated},
   },
   clearInterval,
   clearTimeout,
@@ -328,15 +329,38 @@ test("registration survives stop, tab closure and Chrome restart without resumin
   assert.equal(first.tab_id, 11);
   assert.equal(first.pairing_code, "browser-secret");
   assert.equal((await message({type: "status"})).connected, true);
+  const sharedSocket = sockets.at(-1);
+  const getTab = context.chrome.tabs.get;
+  try {
+    context.chrome.tabs.get = async (id) => ({id, title: "", url: "https://example.com/statements"});
+    const messagesBefore = sharedSocket.sent.length;
+    tabUpdated.listener(12, {url: "https://private.example"});
+    await context.drainForTest();
+    assert.equal(sharedSocket.sent.length, messagesBefore, "unshared tab metadata must not leave Chrome");
+    tabUpdated.listener(11, {title: "", url: "https://example.com/statements"});
+    await context.drainForTest();
+    assert.deepEqual(sharedSocket.sent.at(-1), {type: "tab", tab_title: "", tab_url: "https://example.com/statements"});
+    context.chrome.tabs.get = async (id) => ({id, title: "Renamed statement", url: "https://example.com/statements"});
+    tabUpdated.listener(11, {title: "Renamed statement"});
+    await context.drainForTest();
+    assert.equal(sharedSocket.sent.at(-1).tab_title, "Renamed statement");
+  } finally {
+    context.chrome.tabs.get = getTab;
+  }
   await message({type: "disconnect"});
   const stopped = await message({type: "status"});
   assert.equal(stopped.registered, true);
   assert.equal(stopped.sharedTab, null);
 
   await message({type: "share", tabId: 22});
+  const unacknowledged = sockets.at(-1);
+  tabUpdated.listener(22, {title: "During handshake"});
+  await context.drainForTest();
+  assert.equal(unacknowledged.sent.length, 0, "hello must be the first wire message");
   const second = await acknowledge();
   assert.equal(second.tab_id, 22);
   assert.notEqual(second.share_id, first.share_id);
+  assert.equal(unacknowledged.sent.at(-1).type, "tab", "refresh metadata after acknowledging the share");
   await message({type: "share", tabId: 33});
   const switched = await acknowledge();
   assert.equal(switched.tab_id, 33);
