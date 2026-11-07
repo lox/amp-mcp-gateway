@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +12,96 @@ import (
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
+	"github.com/gorilla/websocket"
 )
+
+func TestBrowserStatusObservesNewShareButRemainsBoundToCatalogue(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "new share"
+		if changed {
+			name = "changed catalogue"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, s, fallback := fixture(t)
+			connection, tools := ChromeIntegration()
+			cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", Connections: []upstream.Connection{connection}, Tools: tools}
+			browser, err := browserbridge.New(t.Context(), cfg.Connections, fallback, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := New(cfg, s, browser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range []string{"browser.status", "browser.snapshot"} {
+				in := input(strings.ReplaceAll(tool, ".", "-"), "")
+				in.Calls[0].ToolID, in.Calls[0].Arguments = tool, map[string]any{}
+				if _, err := g.submit(t.Context(), in); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, _, err := browser.Pair(t.Context(), "browser", "Work Chrome")
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(browser.Socket())
+			t.Cleanup(server.Close)
+			connect := func(hello map[string]any) string {
+				t.Helper()
+				ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), http.Header{"Origin": {"chrome-extension://test-extension"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { ws.Close() })
+				if err := ws.WriteJSON(hello); err != nil {
+					t.Fatal(err)
+				}
+				var paired struct {
+					Type      string
+					Reconnect string `json:"reconnect_code"`
+				}
+				if err := ws.ReadJSON(&paired); err != nil || paired.Type != "paired" {
+					t.Fatalf("browser enrollment failed: %v", err)
+				}
+				return paired.Reconnect
+			}
+			credential := connect(map[string]any{"type": "hello", "version": 2, "pairing_code": code, "install_id": "test-install"})
+			connect(map[string]any{"type": "hello", "version": 2, "pairing_code": credential, "install_id": "test-install", "share_id": "new-share", "tab_id": 42, "tab_title": "Statements", "tab_url": "https://bank.example/statements"})
+			if changed {
+				for i := range cfg.Tools {
+					if cfg.Tools[i].ID == "browser.status" {
+						cfg.Tools[i].Description += " Updated configuration."
+					}
+				}
+				g, err = New(cfg, s, browser)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			runWorker(t, g)
+			await(t, s, "browser-snapshot", "denied")
+			if changed {
+				await(t, s, "browser-status", "denied")
+				return
+			}
+			o := await(t, s, "browser-status", "succeeded")
+			var result struct {
+				State struct {
+					Registered bool   `json:"registered"`
+					Sharing    bool   `json:"sharing"`
+					Name       string `json:"browser_name"`
+					URL        string `json:"tab_url"`
+				} `json:"structuredContent"`
+			}
+			if err := json.Unmarshal(o.Result, &result); err != nil {
+				t.Fatal(err)
+			}
+			if !result.State.Registered || !result.State.Sharing || result.State.Name != "Work Chrome" || result.State.URL != "https://bank.example/statements" {
+				t.Fatalf("status did not observe the new share: %+v", result.State)
+			}
+		})
+	}
+}
 
 func TestConfigureChromeAddsCanonicalToolsAndPreservesPolicies(t *testing.T) {
 	cfg := Config{

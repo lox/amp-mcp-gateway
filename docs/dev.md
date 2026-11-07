@@ -165,7 +165,8 @@ enable Chrome.
    are supported today.
 5. Find tools through MCP with query `browser` (search requires every term to match).
    Call `browser.status` before browser work; it reports registration/sharing and
-   local-browser guidance even when no tab is connected. For login-dependent tasks,
+   local-browser guidance even when no tab is connected or sharing changes while
+   the call is queued. Its configured policy still applies. For login-dependent tasks,
    prefer sharing the user's already-authenticated local tab instead of asking them
    to sign in again in an orb. `browser.snapshot` returns a `document_id` and
    accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,

@@ -194,7 +194,19 @@ func digest(v any) string {
 }
 
 func (g *Gateway) binding(tool Tool) string {
-	return g.bindingWith(tool, g.backend.Binding(tool.Connection))
+	return g.bindingWith(tool, g.dynamicBinding(tool))
+}
+
+func (g *Gateway) dynamicBinding(tool Tool) string {
+	if tool.ID == "browser.status" && tool.Name == "status" {
+		for _, connection := range g.cfg.Connections {
+			if connection.ID == tool.Connection && connection.Browser {
+				// Status observes current sharing; it does not act on a captured tab.
+				return ""
+			}
+		}
+	}
+	return g.backend.Binding(tool.Connection)
 }
 
 func (g *Gateway) bindingWith(tool Tool, binding string) string {
@@ -398,7 +410,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = integration.Account
 		}
 	}
-	dynamicBinding := g.backend.Binding(t.Connection)
+	dynamicBinding := g.dynamicBinding(t)
 	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
@@ -467,7 +479,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			valid := false
 			integration, native := g.integration(t.Connection)
 			if ok && t.Policy != "deny" && !native {
-				expectedBinding = g.backend.Binding(t.Connection)
+				expectedBinding = g.dynamicBinding(t)
 				valid = g.bindingWith(t, expectedBinding) == o.Binding
 			} else if ok && t.Policy != "deny" {
 				valid = g.bindingWith(t, "") == o.Binding
