@@ -148,38 +148,68 @@ enable Chrome.
 
 1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
    choose **Load unpacked**, and select this checkout's `extension` directory. After
-   updating an existing checkout, click **Reload** on the extension card. Version
-   0.1 users must configure the gateway once after this update because Chrome clears
-   extension session storage during reload.
+   updating an existing checkout, click **Reload** on the extension card.
 2. Open the extension's **Settings** and save the gateway origin once, for example
    `https://gateway.example.com`. The setting persists in this Chrome profile.
-3. Sign in to the gateway dashboard, open **Integrations → Chrome**, and create
-   a pairing code.
-4. Open the tab you want to share, open the extension, and paste the pairing code.
-5. Find `browser` tools through MCP. `browser.snapshot` returns a `document_id` and
-   accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,
-   role, and accessible name to `browser.click` and `browser.type`; the extension
-   rejects mutations if any target descriptor changed after the snapshot.
+3. Sign in to the gateway dashboard, open **Integrations → Chrome**, name this
+   browser (for example “Work Chrome on MacBook”), and choose **Add browser**.
+   Paste the code into the extension and choose **Register browser**. Registration
+   remembers this Chrome profile; it does not grant access to a tab.
+4. Open the authenticated site in your local Chrome, open the extension, and choose
+   **Share this tab**. Use **Share this tab instead** to switch tabs. **Stop sharing**
+   ends access without forgetting registration. **Forget browser** in the dashboard
+   revokes the browser credential; **Replace registration** generates a new code
+   directly, without a separate disconnect step. In the extension, expand
+   **Enter replacement code** to use it, even when the old browser is still
+   registered locally. One registered browser and one active shared tab per account
+   are supported today.
+5. Find tools through MCP with query `browser` (search requires every term to match).
+   Call `browser.status` before browser work; it reports registration/sharing and
+   local-browser guidance even when no tab is connected or sharing changes while
+   the call is queued. The extension refreshes the shared tab's title and URL after
+   navigation or title changes; this metadata does not change tab authority or
+   approval bindings. MCP status exposes tab titles and URLs only while sharing,
+   including for legacy registrations. Its configured policy still applies.
+   For login-dependent tasks, prefer sharing the user's already-authenticated local
+   tab instead of asking them to sign in again in an orb. `browser.snapshot` returns
+   a `document_id` and accessibility-tree nodes. Pass the document and node IDs plus
+   the snapshot's URL, role, and accessible name to `browser.click` and `browser.type`;
+   the extension rejects mutations if any target descriptor changed after the snapshot.
 
-The available tools are `browser.snapshot`, `browser.screenshot`, `browser.scroll`,
-`browser.click`, `browser.type`, and `browser.navigate`. The default policies allow
-viewing and scrolling directly while requiring approval for click, type, and
-navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
+The available tools are `browser.status`, `browser.snapshot`, `browser.screenshot`,
+`browser.scroll`, `browser.click`, `browser.type`, and `browser.navigate`. The default
+policies allow status, viewing and scrolling directly while requiring approval for
+click, type, and navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
 tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
 uploads, and the desktop remain inaccessible.
+Approved typing brings the shared tab to the foreground and replaces the field's
+entire contents; empty text clears it. `submit: true` additionally presses Enter,
+which follows the page's normal behavior (for example, submitting a single-line form).
 Completed screenshot operations return standard MCP image content. Amp promotes
 that content to a private thread attachment when the caller forwards the tool
 result content.
 
 The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
-connect to `/mcp`. Reconnect authority is encrypted in the gateway database and
-kept in Chrome session storage, so a gateway deploy reconnects automatically.
-Restarting Chrome or reloading the extension still requires pairing again. The
-displayed one-time code is consumed on first use and exchanged for a reconnect
-credential bound to that extension install, share generation, and tab. Re-pairing,
-revocation, or selecting a new share generation invalidates queued approvals.
-After upgrading from a version that kept pairings only in memory, pair once more
-to establish the persisted reconnect authority.
+connect to `/mcp`. A one-time registration code expires after ten minutes and is
+exchanged for a browser credential bound to the extension install. The gateway
+stores its hash encrypted at rest; the extension keeps the credential in local
+(not synced) Chrome storage, restricted to trusted extension contexts. Treat the
+Chrome profile as credential-bearing; site login cookies stay in that profile.
+Only the active tab share is kept in session storage. Network interruptions and
+gateway deploys reconnect that share automatically without replaying commands.
+Chrome restart or extension reload ends sharing but preserves registration; click
+**Share this tab** explicitly afterward. Tab closure or debugger cancellation also
+stops sharing. Every new share gets a fresh generation bound to its tab, so old
+pending approvals cannot execute on a replacement tab. Replacing or forgetting a
+browser invalidates its authority. Changing the configured gateway stops sharing
+and clears the local registration; revoke the old registration from its dashboard.
+
+Upgrade the gateway before installing extension 0.3.0. Older tab-bound extensions
+continue to work against the upgraded gateway, but after updating the extension,
+register once using **Replace registration** to establish durable browser trust.
+For a rollback, revoke registrations and pair again with the matching older
+extension; older gateways do not support durable browser registration.
+
 A mutation the extension rejects before sending any input, such as a changed tab
 URL, document or target element, is recorded as `failed` with the extension's
 message. Once input may have reached the page, a disconnect or extension-reported
