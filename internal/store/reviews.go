@@ -42,12 +42,6 @@ func (s *Store) InsertReview(ctx context.Context, r ReviewRecord, missing bool) 
 	}
 	defer tx.Rollback()
 	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE status IN ('queued','running','cancelling')`).Scan(&count); err != nil {
-		return err
-	}
-	if count >= 100 {
-		return errors.New("review queue capacity reached")
-	}
 	query := `SELECT count(*) FROM reviews WHERE scope=? AND (delivery=? OR (head=? AND status IN ('queued','running','cancelling','unknown')))`
 	if missing {
 		query = `SELECT count(*) FROM reviews WHERE scope=? AND (delivery=? OR head=?)`
@@ -57,6 +51,14 @@ func (s *Store) InsertReview(ctx context.Context, r ReviewRecord, missing bool) 
 	}
 	if count != 0 {
 		return ErrReviewConflict
+	}
+	if r.Status == "queued" || r.Status == "running" || r.Status == "cancelling" {
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews WHERE status IN ('queued','running','cancelling')`).Scan(&count); err != nil {
+			return err
+		}
+		if count >= 100 {
+			return errors.New("review queue capacity reached")
+		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO reviews VALUES (?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.Scope, r.Delivery, r.Head, r.Pull, r.Status, 1, r.Created, s.seal("review:"+r.ID, r.Payload), r.Cleanup, r.MaintenanceAt)
 	if err != nil {

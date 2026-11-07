@@ -119,6 +119,10 @@ operator control.
   App, external ID, SHA and conclusion. It never guesses that an uncertain launch
   failed. Persistently unknown jobs need the owner; their threads are not silently
   archived. Check creation recovery is bounded to 1,000 checks for the commit.
+- A failed finalization database write stops the worker and propagates through
+  the gateway's supervised process. After storage is healthy, restart recovery
+  handles the last durable checkpoint; the worker never silently leaves a review
+  running while continuing to dispatch new work.
 - Reconciliation runs every five minutes, at most 1,000 open PRs per mapped
   repository and ten new reviews per pass. It considers PRs updated between five
   minutes and seven days ago, and never repeats a known head. Older/missing events

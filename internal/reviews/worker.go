@@ -98,8 +98,7 @@ func (s *Service) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.review(jobCtx, a, &j)
-	return nil
+	return s.review(jobCtx, a, &j)
 }
 
 func (s *Service) checkpoint(ctx context.Context, j *Job, phase string) error {
@@ -115,7 +114,7 @@ func (s *Service) checkpoint(ctx context.Context, j *Job, phase string) error {
 	return s.update(ctx, j)
 }
 
-func (s *Service) review(ctx context.Context, a App, j *Job) {
+func (s *Service) review(ctx context.Context, a App, j *Job) (persistErr error) {
 	status, message := "failed", "Review could not complete. Inspect its gateway history before rerunning."
 	var gh *githubSession
 	defer func() {
@@ -135,7 +134,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 				conclusion = "cancelled"
 			}
 			j.Phase = "finishing"
-			if err := s.update(finishCtx, j); err != nil {
+			if persistErr = s.update(finishCtx, j); persistErr != nil {
 				return
 			}
 			if err := gh.finish(finishCtx, *j, conclusion, message); err != nil {
@@ -147,7 +146,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 		}
 		j.Status, j.Error, j.Completed = status, message, time.Now().Unix()
 		// A failed write leaves the last durable checkpoint for restart recovery.
-		_ = s.update(finishCtx, j)
+		persistErr = s.update(finishCtx, j)
 	}()
 	var err error
 	gh, err = s.github.session(ctx, a, j.Repository)
@@ -266,6 +265,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 		j.Status = "unknown"
 		status = "unknown"
 	}
+	return
 }
 
 // Reconcile checks only explicitly mapped/approved repositories, with bounded

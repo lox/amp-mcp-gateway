@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -479,6 +480,54 @@ func TestAmbiguousWritesRecoverWithoutReplay(t *testing.T) {
 	}
 }
 
+func TestFinalizationStorageFailureStopsWorker(t *testing.T) {
+	for _, status := range []string{"running", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			f, gh := newGitHub(t)
+			amp := &fakeAmp{}
+			s, st, path, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			amp.execute = func(context.Context, string, Job, func(string) error) (string, error) {
+				_, err := db.Exec(`CREATE TRIGGER fail_finalization BEFORE UPDATE ON reviews
+WHEN NEW.status='` + status + `' BEGIN SELECT RAISE(ABORT, 'test finalization failure'); END`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return "", errors.New("execution rejected")
+			}
+			a := fixtureApp(t, "lox")
+			if err := s.Save(t.Context(), a); err != nil {
+				t.Fatal(err)
+			}
+			deliver(t, s, a, fixturePull("lox/repo", 44), "write-failure", "pull_request", "opened", nil)
+			if err := s.Step(t.Context()); err == nil || !strings.Contains(err.Error(), "test finalization failure") {
+				t.Fatalf("worker hid persistence failure: %v", err)
+			}
+			if _, err := db.Exec(`DROP TRIGGER fail_finalization`); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := New(t.Context(), "user", st, amp, gh, semaphore.NewWeighted(4))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.Maintain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			want, finished := "unknown", 0
+			if status == "failed" {
+				want, finished = "failed", 1
+			}
+			if j := history(t, restarted)[0]; j.Status != want || f.finished != finished {
+				t.Fatalf("recovery status %s, completed checks %d", j.Status, f.finished)
+			}
+		})
+	}
+}
+
 func TestDefiniteGitHubRejectionsDoNotBlockAccount(t *testing.T) {
 	for _, phase := range []string{"create", "publish"} {
 		for _, code := range []int{401, 403, 422, 408} {
@@ -692,6 +741,28 @@ func TestLegacyImportAndNumericCheckRerun(t *testing.T) {
 	}
 	if jobs := history(t, s); len(jobs) != 2 || jobs[0].Context != j.Context || jobs[0].Project != a.Projects["lox/repo"] {
 		t.Fatal("rerun lost context or current project authorization")
+	}
+	for n := 0; n < 99; n++ {
+		p.Number = 100 + n
+		if got := deliver(t, s, a, p, fmt.Sprint(n), "pull_request", "opened", nil); got != 202 {
+			t.Fatalf("fill queue: %d", got)
+		}
+	}
+	if got := deliver(t, s, a, p, "98", "pull_request", "opened", nil); got != 202 {
+		t.Fatalf("full queue rejected duplicate: %d", got)
+	}
+	a.Enabled = false
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw))); err != nil || count != 0 {
+		t.Fatalf("full queue blocked re-import: %d %v", count, err)
+	}
+	old := entry["job"].(map[string]any)
+	old["id"], old["source_delivery_id"], old["pull_number"] = 18, "another-old-delivery", 900
+	raw, _ = json.Marshal(entry)
+	if count, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw))); err != nil || count != 1 {
+		t.Fatalf("full queue blocked historical import: %d %v", count, err)
 	}
 }
 
