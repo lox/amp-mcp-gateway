@@ -52,11 +52,12 @@ the replacement key to archive threads or read usage.
    account access and allow fetching the exact PR commits, including fork heads.
 4. Install [pinned-models.js](reviews/pinned-models.js) in the execution account's
    **User or Workspace Plugins repository** (once, not additionally in each
-   project). Existing installations of the same file can be retained. It registers
+   project). Replace the legacy all-purpose plugin with this production-only
+   version: it removes the evaluation judge and message-triggered shell setup hook.
+   Keep evaluation tooling separate from production execution accounts. It registers
    `reviewbot-v1` with main model `openai/gpt-5.6-sol`, medium reasoning and the same
-   Oracle model at high reasoning. The evaluation mode remains available but the
-   gateway does not run evaluations. Plugin provisioning is a separate operator
-   step; this feature never changes global plugins.
+   Oracle model at high reasoning. Plugin provisioning is a separate operator step;
+   this feature never changes global plugins.
 5. Copy the account/App-specific webhook URL displayed after saving into the App
    settings. A signed ping verifies delivery even while paused, but does not
    authorise repositories. Select severity threshold, private/workspace thread
