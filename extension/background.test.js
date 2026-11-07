@@ -64,6 +64,46 @@ test("select-all uses Command on macOS and Control elsewhere", () => {
   assert.equal(context.selectAllModifierForTest("linux"), 2);
 });
 
+test("typing replaces existing text, clears it and submits only when requested", async () => {
+  const sendCommand = context.chrome.debugger.sendCommand;
+  const editor = {value: "Original invoice 42", selected: false, submissions: 0};
+  vm.runInNewContext("currentConfig = {shareID: 'typing-share', tabId: 43}", context);
+  context.chrome.debugger.sendCommand = async (_target, method, params) => {
+    if (method === "Page.getFrameTree") return {frameTree: {frame: {loaderId: "typing-document"}}};
+    if (method === "Accessibility.getPartialAXTree") {
+      return {nodes: [{backendDOMNodeId: 7, role: {value: "textbox"}, name: {value: "Reference"}}]};
+    }
+    // Model Chrome's native editing defaults, not the event's descriptive key/code labels.
+    // The real-browser proof checks these semantics against Chrome itself.
+    if (method === "Input.dispatchKeyEvent" && params.type === "keyDown") {
+      if (params.windowsVirtualKeyCode === 65 && params.modifiers === 2) editor.selected = true;
+      if (params.windowsVirtualKeyCode === 8 && editor.selected) {
+        editor.value = "";
+        editor.selected = false;
+      }
+      if (params.windowsVirtualKeyCode === 13 && params.text === "\r" && params.unmodifiedText === "\r") editor.submissions++;
+    }
+    if (method === "Input.insertText" && params.text) {
+      editor.value = editor.selected ? params.text : editor.value + params.text;
+      editor.selected = false;
+    }
+    return {};
+  };
+  try {
+    for (const [text, submit, submissions] of [["Invoice 84 · café 🦊", false, 0], ["", false, 0], ["Submitted once", true, 1]]) {
+      await context.executeForTest(
+        {shareID: "typing-share", tabId: 43},
+        "type",
+        {document_id: "typing-document", backend_node_id: 7, expected_url: "https://example.com", expected_role: "textbox", expected_name: "Reference", text, submit},
+      );
+      assert.equal(editor.value, text);
+      assert.equal(editor.submissions, submissions);
+    }
+  } finally {
+    context.chrome.debugger.sendCommand = sendCommand;
+  }
+});
+
 test("gateway settings persist only a validated origin", async () => {
   const saved = await context.saveGatewayForTest("https://gateway.example/");
   assert.equal(saved, "https://gateway.example");

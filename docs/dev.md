@@ -178,6 +178,9 @@ policies allow status, viewing and scrolling directly while requiring approval f
 click, type, and navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
 tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
 uploads, and the desktop remain inaccessible.
+Approved typing brings the shared tab to the foreground and replaces the field's
+entire contents; empty text clears it. `submit: true` additionally presses Enter,
+which follows the page's normal behavior (for example, submitting a single-line form).
 Completed screenshot operations return standard MCP image content. Amp promotes
 that content to a private thread attachment when the caller forwards the tool
 result content.

@@ -373,15 +373,16 @@ async function typeText(target, documentID, backendNodeId, expectedURL, expected
     const {os} = await chrome.runtime.getPlatformInfo();
     return selectAllModifier(os);
   });
+  await documentCommand(target, documentID, "Page.bringToFront");
   await documentCommand(target, documentID, "DOM.focus", {backendNodeId});
-  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", modifiers});
-  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", modifiers});
-  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace"});
-  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace"});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8});
+  await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8});
   await documentCommand(target, documentID, "Input.insertText", {text});
   if (submit) {
-    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter"});
-    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter"});
+    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r"});
+    await documentCommand(target, documentID, "Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13});
   }
   return {typed: backendNodeId, submitted: submit};
 }
