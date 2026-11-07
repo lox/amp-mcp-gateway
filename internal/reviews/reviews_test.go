@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -537,6 +538,63 @@ func TestReconciliationDoesNotRepeatKnownHeads(t *testing.T) {
 	}
 }
 
+type reviewTransport func(*http.Request) (*http.Response, error)
+
+func (f reviewTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCancellationAfterCheckCreation(t *testing.T) {
+	for _, lostFinish := range []bool{false, true} {
+		t.Run(fmt.Sprintf("lost-finish=%t", lostFinish), func(t *testing.T) {
+			f, gh := newGitHub(t)
+			f.losePublish = lostFinish
+			s, _, _, _ := fixtureService(t, "user", &fakeAmp{}, gh, semaphore.NewWeighted(4))
+			a := fixtureApp(t, "lox")
+			if err := s.Save(t.Context(), a); err != nil {
+				t.Fatal(err)
+			}
+			p := fixturePull("lox/repo", 44)
+			deliver(t, s, a, p, "cancel-before-launch", "pull_request", "opened", nil)
+			id := history(t, s)[0].ID
+			transport := gh.Client.Transport
+			gh.Client.Transport = reviewTransport(func(r *http.Request) (*http.Response, error) {
+				response, err := transport.RoundTrip(r)
+				if err == nil && r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/check-runs") {
+					// Deliver the complete successful response even though cancellation
+					// arrives before the worker can launch Amp.
+					body, readErr := io.ReadAll(response.Body)
+					response.Body.Close()
+					if readErr != nil {
+						return nil, readErr
+					}
+					response.Body = io.NopCloser(strings.NewReader(string(body)))
+					if err := s.Cancel(t.Context(), id, false); err != nil {
+						t.Error(err)
+					}
+				}
+				return response, err
+			})
+			if err := s.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			j := history(t, s)[0]
+			want := "cancelled"
+			if lostFinish {
+				want = "unknown"
+			}
+			if j.Status != want || len(j.Threads) != 0 || f.checks[j.CheckID]["conclusion"] != "cancelled" {
+				t.Fatalf("status %s, threads %d, check %+v", j.Status, len(j.Threads), f.checks[j.CheckID])
+			}
+			gh.Client.Transport = transport
+			if !lostFinish {
+				deliver(t, s, a, p, "next-review", "pull_request", "opened", nil)
+				if err := s.Step(t.Context()); err != nil || history(t, s)[0].Status != "succeeded" {
+					t.Fatalf("cancelled review blocked account: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestCancellationDuringExecution(t *testing.T) {
 	_, gh := newGitHub(t)
 	started := make(chan Job, 1)
@@ -601,7 +659,7 @@ func TestLegacyImportAndNumericCheckRerun(t *testing.T) {
 	}
 	p := fixturePull("lox/repo", 44)
 	entry := map[string]any{
-		"job":     map[string]any{"id": 17, "source_delivery_id": "old-delivery", "event_type": "pull_request.opened", "installation_id": 11, "repository_id": 44, "repository_full_name": "lox/repo", "pull_number": 7, "base_sha": p.Base.SHA, "head_sha": p.Head.SHA, "amp_project": "old/project", "pull_request_title": p.Title, "pull_request_body": p.Body, "base_ref": "main", "head_ref": "feature", "check_run_id": 101, "status": "succeeded", "created_at": "2026-10-01T01:02:03Z", "completed_at": "2026-10-01T01:03:03Z"},
+		"job":     map[string]any{"id": 17, "source_delivery_id": "old-delivery", "event_type": "pull_request.opened", "installation_id": 11, "repository_id": 44, "repository_full_name": "Lox/Repo", "pull_number": 7, "base_sha": p.Base.SHA, "head_sha": p.Head.SHA, "amp_project": "old/project", "pull_request_title": p.Title, "pull_request_body": p.Body, "base_ref": "main", "head_ref": "feature", "check_run_id": 101, "status": "succeeded", "created_at": "2026-10-01T01:02:03Z", "completed_at": "2026-10-01T01:03:03Z"},
 		"threads": []any{map[string]any{"thread_id": testThread, "amp_usage_usd": 0.25, "estimated_provider_cost_at_list_price_usd": 1.5, "usage_details": map[string]any{"inputTokens": 123, "outputTokens": 45, "requests": 6}, "archived_at": "2026-10-01T01:03:04Z"}},
 		"result":  map[string]any{"conclusion": "success", "fail_on": "high", "prompt_identifier": "legacy-prompt", "summary": "No issues", "findings": []any{}, "omitted_findings": 0},
 	}

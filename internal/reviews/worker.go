@@ -178,7 +178,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) {
 		}
 	}
 	if err := s.checkpoint(ctx, j, "starting_thread"); err != nil {
-		status = "unknown"
+		// No Amp dispatch occurred; let the finalizer close the known check.
 		return
 	}
 	// Poll live state during long reviews, including missed close/draft events.

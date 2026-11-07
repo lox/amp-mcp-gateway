@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -77,6 +78,7 @@ func (s *Service) ImportLegacy(ctx context.Context, app string, reader io.Reader
 			return count, fmt.Errorf("invalid JSON at import line %d", line)
 		}
 		old := entry.Job
+		old.Repository = strings.ToLower(old.Repository)
 		j := Job{ID: "legacy-" + a.ID + "-" + strconv.FormatInt(old.ID, 10), App: a.ID, OwnerID: s.owner, Binding: a.binding(), ExecutionBinding: hash(a.AmpKey), InstallationID: old.Installation, RepositoryID: old.RepositoryID, Repository: old.Repository, Number: old.Number, BaseSHA: old.BaseSHA, HeadSHA: old.HeadSHA, Project: old.Project, Context: Context{old.Title, old.Body, old.BaseRef, old.HeadRef}, Event: old.Event, Delivery: old.Delivery, Status: old.Status, Phase: "imported", CheckID: old.CheckID, Attempts: old.Attempts, Created: old.Created.UnixNano(), Completed: old.Completed.Unix(), Revision: 1, FailOn: a.FailOn, Visibility: a.Visibility, TimeoutMinutes: a.TimeoutMinutes, PromptVersion: "legacy"}
 		if old.ID <= 0 || old.Installation != a.InstallationID || !a.allows(old.Repository) || !shaPattern.MatchString(old.BaseSHA) || !shaPattern.MatchString(old.HeadSHA) || old.Number <= 0 || old.RepositoryID <= 0 || old.Created.IsZero() || (old.Status != "succeeded" && old.Status != "failed" && old.Status != "cancelled") {
 			return count, fmt.Errorf("line %d is active, invalid or outside the approved installation/repositories; drain the source first", line)
