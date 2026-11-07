@@ -348,6 +348,14 @@ func TestReconnectAuthoritySurvivesManagerRestart(t *testing.T) {
 	if len(statuses) != 1 || !statuses[0].Paired || statuses[0].Connected || statuses[0].TabTitle != "Persisted tab" {
 		t.Fatalf("restored status = %#v", statuses)
 	}
+	result, err := restarted.Call(t.Context(), "browser", "status", "", nil)
+	if err != nil || result.IsError {
+		t.Fatalf("disconnected legacy status failed: %v", err)
+	}
+	state := result.StructuredContent.(map[string]any)
+	if state["sharing"] != false || state["registered"] != false || state["tab_title"] != "" || state["tab_url"] != "" {
+		t.Fatalf("MCP status exposed the disconnected legacy tab: %+v", state)
+	}
 }
 
 func TestReceivedResultWinsOverImmediateClose(t *testing.T) {

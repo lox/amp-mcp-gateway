@@ -214,6 +214,10 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	if browser && tool == "status" {
 		status := m.status(connection)
 		m.mu.Unlock()
+		// Legacy migration details belong to the owner's dashboard, not agents.
+		if !status.Connected {
+			status.TabTitle, status.TabURL = "", ""
+		}
 		guidance := "Open the site in your local Chrome and choose Share this tab in the Amp MCP Gateway extension. Prefer your already-authenticated local browser over signing in again in an orb."
 		if status.Connected {
 			guidance = "Use the explicitly shared local tab. Sharing grants access, not permission to perform unrequested actions."

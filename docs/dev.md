@@ -168,12 +168,13 @@ enable Chrome.
    local-browser guidance even when no tab is connected or sharing changes while
    the call is queued. The extension refreshes the shared tab's title and URL after
    navigation or title changes; this metadata does not change tab authority or
-   approval bindings. Its configured policy still applies. For login-dependent tasks,
-   prefer sharing the user's already-authenticated local tab instead of asking them
-   to sign in again in an orb. `browser.snapshot` returns a `document_id` and
-   accessibility-tree nodes. Pass the document and node IDs plus the snapshot's URL,
-   role, and accessible name to `browser.click` and `browser.type`; the extension
-   rejects mutations if any target descriptor changed after the snapshot.
+   approval bindings. MCP status exposes tab titles and URLs only while sharing,
+   including for legacy registrations. Its configured policy still applies.
+   For login-dependent tasks, prefer sharing the user's already-authenticated local
+   tab instead of asking them to sign in again in an orb. `browser.snapshot` returns
+   a `document_id` and accessibility-tree nodes. Pass the document and node IDs plus
+   the snapshot's URL, role, and accessible name to `browser.click` and `browser.type`;
+   the extension rejects mutations if any target descriptor changed after the snapshot.
 
 The available tools are `browser.status`, `browser.snapshot`, `browser.screenshot`,
 `browser.scroll`, `browser.click`, `browser.type`, and `browser.navigate`. The default
