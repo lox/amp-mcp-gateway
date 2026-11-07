@@ -111,8 +111,12 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	for _, a := range apps {
 		existing = existing || a.ID == selected.ID
 	}
+	editing := existing || values != nil || r.URL.Query().Get("new") == "1"
 	imported, _ := strconv.Atoi(r.URL.Query().Get("imported"))
 	projects, _ := json.MarshalIndent(selected.Projects, "", "  ")
+	if values != nil {
+		projects = []byte(r.PostForm.Get("projects"))
+	}
 	jobs, err := g.Reviews.History(r.Context())
 	if err != nil {
 		http.Error(w, "Review history unavailable", 503)
@@ -122,7 +126,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": apps, "ReviewApp": selected, "ReviewExisting": existing, "ReviewImported": imported, "ReviewProjects": string(projects), "ReviewRepositories": strings.Join(selected.Repositories, "\n"), "ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": apps, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing, "ReviewImported": imported, "ReviewProjects": string(projects), "ReviewRepositories": strings.Join(selected.Repositories, "\n"), "ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {

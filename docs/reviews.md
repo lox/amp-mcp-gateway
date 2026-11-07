@@ -35,13 +35,15 @@ values; saving changed settings fences queued work and requests cancellation of
 active work. Drain cleanup before rotating an execution key: old jobs never borrow
 the replacement key to archive threads or read usage.
 
-## Configure an App
+## Configure a review integration
 
 1. Install a private GitHub App owned by the relevant account/organisation on the
    selected repositories. Required repository permissions: **Checks: read/write**,
    **Contents: read**, **Pull requests: read** (plus GitHub's mandatory metadata
    read). Subscribe to **Pull request** and **Check run** events.
-2. In **Integrations → Reviews**, create a paused configuration with its App ID,
+2. In **Integrations → Reviews**, choose **Add review integration**. The overview
+   shows existing integrations and review history; **Configure** opens an existing
+   integration. In the setup form, create a paused configuration with its App ID,
    installation ID, PEM RSA private key, webhook secret and separate Amp execution
    API key. Use fake credentials only in demo mode; demo never runs review workers.
 3. Approve specific `owner/repo` names, or explicitly approve the entire owner.

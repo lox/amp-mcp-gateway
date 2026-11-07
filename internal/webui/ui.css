@@ -243,6 +243,15 @@
   :where(html.dashboard) .reviews code {
     overflow-wrap: anywhere;
   }
+  :where(html.dashboard) .review-setup {
+    @apply max-w-240;
+  }
+  :where(html.dashboard) .review-setup fieldset {
+    @apply border-0 p-0 mt-8 mb-6 min-w-0;
+  }
+  :where(html.dashboard) .review-setup legend {
+    @apply text-[20px] font-semibold p-0 mb-2;
+  }
   :where(html.dashboard) .field small,
   :where(html.dashboard) .help {
     color: #586b62;

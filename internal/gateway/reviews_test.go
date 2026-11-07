@@ -50,9 +50,15 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	}
 	// An invalid new integration must remain editable and must not echo secrets.
 	w := formRequest(h, cookie, "POST", "/integrations/reviews", values)
-	if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "readonly") || strings.Contains(w.Body.String(), private) || strings.Contains(w.Body.String(), "fake-execution-key") {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `name="private_key"`) || strings.Contains(w.Body.String(), "readonly") || strings.Contains(w.Body.String(), private) || strings.Contains(w.Body.String(), "fake-execution-key") {
 		t.Fatal("invalid form leaked secrets or locked identity")
 	}
+	values.Set("projects", "not-json")
+	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), ">not-json</textarea>") {
+		t.Fatal("invalid project mappings were lost instead of remaining editable")
+	}
+	values.Set("projects", `{"lox/repo":"lox/repo"}`)
 	values.Set("webhook_secret", "long-enough-fake-hook-secret")
 	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
 	if w.Code != http.StatusSeeOther {
@@ -71,6 +77,23 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	w = formRequest(h, cookie, "GET", "/integrations/reviews?app=lox", nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Import amp-reviewbot history") || strings.Contains(w.Body.String(), "fake-execution-key") || strings.Contains(w.Body.String(), private) {
 		t.Fatal("configured page lost state or leaked credentials")
+	}
+	for _, tc := range []struct {
+		path    string
+		editing bool
+	}{
+		{"/integrations/reviews", false},
+		{"/integrations/reviews?new=1", true},
+		{"/integrations/reviews?app=lox", true},
+	} {
+		w := formRequest(h, cookie, "GET", tc.path, nil)
+		body := w.Body.String()
+		if w.Code != http.StatusOK || strings.Contains(body, `name="private_key"`) != tc.editing || strings.Contains(body, "Review history</h2>") == tc.editing {
+			t.Fatalf("overview and setup mixed at %s", tc.path)
+		}
+		if !tc.editing && !strings.Contains(body, `href="/integrations/reviews?new=1"`) {
+			t.Fatal("overview has no explicit add action")
+		}
 	}
 }
 
