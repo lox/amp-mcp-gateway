@@ -137,7 +137,11 @@ func (s *Service) review(ctx context.Context, a App, j *Job) (persistErr error) 
 			if persistErr = s.update(finishCtx, j); persistErr != nil {
 				return
 			}
-			if err := gh.finish(finishCtx, *j, conclusion, message); err != nil {
+			// A result can exist even when its publication checkpoint failed.
+			// Retain it in history, but only send the failure/cancellation message.
+			closing := *j
+			closing.Result = nil
+			if err := gh.finish(finishCtx, closing, conclusion, message); err != nil {
 				message = err.Error()
 				if !errors.Is(err, errGitHubRejected) {
 					status = "unknown"

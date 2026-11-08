@@ -237,6 +237,16 @@ func (s *Service) Save(ctx context.Context, a App) error {
 	if !a.OwnerApproved && len(a.Repositories) == 0 {
 		return errors.New("explicitly approve repositories or the owner")
 	}
+	// Resolve cancellation before committing. A disconnected browser must not
+	// prevent revocation after the new configuration has been persisted.
+	cancelActive := false
+	if s.activeCancel != nil {
+		j, err := s.get(ctx, s.activeID)
+		if err != nil {
+			return err
+		}
+		cancelActive = j.App == a.ID && j.Binding != a.binding()
+	}
 	next := maps.Clone(s.apps)
 	next[a.ID] = a
 	b, err := json.Marshal(next)
@@ -247,10 +257,8 @@ func (s *Service) Save(ctx context.Context, a App) error {
 		return err
 	}
 	s.apps = next
-	if s.activeCancel != nil {
-		if j, err := s.get(ctx, s.activeID); err == nil && j.App == a.ID && j.Binding != a.binding() {
-			s.activeCancel()
-		}
+	if cancelActive {
+		s.activeCancel()
 	}
 	return nil
 }

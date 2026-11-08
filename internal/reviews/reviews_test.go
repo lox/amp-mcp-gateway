@@ -1,6 +1,7 @@
 package reviews
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -676,6 +677,140 @@ func TestCancellationDuringExecution(t *testing.T) {
 	}
 	if history(t, s)[0].Status != "cancelled" {
 		t.Fatal("late success after cancellation")
+	}
+}
+
+// Disconnect as soon as a committed configuration change is visible. A separate
+// SQLite connection observes the commit without depending on SQL call counts.
+type disconnectAfterConfigCommit struct {
+	context.Context
+	db       *sql.DB
+	previous []byte
+	cancel   context.CancelFunc
+}
+
+func (c *disconnectAfterConfigCommit) Done() <-chan struct{} {
+	if c.Context.Err() == nil {
+		var current []byte
+		if err := c.db.QueryRow(`SELECT payload FROM tokens WHERE id='reviews/config/v1'`).Scan(&current); err == nil && !bytes.Equal(current, c.previous) {
+			c.cancel()
+		}
+	}
+	return c.Context.Done()
+}
+
+func TestConfigurationRevocationSurvivesBrowserDisconnect(t *testing.T) {
+	_, gh := newGitHub(t)
+	started := make(chan context.Context, 1)
+	amp := &fakeAmp{execute: func(ctx context.Context, _ string, _ Job, onThread func(string) error) (string, error) {
+		if err := onThread(testThread); err != nil {
+			return "", err
+		}
+		started <- ctx
+		<-ctx.Done()
+		return "", errCancelled
+	}}
+	s, st, path, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "one", "pull_request", "opened", nil)
+	runCtx, stop := context.WithCancel(t.Context())
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- s.Step(runCtx) }()
+	var execution context.Context
+	select {
+	case execution = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not start")
+	}
+	for _, unchanged := range []App{fixtureApp(t, "sporevm"), a} {
+		if err := s.Save(t.Context(), unchanged); err != nil {
+			t.Fatal(err)
+		}
+		if execution.Err() != nil {
+			t.Fatal("unrelated or unchanged configuration cancelled execution")
+		}
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	requestCtx, disconnect := context.WithCancel(t.Context())
+	defer disconnect()
+	request := &disconnectAfterConfigCommit{Context: requestCtx, db: db, cancel: disconnect}
+	if err := db.QueryRow(`SELECT payload FROM tokens WHERE id='reviews/config/v1'`).Scan(&request.previous); err != nil {
+		t.Fatal(err)
+	}
+	a.Enabled = false
+	rejectedCtx, reject := context.WithCancel(t.Context())
+	reject()
+	if err := s.Save(rejectedCtx, a); err == nil || execution.Err() != nil {
+		t.Fatal("failed save cancelled an authorized execution")
+	}
+	if err := s.Save(request, a); err != nil {
+		t.Fatalf("save committed revocation: %v", err)
+	}
+	// Also observe the disconnect if Save no longer uses the request after commit.
+	request.Done()
+	if request.Err() == nil {
+		t.Fatal("configuration commit did not trigger disconnect")
+	}
+	raw, err := st.LoadToken(t.Context(), configKey)
+	var saved map[string]App
+	if err != nil || json.Unmarshal(raw, &saved) != nil || saved[a.ID].Enabled {
+		t.Fatal("revocation was not persisted")
+	}
+	if execution.Err() == nil {
+		t.Error("committed revocation left execution running after browser disconnect")
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if history(t, s)[0].Status != "cancelled" {
+		t.Fatal("revoked review was not cancelled")
+	}
+}
+
+func TestFailedPublicationCheckpointDoesNotPublishFindings(t *testing.T) {
+	f, gh := newGitHub(t)
+	amp := &fakeAmp{}
+	s, _, path, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	transport := gh.Client.Transport
+	gh.Client.Transport = reviewTransport(func(r *http.Request) (*http.Response, error) {
+		response, err := transport.RoundTrip(r)
+		if err == nil && strings.Contains(r.URL.Path, "/compare/") {
+			// Reject the next checkpoint once, while allowing failure finalization.
+			_, err = db.Exec(`CREATE TABLE checkpoint_failure (injected INTEGER);
+INSERT INTO checkpoint_failure VALUES (0);
+CREATE TRIGGER reject_publication BEFORE UPDATE ON reviews
+WHEN (SELECT injected FROM checkpoint_failure)=0 BEGIN
+UPDATE checkpoint_failure SET injected=1;
+SELECT RAISE(FAIL, 'test publication checkpoint rejected'); END`)
+		}
+		return response, err
+	})
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "one", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	j := history(t, s)[0]
+	output := f.checks[j.CheckID]["output"].(map[string]any)
+	if j.Status != "failed" || f.checks[j.CheckID]["conclusion"] != "failure" || output["summary"] != j.Error || output["annotations"] != nil || j.Result == nil {
+		t.Fatalf("failed checkpoint published findings or lost history: status=%s output=%v", j.Status, output)
 	}
 }
 

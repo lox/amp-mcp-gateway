@@ -32,8 +32,9 @@ All configuration and credentials have one source of truth: the encrypted
 identity bindings and PR context, never keys. No reviews environment-variable
 configuration or second management app exists. Blank secret fields retain stored
 values; saving changed settings fences queued work and requests cancellation of
-active work. Drain cleanup before rotating an execution key: old jobs never borrow
-the replacement key to archive threads or read usage.
+active work. Once the save commits, cancellation does not depend on the browser
+request remaining connected. Drain cleanup before rotating an execution key: old
+jobs never borrow the replacement key to archive threads or read usage.
 
 ## Configure a review integration
 
@@ -102,6 +103,8 @@ operator control.
   yields `failure`, advisory findings `neutral`, none `success`. If findings are
   omitted, the free-form summary is replaced with an omission notice, matching
   the source check publisher so discarded claims do not remain in the summary.
+  If the publication checkpoint fails, closing the check sends only a failure or
+  cancellation message, never the findings; any computed result stays in history.
 - Safe GitHub reads retry at most three times. Check creation/publication never
   automatically replays an ambiguous write. Definite HTTP rejections (such as
   401/403/422) fail the job without pausing the account; timeouts, transport errors
