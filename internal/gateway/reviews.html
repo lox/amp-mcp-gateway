@@ -13,8 +13,8 @@
 <p class="help">Use a private GitHub App installed on the repositories you want reviewed. Its credentials stay on the gateway.</p>
 <div class="form-grid">
 <label>GitHub owner<input name="owner" value="{{.ReviewApp.Owner}}" required placeholder="lox" {{if .ReviewExisting}}readonly{{end}}></label>
-<label>GitHub App ID<input name="app_id" type="number" min="1" value="{{if .ReviewApp.AppID}}{{.ReviewApp.AppID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
-<label>Installation ID<input name="installation_id" type="number" min="1" value="{{if .ReviewApp.InstallationID}}{{.ReviewApp.InstallationID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
+<label>GitHub App ID<input name="app_id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{if .ReviewApp.AppID}}{{.ReviewApp.AppID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
+<label>Installation ID<input name="installation_id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{if .ReviewApp.InstallationID}}{{.ReviewApp.InstallationID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
 </div>
 <label>GitHub App private key (PEM)<textarea name="private_key" rows="3" spellcheck="false" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}-----BEGIN RSA PRIVATE KEY-----{{end}}"></textarea></label>
 <label>Webhook secret<input name="webhook_secret" type="password" autocomplete="new-password" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}At least 16 characters{{end}}"></label>
