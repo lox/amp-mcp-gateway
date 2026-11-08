@@ -8,7 +8,7 @@ The normal MCP operation-approval queue is not involved.
 ## Ownership and execution authority
 
 Choose an individual Amp user to administer each integration. Their existing Amp
-login controls configuration, import, cancellation and manual reruns. An account
+login controls configuration, cancellation and manual reruns. An account
 can administer several Apps; other gateway users cannot see or operate them.
 There is no implicit organisation membership, shared admin role or delegation.
 
@@ -159,18 +159,13 @@ These are **operator steps requiring approval**, not automatic deployment action
    configuration. Record the start of the delivery gap.
 3. Export using `psql -XAt -f docs/reviews-export.sql > reviews.jsonl` against the
    **drained source**. The export contains private PR text: protect it like a
-   database backup, never commit it. Split large exports on line boundaries into
-   files of at most 32 MiB / 10,000 records.
-4. Open the paused destination App's **Import amp-reviewbot history** form. Confirm
-   the execution key belongs to the original execution account and upload each
-   JSONL file. The importer rejects active/foreign-installation/unapproved records,
-   preserves checks, frozen context, results, thread IDs and usage, and never queues
-   historical work. It is resumable: a partial failure reports the count; importing
-   again skips known deliveries. Map/approve every repository represented in the
-   export. Numeric old check IDs resolve only within this authenticated App.
-   Pre-context legacy jobs remain visible but cannot be rerun with invented text.
+   database backup, never commit it.
+4. Drain and stop the gateway too, then run the [offline import tool](#one-off-history-import)
+   against its existing account database. Confirm the configured execution key
+   belongs to the original execution account; map/approve every repository in the
+   export. There is no browser upload or HTTP import endpoint.
 5. Compare imported counts and sampled SHAs, check IDs, findings and costs with the
-   source. Point the App webhook at the gateway's displayed URL, enable this App,
+   source. Restart the gateway. Point the App webhook at the gateway's displayed URL, enable this App,
    re-enable GitHub delivery and redeliver events from the gap as needed. Do **not**
    run both workers. Do the same for the new `sporevm` App (no legacy import needed).
 6. On an approved disposable PR, verify signed delivery, a real orb using
@@ -178,6 +173,40 @@ These are **operator steps requiring approval**, not automatic deployment action
    archival and usage. Check both organisations and denied/unmapped repositories.
    Only then retire the old deployment. No paid/live review or production cutover
    is implied by the local fake-provider tests.
+
+### One-off history import
+
+This is a cutover script, not a runtime feature. Build it from this checkout for
+the maintenance host's OS/architecture:
+
+```sh
+mise exec -- go build -tags=reviewimport -o /tmp/import-reviews ./docs/reviews/import.go
+```
+
+For the existing single-user deployment, use the primary `Database` path and its
+existing `GATEWAY_ENCRYPTION_KEY` environment variable. Do not put the key in
+command-line arguments. With **both services stopped**, run on the maintenance
+host that has the database and protected export:
+
+```sh
+/tmp/import-reviews -database /data/gateway.db -app lox-reviews < reviews.jsonl
+```
+
+The tool takes the gateway's database lock and reads its saved account identity
+and paused App configuration; it does not start workers or contact GitHub/Amp.
+It rejects active, foreign-installation and unapproved records, preserves checks,
+frozen context, results, thread IDs and usage, and never queues historical work.
+A partial failure reports the count; rerunning the export skips known deliveries.
+Raw legacy error text is deliberately left in the protected source backup rather
+than copied into the UI, since provider errors may contain credentials.
+Numeric old check IDs resolve only within their authenticated App. Pre-context
+legacy jobs remain visible but cannot be rerun with invented text.
+
+The importer and its tests are excluded from normal gateway builds. Before use,
+run `mise exec -- go test -tags=reviewimport ./internal/reviews -run TestLegacyOfflineImport`.
+No production-sized export has been rehearsed yet; allow for offline import time.
+
+### Rollback
 
 Rollback: pause gateway intake, resolve and stop outstanding Amp executions, drain
 cleanup, then stop its review worker before restoring old webhook routing and

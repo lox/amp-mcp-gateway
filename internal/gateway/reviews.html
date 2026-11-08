@@ -3,7 +3,6 @@
 <div class="heading"><div>{{if .ReviewEditing}}<a href="/integrations/reviews">← Reviews</a><h1>{{if .ReviewExisting}}Configure {{.ReviewApp.ID}}{{else}}Add review integration{{end}}</h1><p class="sub">Connect GitHub repositories to Amp reviews. This integration belongs to your gateway account.</p>{{else}}<a href="/integrations">← Integrations</a><h1>Reviews</h1><p class="sub">Manage your review integrations and follow their pull request reviews.</p>{{end}}</div>{{if not .ReviewEditing}}<a class="button primary" href="/integrations/reviews?new=1">Add review integration</a>{{end}}</div>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 {{if .Saved}}<p class="success" role="status">Review configuration saved. Existing jobs retain their frozen PR context; changed authorization cancels queued work.</p>{{end}}
-{{if .ReviewImported}}<p class="success" role="status">Imported {{.ReviewImported}} historical reviews. No reviews were queued.</p>{{end}}
 {{if .ReviewDemo}}<p class="note">Demo only · Use fake credentials. No reviews run and no GitHub or Amp requests are made.</p>{{end}}
 {{if .ReviewEditing}}
 <form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off">
@@ -41,7 +40,6 @@
 </fieldset>
 <div class="actions"><button class="primary">{{if .ReviewExisting}}Save changes{{else}}Create review integration{{end}}</button><a class="button" href="/integrations/reviews">Cancel</a></div>
 </form>
-{{if and .ReviewExisting (not .ReviewApp.Enabled)}}<details class="card"><summary>Import amp-reviewbot history</summary><p class="help">Export with <code>docs/reviews-export.sql</code> after draining the old service. JSONL, at most 32 MiB and 10,000 records. Re-import skips existing records; history never launches reviews.</p><form method="post" action="/integrations/reviews/import?app={{.ReviewApp.ID}}" enctype="multipart/form-data"><input type="hidden" name="app" value="{{.ReviewApp.ID}}"><label>Historical export<input type="file" name="export" accept=".jsonl,.ndjson,application/json" required></label><label><input type="checkbox" name="confirmed" required> The source is drained and this App uses the original execution account.</label><button>Import history</button></form></details>{{end}}
 {{else}}
 <div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">{{.Owner}} · {{len .Projects}} {{if eq (len .Projects) 1}}repository{{else}}repositories{{end}}</p><p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
 <section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>

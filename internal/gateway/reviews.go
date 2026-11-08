@@ -31,7 +31,6 @@ var reviewTemplateFuncs = template.FuncMap{
 func (g *Gateway) registerReviews(mux *http.ServeMux) {
 	mux.HandleFunc("GET /integrations/reviews", g.reviewsPage)
 	mux.HandleFunc("POST /integrations/reviews", g.saveReviews)
-	mux.HandleFunc("POST /integrations/reviews/import", g.importReviews)
 	mux.HandleFunc("POST /integrations/reviews/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if g.Reviews == nil {
 			http.Error(w, "Reviews unavailable", 503)
@@ -62,35 +61,6 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 
 func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) { g.renderReviews(w, r, "", nil) }
 
-func (g *Gateway) importReviews(w http.ResponseWriter, r *http.Request) {
-	if g.Reviews == nil {
-		http.Error(w, "Reviews unavailable", 503)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
-	if r.ParseMultipartForm(1<<20) != nil {
-		http.Error(w, "Invalid import (maximum 32 MiB)", 400)
-		return
-	}
-	defer r.MultipartForm.RemoveAll()
-	if r.PostForm.Get("confirmed") != "on" {
-		http.Error(w, "Confirm the source is drained and execution identity matches", 400)
-		return
-	}
-	file, _, err := r.FormFile("export")
-	if err != nil {
-		http.Error(w, "Choose a JSONL export", 400)
-		return
-	}
-	defer file.Close()
-	count, err := g.Reviews.ImportLegacy(r.Context(), r.PostForm.Get("app"), file)
-	if err != nil {
-		g.renderReviews(w, r, fmt.Sprintf("Imported %d records before stopping: %s. Re-import is safe.", count, err), nil)
-		return
-	}
-	http.Redirect(w, r, "/integrations/reviews?imported="+strconv.Itoa(count), http.StatusSeeOther)
-}
-
 func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message string, values *reviews.App) {
 	if g.Reviews == nil {
 		http.Error(w, "Reviews unavailable", 503)
@@ -112,7 +82,6 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		existing = existing || a.ID == selected.ID
 	}
 	editing := existing || values != nil || r.URL.Query().Get("new") == "1"
-	imported, _ := strconv.Atoi(r.URL.Query().Get("imported"))
 	projects, _ := json.MarshalIndent(selected.Projects, "", "  ")
 	if values != nil {
 		projects = []byte(r.PostForm.Get("projects"))
@@ -126,7 +95,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": apps, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing, "ReviewImported": imported, "ReviewProjects": string(projects), "ReviewRepositories": strings.Join(selected.Repositories, "\n"), "ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": apps, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing, "ReviewProjects": string(projects), "ReviewRepositories": strings.Join(selected.Repositories, "\n"), "ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {

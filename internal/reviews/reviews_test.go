@@ -698,40 +698,21 @@ func TestRecordRevisionFencesStaleWorker(t *testing.T) {
 	}
 }
 
-func TestLegacyImportAndNumericCheckRerun(t *testing.T) {
+func TestLegacyNumericCheckRerunAndQueueCapacity(t *testing.T) {
 	_, gh := newGitHub(t)
-	s, _, _, _ := fixtureService(t, "user", &fakeAmp{}, gh, semaphore.NewWeighted(4))
+	s, st, _, _ := fixtureService(t, "user", &fakeAmp{}, gh, semaphore.NewWeighted(4))
 	a := fixtureApp(t, "lox")
-	a.Enabled = false
 	if err := s.Save(t.Context(), a); err != nil {
 		t.Fatal(err)
 	}
 	p := fixturePull("lox/repo", 44)
-	entry := map[string]any{
-		"job":     map[string]any{"id": 17, "source_delivery_id": "old-delivery", "event_type": "pull_request.opened", "installation_id": 11, "repository_id": 44, "repository_full_name": "Lox/Repo", "pull_number": 7, "base_sha": p.Base.SHA, "head_sha": p.Head.SHA, "amp_project": "old/project", "pull_request_title": p.Title, "pull_request_body": p.Body, "base_ref": "main", "head_ref": "feature", "check_run_id": 101, "status": "succeeded", "created_at": "2026-10-01T01:02:03Z", "completed_at": "2026-10-01T01:03:03Z"},
-		"threads": []any{map[string]any{"thread_id": testThread, "amp_usage_usd": 0.25, "estimated_provider_cost_at_list_price_usd": 1.5, "usage_details": map[string]any{"inputTokens": 123, "outputTokens": 45, "requests": 6}, "archived_at": "2026-10-01T01:03:04Z"}},
-		"result":  map[string]any{"conclusion": "success", "fail_on": "high", "prompt_identifier": "legacy-prompt", "summary": "No issues", "findings": []any{}, "omitted_findings": 0},
-	}
-	raw, _ := json.Marshal(entry)
-	for i, want := range []int{1, 0} {
-		count, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw)))
-		if count != want || err != nil {
-			t.Fatalf("import %d: %d %v", i, count, err)
-		}
-	}
-	j := history(t, s)[0]
-	if j.Project != "old/project" || j.Context != p.job("lox/repo", 44).Context || !j.Threads[0].Archived || j.Threads[0].Usage.InputTokens != 123 || *j.Threads[0].Usage.ProviderEstimateUSD != 1.5 {
-		t.Fatal("historical data lost")
-	}
-	if err := s.Step(t.Context()); err != nil || history(t, s)[0].Status != "succeeded" {
-		t.Fatal("import queued work")
-	}
-	a.Enabled = true
-	if err := s.Save(t.Context(), a); err != nil {
+	j := p.job("lox/repo", 44)
+	j.ID, j.App, j.OwnerID = "legacy-lox-17", a.ID, "user"
+	j.InstallationID, j.CheckID = 11, 101
+	j.Project, j.Delivery, j.Status = "old/project", "old-delivery", "succeeded"
+	j.Created = time.Date(2026, 10, 1, 1, 2, 3, 0, time.UTC).UnixNano()
+	if err := st.InsertReview(t.Context(), j.record(), false); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw))); err == nil {
-		t.Fatal("import accepted for enabled App")
 	}
 	status := deliver(t, s, a, p, "legacy-rerun", "check_run", "rerequested", func(m map[string]any) {
 		m["check_run"] = map[string]any{"id": 101, "external_id": "17", "app": map[string]int{"id": 1}}
@@ -751,18 +732,12 @@ func TestLegacyImportAndNumericCheckRerun(t *testing.T) {
 	if got := deliver(t, s, a, p, "98", "pull_request", "opened", nil); got != 202 {
 		t.Fatalf("full queue rejected duplicate: %d", got)
 	}
-	a.Enabled = false
-	if err := s.Save(t.Context(), a); err != nil {
-		t.Fatal(err)
+	if err := st.InsertReview(t.Context(), j.record(), false); !errors.Is(err, store.ErrReviewConflict) {
+		t.Fatalf("full queue rejected duplicate history: %v", err)
 	}
-	if count, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw))); err != nil || count != 0 {
-		t.Fatalf("full queue blocked re-import: %d %v", count, err)
-	}
-	old := entry["job"].(map[string]any)
-	old["id"], old["source_delivery_id"], old["pull_number"] = 18, "another-old-delivery", 900
-	raw, _ = json.Marshal(entry)
-	if count, err := s.ImportLegacy(t.Context(), a.ID, strings.NewReader(string(raw))); err != nil || count != 1 {
-		t.Fatalf("full queue blocked historical import: %d %v", count, err)
+	j.ID, j.Delivery, j.Number = "legacy-lox-18", "another-old-delivery", 900
+	if err := st.InsertReview(t.Context(), j.record(), false); err != nil {
+		t.Fatalf("full queue blocked historical insertion: %v", err)
 	}
 }
 

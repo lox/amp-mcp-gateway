@@ -1,3 +1,5 @@
+//go:build reviewimport
+
 package reviews
 
 import (
@@ -7,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,24 +17,42 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 )
 
-// ImportLegacy consumes the JSONL export in docs/reviews-export.sql. It is
-// resumable and never overwrites a record or queues historical work. The App
-// must be paused and bound to the original installation and execution account.
-func (s *Service) ImportLegacy(ctx context.Context, app string, reader io.Reader) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.apps[app]
-	if !ok || a.Enabled {
+// ImportLegacy is an offline cutover tool, excluded from normal gateway builds.
+// It reads the existing account identity/configuration and takes the same process
+// lock as the gateway. It never starts workers or calls GitHub/Amp.
+func ImportLegacy(ctx context.Context, database, key, app string, reader io.Reader) (int, error) {
+	if info, err := os.Stat(database); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return 0, errors.New("destination must be an existing gateway account database")
+	}
+	st, err := store.Open(database, key)
+	if err != nil {
+		return 0, err
+	}
+	defer st.Close()
+	owner, err := st.LoadToken(ctx, "account-identity")
+	if err != nil || len(owner) == 0 {
+		return 0, errors.New("destination has no readable account identity")
+	}
+	raw, err := st.LoadToken(ctx, configKey)
+	if err != nil {
+		return 0, err
+	}
+	var apps map[string]App
+	if json.Unmarshal(raw, &apps) != nil {
+		return 0, errors.New("destination has no valid reviews configuration")
+	}
+	a, ok := apps[app]
+	if !ok || a.ID != app || a.Enabled {
 		return 0, errors.New("configure and pause the destination App before importing")
+	}
+	if err := st.InitReviews(ctx); err != nil {
+		return 0, err
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), 2<<20)
 	count, line := 0, 0
 	for scanner.Scan() {
 		line++
-		if line > 10000 {
-			return count, errors.New("import at most 10000 records per file")
-		}
 		var entry struct {
 			Job struct {
 				ID           int64
@@ -79,7 +100,7 @@ func (s *Service) ImportLegacy(ctx context.Context, app string, reader io.Reader
 		}
 		old := entry.Job
 		old.Repository = strings.ToLower(old.Repository)
-		j := Job{ID: "legacy-" + a.ID + "-" + strconv.FormatInt(old.ID, 10), App: a.ID, OwnerID: s.owner, Binding: a.binding(), ExecutionBinding: hash(a.AmpKey), InstallationID: old.Installation, RepositoryID: old.RepositoryID, Repository: old.Repository, Number: old.Number, BaseSHA: old.BaseSHA, HeadSHA: old.HeadSHA, Project: old.Project, Context: Context{old.Title, old.Body, old.BaseRef, old.HeadRef}, Event: old.Event, Delivery: old.Delivery, Status: old.Status, Phase: "imported", CheckID: old.CheckID, Attempts: old.Attempts, Created: old.Created.UnixNano(), Completed: old.Completed.Unix(), Revision: 1, FailOn: a.FailOn, Visibility: a.Visibility, TimeoutMinutes: a.TimeoutMinutes, PromptVersion: "legacy"}
+		j := Job{ID: "legacy-" + a.ID + "-" + strconv.FormatInt(old.ID, 10), App: a.ID, OwnerID: string(owner), Binding: a.binding(), ExecutionBinding: hash(a.AmpKey), InstallationID: old.Installation, RepositoryID: old.RepositoryID, Repository: old.Repository, Number: old.Number, BaseSHA: old.BaseSHA, HeadSHA: old.HeadSHA, Project: old.Project, Context: Context{old.Title, old.Body, old.BaseRef, old.HeadRef}, Event: old.Event, Delivery: old.Delivery, Status: old.Status, Phase: "imported", CheckID: old.CheckID, Attempts: old.Attempts, Created: old.Created.UnixNano(), Completed: old.Completed.Unix(), Revision: 1, FailOn: a.FailOn, Visibility: a.Visibility, TimeoutMinutes: a.TimeoutMinutes, PromptVersion: "legacy"}
 		if old.ID <= 0 || old.Installation != a.InstallationID || !a.allows(old.Repository) || !shaPattern.MatchString(old.BaseSHA) || !shaPattern.MatchString(old.HeadSHA) || old.Number <= 0 || old.RepositoryID <= 0 || old.Created.IsZero() || (old.Status != "succeeded" && old.Status != "failed" && old.Status != "cancelled") {
 			return count, fmt.Errorf("line %d is active, invalid or outside the approved installation/repositories; drain the source first", line)
 		}
@@ -104,7 +125,7 @@ func (s *Service) ImportLegacy(ctx context.Context, app string, reader io.Reader
 			}
 			j.Result, j.Conclusion, j.FailOn, j.PromptVersion, j.Omitted = &result, r.Conclusion, r.FailOn, r.Prompt, r.Omitted
 		}
-		err := s.store.InsertReview(ctx, j.record(), false)
+		err := st.InsertReview(ctx, j.record(), false)
 		if errors.Is(err, store.ErrReviewConflict) {
 			continue
 		}

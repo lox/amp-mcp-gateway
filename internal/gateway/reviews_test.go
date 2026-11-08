@@ -34,7 +34,7 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	}
 	private := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	values := url.Values{"id": {"lox"}, "owner": {"lox"}, "app_id": {"1"}, "installation_id": {"11"}, "private_key": {private}, "webhook_secret": {"short"}, "amp_key": {"fake-execution-key"}, "repositories": {"lox/repo"}, "projects": {`{"lox/repo":"lox/repo"}`}, "fail_on": {"high"}, "visibility": {"private"}, "timeout": {"30"}, "enabled": {"on"}}
-	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/import", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel"} {
+	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel"} {
 		if w := formRequest(h, nil, "POST", path, values); w.Code != http.StatusSeeOther {
 			t.Fatalf("anonymous %s: %d", path, w.Code)
 		}
@@ -75,8 +75,11 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 		t.Fatal("blank secret fields did not retain credentials")
 	}
 	w = formRequest(h, cookie, "GET", "/integrations/reviews?app=lox", nil)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Import amp-reviewbot history") || strings.Contains(w.Body.String(), "fake-execution-key") || strings.Contains(w.Body.String(), private) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Configure lox") || strings.Contains(w.Body.String(), "Import amp-reviewbot history") || strings.Contains(w.Body.String(), "fake-execution-key") || strings.Contains(w.Body.String(), private) {
 		t.Fatal("configured page lost state or leaked credentials")
+	}
+	if w := formRequest(h, cookie, "POST", "/integrations/reviews/import", nil); w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("history import is still exposed over HTTP: %d", w.Code)
 	}
 	for _, tc := range []struct {
 		path    string
