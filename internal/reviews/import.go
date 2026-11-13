@@ -37,12 +37,12 @@ func ImportLegacy(ctx context.Context, database, key, app string, reader io.Read
 	if err != nil {
 		return 0, err
 	}
-	var apps map[string]App
-	if json.Unmarshal(raw, &apps) != nil {
+	config, err := readConfiguration(raw)
+	if err != nil {
 		return 0, errors.New("destination has no valid reviews configuration")
 	}
-	a, ok := apps[app]
-	if !ok || a.ID != app || a.Enabled {
+	in, ok := config.Integrations[app]
+	if !ok || in.ID != app || in.Enabled {
 		return 0, errors.New("configure and pause the destination App before importing")
 	}
 	if err := st.InitReviews(ctx); err != nil {
@@ -100,7 +100,12 @@ func ImportLegacy(ctx context.Context, database, key, app string, reader io.Read
 		}
 		old := entry.Job
 		old.Repository = strings.ToLower(old.Repository)
+		a, approved := config.resolve(app, old.Installation, old.Repository)
+		if !approved || a.RepositoryID != old.RepositoryID || a.RepositoryID <= 0 {
+			return count, fmt.Errorf("line %d is outside the verified repository configuration", line)
+		}
 		j := Job{ID: "legacy-" + a.ID + "-" + strconv.FormatInt(old.ID, 10), App: a.ID, OwnerID: string(owner), Binding: a.binding(), ExecutionBinding: hash(a.AmpKey), InstallationID: old.Installation, RepositoryID: old.RepositoryID, Repository: old.Repository, Number: old.Number, BaseSHA: old.BaseSHA, HeadSHA: old.HeadSHA, Project: old.Project, Context: Context{old.Title, old.Body, old.BaseRef, old.HeadRef}, Event: old.Event, Delivery: old.Delivery, Status: old.Status, Phase: "imported", CheckID: old.CheckID, Attempts: old.Attempts, Created: old.Created.UnixNano(), Completed: old.Completed.Unix(), Revision: 1, FailOn: a.FailOn, Visibility: a.Visibility, TimeoutMinutes: a.TimeoutMinutes, PromptVersion: "legacy"}
+		j.ExecutionCredential = a.ExecutionCredential
 		if old.ID <= 0 || old.Installation != a.InstallationID || !a.allows(old.Repository) || !shaPattern.MatchString(old.BaseSHA) || !shaPattern.MatchString(old.HeadSHA) || old.Number <= 0 || old.RepositoryID <= 0 || old.Created.IsZero() || (old.Status != "succeeded" && old.Status != "failed" && old.Status != "cancelled") {
 			return count, fmt.Errorf("line %d is active, invalid or outside the approved installation/repositories; drain the source first", line)
 		}

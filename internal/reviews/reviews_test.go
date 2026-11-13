@@ -63,6 +63,7 @@ type fakeGitHub struct {
 	pulls                       map[string]pull
 	created, finished           int
 	loseCreate, losePublish     bool
+	sharedApp                   bool
 	rejectCreate, rejectPublish int
 }
 
@@ -86,6 +87,9 @@ func newGitHub(t *testing.T) (*fakeGitHub, *GitHub) {
 			if strings.Contains(r.URL.Path, "/22") {
 				owner, appID, installation = "sporevm", 2, 22
 			}
+			if f.sharedApp {
+				appID = 1
+			}
 			if strings.HasSuffix(r.URL.Path, "/access_tokens") {
 				var input struct{ Repositories []string }
 				_ = json.NewDecoder(r.Body).Decode(&input)
@@ -95,10 +99,15 @@ func newGitHub(t *testing.T) (*fakeGitHub, *GitHub) {
 				write(map[string]any{"token": "token-" + owner})
 				return
 			}
-			write(map[string]any{"id": installation, "app_id": appID, "account": map[string]string{"login": owner}})
+			write(map[string]any{"id": installation, "app_id": appID, "account": map[string]any{"login": owner, "id": installation + 100}})
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+		if len(parts) == 2 {
+			p := f.pulls[parts[0]+"/"+parts[1]]
+			write(map[string]any{"id": p.Base.Repo.ID, "full_name": p.Base.Repo.FullName})
+			return
+		}
 		if len(parts) < 3 {
 			http.NotFound(w, r)
 			return
@@ -135,6 +144,9 @@ func newGitHub(t *testing.T) (*fakeGitHub, *GitHub) {
 			appID := 1
 			if parts[0] == "sporevm" {
 				appID = 2
+			}
+			if f.sharedApp {
+				appID = 1
 			}
 			input["app"] = map[string]int{"id": appID}
 			f.checks[id] = input
@@ -193,7 +205,17 @@ func fixtureApp(t *testing.T, owner string) App {
 	if owner == "sporevm" {
 		app, installation = 2, 22
 	}
-	return App{ID: owner, AppID: app, InstallationID: installation, Owner: owner, PrivateKey: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})), WebhookSecret: "fake-webhook-secret-" + owner, AmpKey: "fake-execution-" + owner, Repositories: []string{owner + "/repo"}, Projects: map[string]string{owner + "/repo": "workspace/" + owner}, Enabled: true, FailOn: "high", Visibility: "private", TimeoutMinutes: 5}
+	return App{ID: owner, AppID: app, InstallationID: installation, GitHubOwnerID: installation + 100, RepositoryID: installation + 33, ExecutionCredential: owner, Owner: owner, PrivateKey: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})), WebhookSecret: "fake-webhook-secret-" + owner, AmpKey: "fake-execution-" + owner, Projects: map[string]string{owner + "/repo": "workspace/" + owner}, Enabled: true, FailOn: "high", Visibility: "private", TimeoutMinutes: 5}
+}
+
+// Save keeps the lifecycle fixtures concise while exercising the real config API.
+func (s *Service) Save(ctx context.Context, a App) error {
+	i := Installation{ID: a.InstallationID, Owner: a.Owner, ExecutionCredential: a.ExecutionCredential}
+	for repo, project := range a.Projects {
+		i.Repositories = append(i.Repositories, Repository{Name: repo, Project: project, Enabled: true})
+	}
+	return s.SaveIntegration(ctx, Integration{ID: a.ID, AppID: a.AppID, PrivateKey: a.PrivateKey, WebhookSecret: a.WebhookSecret, Enabled: a.Enabled,
+		Settings: Settings{FailOn: a.FailOn, Visibility: a.Visibility, TimeoutMinutes: a.TimeoutMinutes}, Installations: []Installation{i}}, map[string]string{a.ExecutionCredential: a.AmpKey})
 }
 
 func fixtureService(t *testing.T, owner string, amp *fakeAmp, gh *GitHub, slots *semaphore.Weighted) (*Service, *store.Store, string, string) {
@@ -760,8 +782,8 @@ func TestConfigurationRevocationSurvivesBrowserDisconnect(t *testing.T) {
 		t.Fatal("configuration commit did not trigger disconnect")
 	}
 	raw, err := st.LoadToken(t.Context(), configKey)
-	var saved map[string]App
-	if err != nil || json.Unmarshal(raw, &saved) != nil || saved[a.ID].Enabled {
+	var saved Configuration
+	if err != nil || json.Unmarshal(raw, &saved) != nil || saved.Integrations[a.ID].Enabled {
 		t.Fatal("revocation was not persisted")
 	}
 	if execution.Err() == nil {

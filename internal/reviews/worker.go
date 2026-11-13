@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -276,7 +275,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) (persistErr error) 
 // pages and ten new jobs per pass. It never cancels work using a stale listing.
 func (s *Service) Reconcile(ctx context.Context) {
 	s.mu.Lock()
-	apps := slices.Collect(maps.Values(s.apps))
+	apps := s.config.apps()
 	s.mu.Unlock()
 	queued := 0
 	for _, a := range apps {
@@ -305,12 +304,12 @@ func (s *Service) Reconcile(ctx context.Context) {
 					continue
 				}
 				j := p.job(repo, p.Base.Repo.ID)
-				if !validJob(j) || !strings.EqualFold(p.Base.Repo.FullName, repo) {
+				if !validJob(j) || j.RepositoryID != a.RepositoryID || !strings.EqualFold(p.Base.Repo.FullName, repo) {
 					continue
 				}
 				j.Event, j.Delivery = "reconcile.missing_review", "reconcile:"+j.headKey()
 				s.mu.Lock()
-				current, ok := s.apps[a.ID]
+				current, ok := s.config.resolve(a.ID, a.InstallationID, repo)
 				if ok && current.binding() == a.binding() {
 					err = s.enqueue(ctx, a, j, true)
 				} else {
@@ -349,12 +348,20 @@ func (s *Service) Maintain(ctx context.Context) error {
 			return err
 		}
 		s.mu.Lock()
-		a, ok := s.apps[j.App]
+		a, ok := s.config.resolve(j.App, j.InstallationID, j.Repository)
+		credential := j.ExecutionCredential
+		if credential == "" {
+			credential = j.App
+		} // Pre-v2 jobs used an App-specific key.
+		key := s.config.Credentials[credential]
 		s.mu.Unlock()
-		if !ok || j.OwnerID != s.owner || hash(a.AmpKey) != j.ExecutionBinding {
+		if key == "" || j.OwnerID != s.owner || hash(key) != j.ExecutionBinding {
 			continue
 		}
 		if j.Status == "unknown" {
+			if !ok {
+				continue
+			}
 			if err := s.recover(ctx, a, &j); err != nil {
 				return err
 			}
@@ -365,7 +372,7 @@ func (s *Service) Maintain(ctx context.Context) error {
 		for i := range j.Threads {
 			t := &j.Threads[i]
 			if !t.Archived {
-				if err := s.amp.Archive(ctx, a.AmpKey, t.ID); err != nil {
+				if err := s.amp.Archive(ctx, key, t.ID); err != nil {
 					continue
 				}
 				t.Archived = true
@@ -374,7 +381,7 @@ func (s *Service) Maintain(ctx context.Context) error {
 				}
 			}
 			if t.Usage == nil && t.UsageError == "" {
-				usage, err := s.amp.Usage(ctx, a.AmpKey, t.ID)
+				usage, err := s.amp.Usage(ctx, key, t.ID)
 				if err != nil {
 					t.UsageError = "Usage unavailable"
 				} else {

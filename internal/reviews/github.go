@@ -132,27 +132,42 @@ func (g *GitHub) request(ctx context.Context, token, method, path string, input,
 	return errors.New("GitHub read retries exhausted")
 }
 
+func (g *GitHub) verifyInstallation(ctx context.Context, a App) (int64, error) {
+	jwt, err := appJWT(a)
+	if err != nil {
+		return 0, err
+	}
+	installationPath := fmt.Sprintf("/app/installations/%d", a.InstallationID)
+	var installation struct {
+		ID      int64
+		AppID   int64 `json:"app_id"`
+		Account struct {
+			Login string
+			ID    int64
+		}
+		SuspendedAt *string `json:"suspended_at"`
+	}
+	if err := g.request(ctx, jwt, "GET", installationPath, nil, &installation); err != nil {
+		return 0, err
+	}
+	if installation.ID != a.InstallationID || installation.AppID != a.AppID || installation.Account.ID <= 0 || a.GitHubOwnerID != 0 && installation.Account.ID != a.GitHubOwnerID || !strings.EqualFold(installation.Account.Login, a.Owner) || installation.SuspendedAt != nil {
+		return 0, errors.New("GitHub installation does not match approved App owner")
+	}
+	return installation.Account.ID, nil
+}
+
 func (g *GitHub) session(ctx context.Context, a App, repo string) (*githubSession, error) {
 	if !a.allows(repo) {
 		return nil, errors.New("repository not approved")
+	}
+	if _, err := g.verifyInstallation(ctx, a); err != nil {
+		return nil, err
 	}
 	jwt, err := appJWT(a)
 	if err != nil {
 		return nil, err
 	}
 	installationPath := fmt.Sprintf("/app/installations/%d", a.InstallationID)
-	var installation struct {
-		ID          int64
-		AppID       int64 `json:"app_id"`
-		Account     struct{ Login string }
-		SuspendedAt *string `json:"suspended_at"`
-	}
-	if err := g.request(ctx, jwt, "GET", installationPath, nil, &installation); err != nil {
-		return nil, err
-	}
-	if installation.ID != a.InstallationID || installation.AppID != a.AppID || !strings.EqualFold(installation.Account.Login, a.Owner) || installation.SuspendedAt != nil {
-		return nil, errors.New("GitHub installation does not match approved App owner")
-	}
 	_, name, _ := strings.Cut(repo, "/")
 	var token struct{ Token string }
 	// Restrict the installation token to this one approved repository.

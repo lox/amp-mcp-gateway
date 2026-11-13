@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,27 +27,23 @@ var (
 	threadPattern = regexp.MustCompile(`^T-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
-// App belongs to one individual gateway account, never implicitly to an org.
-// Credentials live only in the encrypted configuration, not job snapshots.
+// App is an ephemeral repository binding resolved from encrypted configuration.
 type App struct {
 	ID                                string
 	AppID, InstallationID             int64
+	GitHubOwnerID, RepositoryID       int64
+	ExecutionCredential               string
 	Owner                             string
 	PrivateKey, WebhookSecret, AmpKey string
-	// Repositories explicitly authorizes names; OwnerApproved authorizes all
-	// repositories under Owner. Projects always requires an exact mapping.
-	Repositories       []string
-	OwnerApproved      bool
-	Projects           map[string]string
-	Enabled            bool
-	FailOn, Visibility string
-	TimeoutMinutes     int
+	Projects                          map[string]string
+	Enabled                           bool
+	FailOn, Visibility                string
+	TimeoutMinutes                    int
 }
 
 func (a App) allows(repo string) bool {
 	owner, _, ok := strings.Cut(strings.ToLower(repo), "/")
-	return ok && owner == a.Owner && a.Projects[strings.ToLower(repo)] != "" &&
-		(a.OwnerApproved || slices.Contains(a.Repositories, strings.ToLower(repo)))
+	return ok && owner == a.Owner && a.Projects[strings.ToLower(repo)] != ""
 }
 
 func (a App) binding() string { return hash(a) }
@@ -97,8 +92,9 @@ type Job struct {
 	FailOn, Visibility, PromptVersion     string
 	TimeoutMinutes                        int
 	// Cleanup never borrows a replacement execution identity's credential.
-	ExecutionBinding string
-	Revision         int64 `json:"-"`
+	ExecutionBinding    string
+	ExecutionCredential string
+	Revision            int64 `json:"-"`
 }
 
 func (j Job) headKey() string { return hash([]any{j.RepositoryID, j.Number, j.HeadSHA}) }
@@ -126,7 +122,7 @@ type Service struct {
 	mu           sync.Mutex
 	owner        string
 	store        *store.Store
-	apps         map[string]App
+	config       Configuration
 	amp          Executor
 	github       *GitHub
 	slots        *semaphore.Weighted
@@ -140,7 +136,7 @@ func New(ctx context.Context, owner string, st *store.Store, amp Executor, githu
 	if owner == "" || amp == nil || github == nil || slots == nil {
 		return nil, errors.New("reviews requires an owner and execution backends")
 	}
-	s := &Service{owner: owner, store: st, apps: map[string]App{}, amp: amp, github: github, slots: slots}
+	s := &Service{owner: owner, store: st, amp: amp, github: github, slots: slots}
 	if err := st.InitReviews(ctx); err != nil {
 		return nil, err
 	}
@@ -148,10 +144,9 @@ func New(ctx context.Context, owner string, st *store.Store, amp Executor, githu
 	if err != nil {
 		return nil, err
 	}
-	if len(b) != 0 {
-		if err := json.Unmarshal(b, &s.apps); err != nil {
-			return nil, errors.New("invalid reviews configuration")
-		}
+	s.config, err = readConfiguration(b)
+	if err != nil {
+		return nil, errors.New("invalid reviews configuration")
 	}
 	if err := st.RecoverReviews(ctx); err != nil {
 		return nil, err
@@ -162,115 +157,14 @@ func New(ctx context.Context, owner string, st *store.Store, amp Executor, githu
 // Route identifies this account in webhook URLs; it is a routing hint, not auth.
 func (s *Service) Route() string { return hash(s.owner) }
 
-// Apps returns presentation-safe configuration. Secret values never leave here.
-func (s *Service) Apps() []App {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var apps []App
-	for _, a := range s.apps {
-		a.PrivateKey, a.WebhookSecret, a.AmpKey = "", "", ""
-		a.Repositories, a.Projects = slices.Clone(a.Repositories), maps.Clone(a.Projects)
-		apps = append(apps, a)
-	}
-	slices.SortFunc(apps, func(a, b App) int { return strings.Compare(a.ID, b.ID) })
-	return apps
-}
-
-// Save installs a browser-approved configuration; blank secrets retain their
-// previous values. Existing App/installation/owner identity cannot be reassigned.
-func (s *Service) Save(ctx context.Context, a App) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a.Owner = strings.ToLower(strings.TrimSpace(a.Owner))
-	if old, ok := s.apps[a.ID]; ok {
-		if old.AppID != a.AppID || old.InstallationID != a.InstallationID || old.Owner != a.Owner {
-			return errors.New("create a new integration ID for a different App, installation or owner")
-		}
-		if a.PrivateKey == "" {
-			a.PrivateKey = old.PrivateKey
-		}
-		if a.WebhookSecret == "" {
-			a.WebhookSecret = old.WebhookSecret
-		}
-		if a.AmpKey == "" {
-			a.AmpKey = old.AmpKey
-		}
-	} else if len(s.apps) >= 10 {
-		return errors.New("at most ten review Apps per account")
-	}
-	if !namePattern.MatchString(a.ID) || !namePattern.MatchString(a.Owner) || a.AppID <= 0 || a.InstallationID <= 0 {
-		return errors.New("invalid App identity")
-	}
-	if len(a.WebhookSecret) < 16 || len(a.WebhookSecret) > 1024 || len(a.AmpKey) < 1 || len(a.AmpKey) > 4096 {
-		return errors.New("supply a webhook secret (16–1024 bytes) and an Amp execution key")
-	}
-	if _, err := privateKey(a.PrivateKey); err != nil {
-		return err
-	}
-	if severityRank(a.FailOn) < 0 || (a.Visibility != "private" && a.Visibility != "workspace") || a.TimeoutMinutes < 5 || a.TimeoutMinutes > 120 {
-		return errors.New("choose a severity, private/workspace visibility, and a 5–120 minute timeout")
-	}
-	if len(a.Projects) == 0 || len(a.Projects) > 100 || len(a.Repositories) > 100 {
-		return errors.New("configure 1–100 exact repository/project mappings")
-	}
-	projects := map[string]string{}
-	for repo, project := range a.Projects {
-		repo = strings.ToLower(strings.TrimSpace(repo))
-		project = strings.TrimSpace(project)
-		if !validRepository(repo) || !strings.HasPrefix(repo, a.Owner+"/") || !validRepository(project) {
-			return errors.New("repositories must belong to the App owner; Amp projects must be namespace/name")
-		}
-		if _, ok := projects[repo]; ok {
-			return errors.New("duplicate project mapping")
-		}
-		projects[repo] = project
-	}
-	a.Projects = projects
-	a.Repositories = slices.Clone(a.Repositories)
-	for i, repo := range a.Repositories {
-		repo = strings.ToLower(strings.TrimSpace(repo))
-		if !validRepository(repo) || !strings.HasPrefix(repo, a.Owner+"/") {
-			return errors.New("approved repositories must belong to the App owner")
-		}
-		a.Repositories[i] = repo
-	}
-	if !a.OwnerApproved && len(a.Repositories) == 0 {
-		return errors.New("explicitly approve repositories or the owner")
-	}
-	// Resolve cancellation before committing. A disconnected browser must not
-	// prevent revocation after the new configuration has been persisted.
-	cancelActive := false
-	if s.activeCancel != nil {
-		j, err := s.get(ctx, s.activeID)
-		if err != nil {
-			return err
-		}
-		cancelActive = j.App == a.ID && j.Binding != a.binding()
-	}
-	next := maps.Clone(s.apps)
-	next[a.ID] = a
-	b, err := json.Marshal(next)
-	if err == nil {
-		err = s.store.SaveToken(ctx, configKey, b)
-	}
-	if err != nil {
-		return err
-	}
-	s.apps = next
-	if cancelActive {
-		s.activeCancel()
-	}
-	return nil
-}
-
 func validRepository(repo string) bool {
 	owner, name, ok := strings.Cut(repo, "/")
 	return ok && namePattern.MatchString(owner) && namePattern.MatchString(name) && name != "." && name != ".."
 }
 
 func (s *Service) authorized(j Job) (App, bool) {
-	a, ok := s.apps[j.App]
-	return a, ok && j.OwnerID == s.owner && a.Enabled && a.binding() == j.Binding && a.InstallationID == j.InstallationID && a.allows(j.Repository)
+	a, ok := s.config.resolve(j.App, j.InstallationID, j.Repository)
+	return a, ok && j.OwnerID == s.owner && a.Enabled && a.RepositoryID == j.RepositoryID && a.binding() == j.Binding
 }
 
 func (s *Service) update(ctx context.Context, j *Job) error {
@@ -332,6 +226,7 @@ func (s *Service) enqueue(ctx context.Context, a App, j Job, missing bool) error
 	j.Status, j.Created, j.Revision = "queued", time.Now().UnixNano(), 1
 	j.FailOn, j.Visibility, j.TimeoutMinutes = a.FailOn, a.Visibility, a.TimeoutMinutes
 	j.ExecutionBinding = hash(a.AmpKey)
+	j.ExecutionCredential = a.ExecutionCredential
 	j.PromptVersion = "gateway-review-v1"
 	return s.store.InsertReview(ctx, j.record(), missing)
 }
@@ -353,8 +248,8 @@ func (s *Service) rerun(ctx context.Context, id, delivery string, ack bool, chec
 	if err != nil {
 		return err
 	}
-	a, ok := s.apps[j.App]
-	if !ok || !a.Enabled || !a.allows(j.Repository) || j.InstallationID != a.InstallationID || (app != "" && (app != j.App || checkID != j.CheckID)) {
+	a, ok := s.config.resolve(j.App, j.InstallationID, j.Repository)
+	if !ok || !a.Enabled || a.RepositoryID != j.RepositoryID || (app != "" && (app != j.App || checkID != j.CheckID)) {
 		return errors.New("review not authorized")
 	}
 	if !validJob(j) {

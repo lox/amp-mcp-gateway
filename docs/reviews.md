@@ -12,44 +12,71 @@ login controls configuration, cancellation and manual reruns. An account
 can administer several Apps; other gateway users cannot see or operate them.
 There is no implicit organisation membership, shared admin role or delegation.
 
-Use **separate private GitHub Apps** for `lox` and `sporevm`. The existing
-[amp-reviewbot App](https://github.com/apps/amp-reviewbot) stays private to `lox`.
-Each configuration binds one App ID, installation ID and approved owner. Those
-identities cannot be reassigned under the same integration ID. A webhook signature
-only authenticates the App: installation, owner, repository approval and an exact
-project mapping must also match. The installation API verifies the installed App
-and owner before issuing a token restricted to that repository.
+Use **one public GitHub App**, with separate explicitly approved installations for
+`lox` and `sporevm`. Private Apps still work, but can only be installed on their
+owning account. Each integration stores one App ID, private key, webhook secret
+and webhook URL. Its installations select a named execution credential and contain
+repository/project rows. Enabling a row is the repository approval: there is no
+second allowlist, owner-wide approval or automatic enrolment.
+
+A webhook signature authenticates the App, not permission to spend credits.
+Intake additionally matches the approved installation, repository name and numeric
+repository ID before recording work. GitHub verifies new installation owner IDs
+and repository IDs on save; subsequent execution verifies the App/installation/
+owner again and uses a token restricted to that repository. Repository recreation
+or transfer does not inherit approval. Unknown installations and repositories are
+rejected without creating jobs. All installations of an App use its one webhook
+URL; the account segment routes to an isolated gateway account, never grants access.
 
 The gateway's retained browser OAuth grant is **not an execution credential**.
-Supply a separate Amp API key, from the account authorised to spend credits and
-launch orbs in every mapped project. It can be a different execution account from
-the gateway administrator; that is an explicit delegation by the administrator.
-Use separate keys/accounts for different organisational trust boundaries. The
-gateway does not prove the key's owner or introspect its scopes before launch.
+Use an [Amp service account](https://ampcode.com/docs/collaborate/workspaces#service-accounts)
+API key, authorised to launch orbs in the mapped projects. A workspace admin creates
+it under **Workspace Settings → Service Accounts → Generate an API Key**. This
+requires Enterprise, or Team with a payment method. Threads belong to the service
+account and usage is billed to its workspace. Connect its GitHub access separately
+so the orb can clone the mapped repositories; gateway App credentials never supply
+that access. Ensure the execution account loads the pinned review-mode plugin.
+
+Store the key once under a name such as `reviews-bot`; each installation explicitly
+selects it. Both installations can share one credential, or use separate service
+accounts for different trust/billing boundaries. Personal Amp API keys also work.
+The gateway does not prove the key's owner or introspect its scopes before launch.
+Keep **Members Can Drive Threads** off unless workspace members should be able to
+use the account's connected access. When enabled, new service-account orb threads
+are workspace-shared and multiplayer; do not assume the gateway's visibility
+setting overrides Amp workspace policy.
 
 All configuration and credentials have one source of truth: the encrypted
-`reviews/config/v1` record in the owner's database. Job snapshots contain settings,
-identity bindings and PR context, never keys. No reviews environment-variable
-configuration or second management app exists. Blank secret fields retain stored
-values; saving changed settings fences queued work and requests cancellation of
-active work. Once the save commits, cancellation does not depend on the browser
-request remaining connected. Drain cleanup before rotating an execution key: old
-jobs never borrow the replacement key to archive threads or read usage.
+`reviews/config/v1` record in the owner's database (payload version 2). App keys
+live on integrations; execution keys live in the account's named credential map,
+never duplicated per installation. Job snapshots contain settings, identity and
+execution-credential bindings and PR context, never keys. No reviews environment
+configuration or second management app exists. Blank secret fields retain values.
+Settings default at integration level, with optional repository overrides.
+Changes fence only affected queued/running jobs; a shared key change fences all
+jobs using that key. Committed revocation does not depend on the browser remaining
+connected. GitHub identity verification does not hold the execution mutex; a
+concurrent config save rejects the stale candidate rather than overwriting it.
+Pausing/removing already verified configuration needs no GitHub request.
+
+Removing an installation or repository retains history and cleanup access to its
+original named execution key. Drain cleanup before rotating that key: old jobs
+never borrow a replacement to archive threads or read usage. Saved execution
+credentials are retained even when no installation currently selects them.
 
 ## Configure a review integration
 
-1. Install a private GitHub App owned by the relevant account/organisation on the
-   selected repositories. Required repository permissions: **Checks: read/write**,
+1. Install the GitHub App on selected repositories. Required repository permissions: **Checks: read/write**,
    **Contents: read**, **Pull requests: read** (plus GitHub's mandatory metadata
    read). Subscribe to **Pull request** and **Check run** events.
 2. In **Integrations → Reviews**, choose **Add review integration**. The overview
    shows existing integrations and review history; **Configure** opens an existing
-   integration. In the setup form, create a paused configuration with its App ID,
-   installation ID, PEM RSA private key, webhook secret and separate Amp execution
-   API key. Use fake credentials only in demo mode; demo never runs review workers.
-3. Approve specific `owner/repo` names, or explicitly approve the entire owner.
-   Either choice still requires an exact repository → Amp `namespace/project`
-   mapping. The mapped project must contain that repository, grant the execution
+   integration. Store the App ID, PEM private key and webhook secret once. Add a
+   named Amp execution credential, then installation sections with their owner,
+   installation ID and chosen credential. Use fake credentials only in demo mode;
+   demo saves unverified paused drafts and never calls GitHub or Amp.
+3. Add individual `owner/repo` → Amp `namespace/project` rows, then explicitly
+   enable the desired rows. New rows start disabled. The mapped project must contain that repository, grant the execution
    account access and allow fetching the exact PR commits, including fork heads.
 4. Install [pinned-models.js](reviews/pinned-models.js) in the execution account's
    **User or Workspace Plugins repository** (once, not additionally in each
@@ -61,8 +88,10 @@ jobs never borrow the replacement key to archive threads or read usage.
    this feature never changes global plugins.
 5. Copy the account/App-specific webhook URL displayed after saving into the App
    settings. A signed ping verifies delivery even while paused, but does not
-   authorise repositories. Select severity threshold, private/workspace thread
-   visibility and a 5–120 minute timeout, then enable intake and execution.
+   authorise repositories. Select default severity threshold, private/workspace
+   visibility and a 5–120 minute timeout, then enable the integration. Repository
+   rows may override these defaults. Do not make the live legacy App public until
+   the authorized gateway intake has been deployed and verified.
 
 Enabling also scans **all approved, mapped repositories**, not only repositories
 already seen in webhooks. Review project setup runs before the prompt: keep setup,
@@ -91,7 +120,9 @@ operator control.
   reauthorising against current mappings/settings. Superseded heads do not execute.
 - Persist and atomically claim before dispatch. One active review per gateway
   account, four host slots with FIFO waiters, at most 100 queued/running jobs and
-  ten Apps per account. Apps in one account share its slot. No replicas: the
+  ten Apps per account. Each App supports twenty installations, each with at most
+  one hundred repository rows; an account stores at most twenty execution keys.
+  Apps and installations in one account share its slot. No replicas: the
   gateway's existing process/volume lock remains required.
 - Live PR state is checked before launch, every ten seconds during execution and
   before publication. Exact base/head comparisons select changed right-side lines.
@@ -152,8 +183,9 @@ These are **operator steps requiring approval**, not automatic deployment action
 
 1. Back up the gateway's account databases/encryption material and the source
    Postgres database. Deploy this version with Reviews unconfigured/paused. Do not
-   change `lox-amp-reviewbot` yet. Configure both Apps, mappings and execution
-   credentials in the owning gateway account(s), paused.
+   change `lox-amp-reviewbot` yet. Configure the existing App, its `lox` installation,
+   repository rows and execution credential in your gateway account, paused.
+   Keep the App private during this stage.
 2. Disable the old App's webhook delivery temporarily, keeping the source worker
    available to drain existing jobs and finish archival/usage collection. Observe
    `review_jobs` until no queued/running jobs remain. Investigate unresolved work
@@ -170,7 +202,10 @@ These are **operator steps requiring approval**, not automatic deployment action
 5. Compare imported counts and sampled SHAs, check IDs, findings and costs with the
    source. Restart the gateway. Point the App webhook at the gateway's displayed URL, enable this App,
    re-enable GitHub delivery and redeliver events from the gap as needed. Do **not**
-   run both workers. Do the same for the new `sporevm` App (no legacy import needed).
+   run both workers. Only after verifying authorized and denied intake, approve
+   making the App public and installing it on `sporevm`. Add that installation to
+   the same Reviews integration and explicitly enable its repository rows (no
+   legacy import needed). Unapproved public installations must never execute.
 6. On an approved disposable PR, verify signed delivery, a real orb using
    `reviewbot-v1`, linked check/annotations, severity conclusion, rerun, cancellation,
    archival and usage. Check both organisations and denied/unmapped repositories.
@@ -208,6 +243,21 @@ legacy jobs remain visible but cannot be rerun with invented text.
 The importer and its tests are excluded from normal gateway builds. Before use,
 run `mise exec -- go test -tags=reviewimport ./internal/reviews -run TestLegacyOfflineImport`.
 No production-sized export has been rehearsed yet; allow for offline import time.
+
+### Existing gateway configuration
+
+The previous one-installation configuration loads as **paused** installation drafts
+under the same integration IDs and webhook URLs. Only previously approved mappings
+are retained; history and original cleanup keys remain accessible. Save each draft
+to verify numeric GitHub identities before re-enabling it. New work never assumes
+that an old repository name still identifies the same repository. Existing frozen
+jobs with old policy bindings are not silently reauthorized.
+
+For an existing two-private-App setup, keep the `lox` integration and its history.
+Drain and pause the separate `sporevm` integration before switching repositories
+to a new installation of the public App. Do not enable both integrations for the
+same repositories during cutover. Retain the old paused integration for historical
+check ownership; history is not reassigned between Apps.
 
 ### Rollback
 

@@ -51,8 +51,8 @@ func (s *Service) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, ok := s.apps[r.PathValue("app")]
-	mac := hmac.New(sha256.New, []byte(a.WebhookSecret))
+	in, ok := s.config.Integrations[r.PathValue("app")]
+	mac := hmac.New(sha256.New, []byte(in.WebhookSecret))
 	mac.Write(body)
 	signature, err := hex.DecodeString(strings.TrimPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256="))
 	if !ok || err != nil || !strings.HasPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256=") || !hmac.Equal(signature, mac.Sum(nil)) {
@@ -87,7 +87,8 @@ func (s *Service) Webhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	if !a.Enabled || event.Installation.ID != a.InstallationID || !a.allows(event.Repository.FullName) || event.Repository.ID <= 0 {
+	a, approved := s.config.resolve(in.ID, event.Installation.ID, event.Repository.FullName)
+	if !approved || !a.Enabled || a.RepositoryID != event.Repository.ID || event.Repository.ID <= 0 {
 		http.Error(w, "repository or installation not approved", 403)
 		return
 	}

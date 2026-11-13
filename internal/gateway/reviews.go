@@ -3,7 +3,6 @@ package gateway
 import (
 	"crypto/rand"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -61,30 +60,51 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 
 func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) { g.renderReviews(w, r, "", nil) }
 
-func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message string, values *reviews.App) {
+type reviewInstallationView struct {
+	Index string
+	reviews.Installation
+	Repositories []reviewRepositoryView
+}
+
+type reviewRepositoryView struct {
+	Prefix, Index string
+	reviews.Repository
+}
+
+func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message string, values *reviews.Integration) {
 	if g.Reviews == nil {
 		http.Error(w, "Reviews unavailable", 503)
 		return
 	}
-	apps := g.Reviews.Apps()
-	selected := reviews.App{FailOn: "high", Visibility: "private", TimeoutMinutes: 30, Projects: map[string]string{}}
-	for _, a := range apps {
-		if a.ID == r.URL.Query().Get("app") {
-			selected = a
-		}
+	config := g.Reviews.Configuration()
+	selected := reviews.Integration{Settings: reviews.Settings{FailOn: "high", Visibility: "private", TimeoutMinutes: 30}}
+	if a, ok := config.Integrations[r.URL.Query().Get("app")]; ok {
+		selected = a
 	}
 	if values != nil {
 		selected = *values
-		selected.PrivateKey, selected.WebhookSecret, selected.AmpKey = "", "", ""
+		selected.PrivateKey, selected.WebhookSecret = "", ""
 	}
-	existing := false
-	for _, a := range apps {
-		existing = existing || a.ID == selected.ID
-	}
+	_, existing := config.Integrations[selected.ID]
 	editing := existing || values != nil || r.URL.Query().Get("new") == "1"
-	projects, _ := json.MarshalIndent(selected.Projects, "", "  ")
+	var installations []reviewInstallationView
+	for n, i := range selected.Installations {
+		v := reviewInstallationView{Index: strconv.Itoa(n), Installation: i}
+		for k, repo := range i.Repositories {
+			v.Repositories = append(v.Repositories, reviewRepositoryView{Prefix: "i." + v.Index, Index: strconv.Itoa(k), Repository: repo})
+		}
+		installations = append(installations, v)
+	}
+	credentials := map[string]bool{}
+	for id := range config.Credentials {
+		credentials[id] = true
+	}
 	if values != nil {
-		projects = []byte(r.PostForm.Get("projects"))
+		for _, id := range r.PostForm["credential_name"] {
+			if _, exists := credentials[id]; !exists {
+				credentials[id] = false
+			}
+		}
 	}
 	jobs, err := g.Reviews.History(r.Context())
 	if err != nil {
@@ -95,7 +115,10 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": apps, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing, "ReviewProjects": string(projects), "ReviewRepositories": strings.Join(selected.Repositories, "\n"), "ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
+		"ReviewInstallations": installations, "ReviewCredentials": credentials,
+		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Prefix: "i.__i__", Index: "__r__"},
+		"ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
@@ -109,18 +132,52 @@ func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := r.PostForm
-	a := reviews.App{ID: strings.TrimSpace(f.Get("id")), Owner: f.Get("owner"), PrivateKey: f.Get("private_key"), WebhookSecret: f.Get("webhook_secret"), AmpKey: f.Get("amp_key"), Repositories: strings.Fields(f.Get("repositories")), OwnerApproved: f.Get("owner_approved") == "on", Enabled: f.Get("enabled") == "on", FailOn: f.Get("fail_on"), Visibility: f.Get("visibility")}
+	a := reviews.Integration{ID: strings.TrimSpace(f.Get("id")), PrivateKey: f.Get("private_key"), WebhookSecret: f.Get("webhook_secret"), Enabled: f.Get("enabled") == "on", Settings: reviews.Settings{FailOn: f.Get("fail_on"), Visibility: f.Get("visibility")}}
 	a.AppID, _ = strconv.ParseInt(f.Get("app_id"), 10, 64)
-	a.InstallationID, _ = strconv.ParseInt(f.Get("installation_id"), 10, 64)
 	a.TimeoutMinutes, _ = strconv.Atoi(f.Get("timeout"))
-	if json.Unmarshal([]byte(f.Get("projects")), &a.Projects) != nil {
-		g.renderReviews(w, r, "Project mappings must be a JSON object of repository to Amp namespace/project.", &a)
+	if len(f["installation"]) > 20 || len(f["credential_name"]) > 20 || len(f["credential_name"]) != len(f["credential_key"]) {
+		http.Error(w, "Invalid configuration size", 400)
 		return
 	}
+	credentials := map[string]string{}
+	for n, id := range f["credential_name"] {
+		if _, duplicate := credentials[id]; duplicate {
+			http.Error(w, "Duplicate credential name", 400)
+			return
+		}
+		credentials[id] = f["credential_key"][n]
+	}
+	for _, token := range f["installation"] {
+		prefix := "i." + token
+		i := reviews.Installation{Owner: f.Get(prefix + ".owner"), ExecutionCredential: f.Get(prefix + ".credential")}
+		i.ID, _ = strconv.ParseInt(f.Get(prefix+".id"), 10, 64)
+		if len(f[prefix+".repository"]) > 100 {
+			http.Error(w, "Too many repositories", 400)
+			return
+		}
+		for _, row := range f[prefix+".repository"] {
+			p := prefix + ".r." + row
+			repo := reviews.Repository{Name: f.Get(p + ".name"), Project: f.Get(p + ".project"), Enabled: f.Get(p+".enabled") == "on",
+				Settings: reviews.Settings{FailOn: f.Get(p + ".fail_on"), Visibility: f.Get(p + ".visibility")}}
+			if raw := f.Get(p + ".timeout"); raw != "" {
+				var err error
+				repo.TimeoutMinutes, err = strconv.Atoi(raw)
+				if err != nil || repo.TimeoutMinutes == 0 {
+					repo.TimeoutMinutes = -1
+				}
+			}
+			i.Repositories = append(i.Repositories, repo)
+		}
+		a.Installations = append(a.Installations, i)
+	}
+	var err error
 	if g.cfg.Demo {
 		a.Enabled = false
+		err = g.Reviews.SaveDraft(r.Context(), a, credentials)
+	} else {
+		err = g.Reviews.SaveIntegration(r.Context(), a, credentials)
 	}
-	if err := g.Reviews.Save(r.Context(), a); err != nil {
+	if err != nil {
 		g.renderReviews(w, r, err.Error(), &a)
 		return
 	}
