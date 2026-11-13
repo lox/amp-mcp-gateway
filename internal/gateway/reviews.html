@@ -1,0 +1,99 @@
+{{define "reviews"}}
+<div class="reviews">
+<div class="heading"><div>{{if .ReviewEditing}}<a href="/integrations/reviews">← Reviews</a><h1>{{if .ReviewExisting}}Configure {{.ReviewApp.ID}}{{else}}Add review integration{{end}}</h1><p class="sub">Connect GitHub repositories to Amp reviews. This integration belongs to your gateway account.</p>{{else}}<a href="/integrations">← Integrations</a><h1>Reviews</h1><p class="sub">Manage your review integrations and follow their pull request reviews.</p>{{end}}</div>{{if not .ReviewEditing}}<a class="button primary" href="/integrations/reviews?new=1">Add review integration</a>{{end}}</div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{if .ReviewEditing}}<p class="help">New or changed secrets are not echoed back. Re-enter those values before saving again; existing saved secrets are retained.</p>{{end}}{{end}}
+{{if .Saved}}<p class="success" role="status">Review configuration saved. Existing jobs retain their frozen PR context; changed authorization cancels queued work.</p>{{end}}
+{{if .ReviewDemo}}<p class="note">Demo only · Use fake credentials. No reviews run and no GitHub or Amp requests are made.</p>{{end}}
+{{if .ReviewEditing}}
+<form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off">
+<label>Integration name<input name="id" value="{{.ReviewApp.ID}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" {{if .ReviewExisting}}readonly{{end}} placeholder="lox-reviews"></label>
+<p class="help">One integration per GitHub App. Add all approved installations below; credentials are stored only once.</p>
+<details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>GitHub connection{{if .ReviewExisting}} · App {{.ReviewApp.AppID}}{{end}}</summary>
+<fieldset><legend>GitHub connection</legend>
+<p class="help">A public App can serve multiple GitHub owners. Installing it alone never authorizes reviews. Its credentials stay on the gateway.</p>
+<div class="form-grid">
+<label>GitHub App ID<input name="app_id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{if .ReviewApp.AppID}}{{.ReviewApp.AppID}}{{end}}" required {{if .ReviewExisting}}readonly{{end}}></label>
+</div>
+<label>GitHub App private key (PEM)<textarea name="private_key" rows="3" spellcheck="false" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}-----BEGIN RSA PRIVATE KEY-----{{end}}"></textarea></label>
+<label>Webhook secret<input name="webhook_secret" type="password" autocomplete="new-password" placeholder="{{if .ReviewExisting}}Saved; leave blank to retain{{else}}At least 16 characters{{end}}"></label>
+<p class="help">Secrets are encrypted and never shown again. Leave saved secrets blank to keep them.</p>
+{{if .ReviewExisting}}<p class="help">Set this URL as your GitHub App's webhook:</p><p class="endpoint"><code>{{.ReviewWebhook}}{{.ReviewApp.ID}}</code></p>{{else}}<p class="help">Save the integration to get its webhook URL.</p>{{end}}
+</fieldset>
+ </details>
+<details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>Amp execution · {{len .ReviewCredentials}} saved credentials</summary>
+<fieldset><legend>Amp execution</legend>
+<p class="help">Use an <a href="https://ampcode.com/workspace/service-accounts" target="_blank" rel="noreferrer">Amp service account</a> API key with access to the mapped projects and the <code>reviewbot-v1</code> plugin. Your browser login manages Reviews; it does not pay for or launch reviews.</p>
+<div data-review-credentials>{{range $name, $saved := .ReviewCredentials}}<div class="form-grid" data-review-credential><label>Credential name<input name="credential_name" value="{{$name}}" {{if $saved}}readonly{{end}} required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"></label><label>API key<input name="credential_key" type="password" autocomplete="new-password" {{if $saved}}placeholder="Saved; leave blank to retain"{{else}}required placeholder="Re-enter new API key"{{end}}></label>{{if not $saved}}<button type="button" data-review-remove="credential">Remove new credential</button>{{end}}</div>{{end}}</div>
+<button type="button" data-review-add="credential">Add execution credential</button>
+<p class="help">Select the same named credential for both installations, or separate keys for different trust or billing boundaries. Changing a shared key affects every installation using it. Drain cleanup before rotation.</p>
+<p class="help">Service account usage belongs to its workspace. Keep “Members Can Drive Threads” off unless workspace members should use its connected access; workspace policy can override thread visibility.</p>
+</fieldset>
+</details>
+<fieldset><legend>Approved installations</legend>
+<p class="help">Only enabled rows can launch reviews, and only while the integration is enabled. New repositories and unknown installations never enrol automatically.</p>
+<div data-review-installations>{{range .ReviewInstallations}}{{template "review-installation" .}}{{end}}</div>
+<button type="button" data-review-add="installation">Add installation</button>
+<p class="help">Saving verifies installation owners and repository IDs with GitHub. Removing or disabling a row revokes new reviews and cancels affected work; history remains.</p>
+</fieldset>
+<fieldset><legend>Review settings</legend>
+<div class="form-grid"><label>Lowest failing severity<select name="fail_on">{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.ReviewApp.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
+<label>Thread visibility<select name="visibility"><option value="private" {{if eq .ReviewApp.Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .ReviewApp.Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
+<label>Timeout (minutes)<input name="timeout" type="number" min="5" max="120" value="{{.ReviewApp.TimeoutMinutes}}" required></label></div>
+<label><input name="enabled" type="checkbox" {{if .ReviewApp.Enabled}}checked{{end}} {{if .ReviewDemo}}disabled{{end}}> Enable reviews</label>
+<p class="help">One active review per gateway account; four across the host. Enabling also reconciles eligible open PRs updated between five minutes and seven days ago.</p>
+</fieldset>
+<div class="actions"><button class="primary">{{if .ReviewExisting}}Save changes{{else}}Create review integration{{end}}</button><a class="button" href="/integrations/reviews">Cancel</a></div>
+</form>
+<template id="review-installation-template">{{template "review-installation" .ReviewInstallationTemplate}}</template>
+<template id="review-repository-template">{{template "review-repository" .ReviewRepositoryTemplate}}</template>
+<template id="review-credential-template"><div class="form-grid" data-review-credential><label>Credential name<input name="credential_name" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" placeholder="reviews-service-account"></label><label>API key<input name="credential_key" type="password" autocomplete="new-password" required placeholder="Amp service account API key"></label><button type="button" data-review-remove="credential">Remove new credential</button></div></template>
+<script src="/assets/reviews.js" defer></script>
+{{else}}
+<div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
+<section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>
+{{range .ReviewJobs}}<details class="card"><summary><span class="badge {{.Status}}">{{.Status}}</span> <strong>{{.Repository}}#{{.Number}}</strong> · {{.App}}{{if .Conclusion}} · {{.Conclusion}}{{end}}</summary>
+<p class="help">Created <time datetime="{{reviewTime .Created}}">{{reviewTime .Created}}</time>{{if gt .Completed 0}} · Completed <time datetime="{{iso .Completed}}">{{iso .Completed}}</time>{{end}}</p>
+<p><a href="https://github.com/{{.Repository}}/pull/{{.Number}}">Open pull request ↗</a>{{if .CheckID}} · <a href="https://github.com/{{.Repository}}/runs/{{.CheckID}}">GitHub check ↗</a>{{end}}</p>
+<p class="help">Base <code>{{.BaseSHA}}</code><br>Head <code>{{.HeadSHA}}</code><br>Project {{.Project}} · {{.Phase}} · {{.PromptVersion}}</p>
+{{if .Error}}<p class="note">{{.Error}}</p>{{end}}
+{{if eq .Status "unknown"}}<p class="note">An external action may have completed. Automatic replay is stopped. New reviews for this account wait until recovery or acknowledgement. Inspect GitHub and Amp, and stop any old execution before resolving or re-running.</p>{{end}}
+{{range .Threads}}<p><a href="https://ampcode.com/threads/{{.ID}}">{{.ID}} ↗</a> · {{if .Archived}}Archived{{else}}Archive pending{{end}}</p>{{if .Usage}}<p class="help">Amp credits: ${{printf "%.4f" .Usage.CostUSD}} · Provider estimate: {{reviewEstimate .Usage.ProviderEstimateUSD}}</p>{{else}}<p class="help">{{if .UsageError}}{{.UsageError}}{{else}}Usage pending{{end}}</p>{{end}}{{end}}
+{{if .Result}}<p>{{.Result.Summary}}</p>{{range .Result.Findings}}<p><strong>{{.Severity}} · {{.Title}}</strong><br>{{.Path}}:{{.StartLine}}<br>{{.Message}}<br>Suggested fix: {{.Suggestion}}</p>{{end}}{{end}}
+{{if or (eq .Status "queued") (eq .Status "running")}}<form method="post" action="/integrations/reviews/{{.ID}}/cancel"><button class="danger">Cancel review</button></form>{{else}}<form method="post" action="/integrations/reviews/{{.ID}}/rerun">{{if eq .Status "unknown"}}<label><input type="checkbox" name="acknowledge" required> I checked the external outcome and stopped any old execution.</label><button formaction="/integrations/reviews/{{.ID}}/cancel">Resolve without re-running</button>{{end}}<button>Re-run frozen review</button></form>{{end}}
+</details>{{else}}<p class="empty">No reviews yet. Reviews will appear here when an enabled integration receives a pull request.</p>{{end}}
+</section>
+{{end}}
+</div>
+{{end}}
+
+{{define "review-installation"}}
+<section class="card" data-review-installation="{{.Index}}">
+<div class="heading"><h3>{{if .Owner}}{{.Owner}}{{else}}GitHub installation{{end}}</h3><button type="button" data-review-remove="installation">Remove installation</button></div>
+<input type="hidden" name="installation" value="{{.Index}}">
+<div class="form-grid">
+<label>GitHub owner<input name="i.{{.Index}}.owner" value="{{.Owner}}" placeholder="lox or sporevm" required></label>
+<label>Installation ID<input name="i.{{.Index}}.id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{if .ID}}{{.ID}}{{end}}" required></label>
+<label>Execution credential<select name="i.{{.Index}}.credential" data-review-credential-select required><option value="{{.ExecutionCredential}}">{{if .ExecutionCredential}}{{.ExecutionCredential}}{{else}}Choose a credential{{end}}</option></select></label>
+</div>
+<p class="help">{{if .OwnerID}}Verified GitHub account ID {{.OwnerID}}{{else}}Identity will be verified on save (except in demo mode).{{end}}</p>
+<div data-review-repositories>{{range .Repositories}}{{template "review-repository" .}}{{end}}</div>
+<button type="button" data-review-add="repository">Add repository</button>
+</section>
+{{end}}
+
+{{define "review-repository"}}
+<section class="card" data-review-repository>
+<input type="hidden" name="{{.Prefix}}.repository" value="{{.Index}}">
+<div class="form-grid">
+<label>Repository<input name="{{.Prefix}}.r.{{.Index}}.name" value="{{.Name}}" placeholder="owner/repo" required></label>
+<label>Amp project<input name="{{.Prefix}}.r.{{.Index}}.project" value="{{.Project}}" placeholder="namespace/project" required></label>
+</div>
+<div class="actions"><label><input type="checkbox" name="{{.Prefix}}.r.{{.Index}}.enabled" {{if .Enabled}}checked{{end}}> Enable this repository</label><button type="button" data-review-remove="repository">Remove repository</button></div>
+{{if .ID}}<p class="help">Verified repository ID {{.ID}}</p>{{end}}
+<details><summary>Override review defaults</summary><div class="form-grid">
+<label>Lowest failing severity<select name="{{.Prefix}}.r.{{.Index}}.fail_on"><option value="">Use default</option>{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
+<label>Thread visibility<select name="{{.Prefix}}.r.{{.Index}}.visibility"><option value="">Use default</option><option value="private" {{if eq .Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
+<label>Timeout (minutes)<input name="{{.Prefix}}.r.{{.Index}}.timeout" type="number" min="5" max="120" value="{{if .TimeoutMinutes}}{{.TimeoutMinutes}}{{end}}" placeholder="Use default"></label>
+</div></details>
+</section>
+{{end}}

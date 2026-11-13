@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -22,11 +23,15 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
+	"ampcode.com/lox/amp-mcp-gateway/internal/reviews"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
+
+var reviewSlots = semaphore.NewWeighted(4)
 
 func main() {
 	if err := run(); err != nil {
@@ -173,9 +178,17 @@ func run() error {
 		handler = accountRouter(host, handler)
 	}
 	server := &http.Server{Addr: *listen, Handler: http.NewCrossOriginProtection().Handler(handler), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	listener, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	startAccount := func(account *accountRuntime) {
 		group.Go(func() error { return account.gateway.Run(ctx) })
 		group.Go(func() error { return account.upstream.RunRefresh(ctx) })
+		if !*demoMode {
+			group.Go(func() error { return account.gateway.Reviews.Run(ctx) })
+		}
 	}
 	for _, account := range accounts {
 		startAccount(account)
@@ -190,7 +203,7 @@ func run() error {
 	}
 	group.Go(func() error {
 		slog.Info("gateway listening", "address", *listen, "demo", *demoMode, "account_linking", shared)
-		err := server.ListenAndServe()
+		err := server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -252,6 +265,10 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err != nil {
 		return nil, err
 	}
+	g.Reviews, err = reviews.New(ctx, cfg.AmpUserID, s, reviews.CLI{}, &reviews.GitHub{}, reviewSlots)
+	if err != nil {
+		return nil, err
+	}
 	auth := config.auth
 	if auth == nil {
 		authCfg.BaseURL, authCfg.AmpUserID, authCfg.SessionKey = cfg.BaseURL, cfg.AmpUserID, secrets.SessionKey
@@ -278,6 +295,7 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
 	mux.Handle("/browser/connect", browser.Socket())
+	mux.HandleFunc("POST /webhooks/reviews/{owner}/{app}", g.Reviews.Webhook)
 	mux.Handle("/", g.UI(auth, m, browser, chromeAvailable))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
@@ -297,6 +315,7 @@ func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry) htt
 	mux.Handle("/mcp", http.HandlerFunc(registry.workload))
 	mux.Handle("POST /leases/{id}", http.HandlerFunc(registry.workload))
 	mux.Handle("/browser/connect", browserbridge.SocketRouter(registry.browserManager))
+	mux.HandleFunc("POST /webhooks/reviews/{owner}/{app}", registry.reviewWebhook)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("/", auth.Require(http.HandlerFunc(registry.browser)))
 	return securityHeaders(mux)

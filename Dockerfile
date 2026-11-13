@@ -6,6 +6,11 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY internal ./internal
 RUN npm run build:css
 
+FROM node:22.20.0-bookworm-slim AS amp-cli
+# The SDK also delegates to this native CLI. No Node service in the runtime.
+RUN npm install --prefix /amp --no-audit --no-fund @ampcode/cli@0.0.1793995239-gedfe82 \
+    && /amp/node_modules/@ampcode/cli/bin/amp --version
+
 FROM golang:1.26.8-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -22,5 +27,6 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /mcp-gateway /usr/local/bin/mcp-gateway
+COPY --from=amp-cli /amp/node_modules/@ampcode/cli/bin/amp /usr/local/bin/amp
 WORKDIR /data
 ENTRYPOINT ["/usr/local/bin/mcp-gateway"]

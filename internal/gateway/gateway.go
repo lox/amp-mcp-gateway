@@ -25,6 +25,7 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
+	"ampcode.com/lox/amp-mcp-gateway/internal/reviews"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -60,6 +61,8 @@ type Backend interface {
 type Gateway struct {
 	// ProjectNames optionally enriches browser pages. Set before serving.
 	ProjectNames func(context.Context) browserauth.ProjectNames
+	// Reviews is an account-scoped native integration, set before serving.
+	Reviews      *reviews.Service
 	mu           sync.RWMutex // catalogue publication, submission and discovery snapshots
 	cfg          Config
 	store        *store.Store
@@ -550,6 +553,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 	m.Register(mux)
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
+	g.registerReviews(mux)
 	g.registerChrome(mux, browser, chromeAvailable)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/approvals", http.StatusSeeOther) })
 	mux.HandleFunc("GET /audit", g.audit)

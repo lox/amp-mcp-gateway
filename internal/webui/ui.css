@@ -230,6 +230,41 @@
   :where(html.dashboard) .field label {
     @apply font-semibold;
   }
+  :where(html.dashboard) .reviews label {
+    @apply block my-4 leading-[1.6];
+  }
+  :where(html.dashboard) .reviews .form-grid {
+    @apply grid gap-x-5;
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  }
+  :where(html.dashboard) .reviews input[type="checkbox"] {
+    @apply w-auto mr-2;
+  }
+  :where(html.dashboard) .reviews code {
+    overflow-wrap: anywhere;
+  }
+  :where(html.dashboard) .review-setup {
+    @apply max-w-240;
+  }
+  :where(html.dashboard) .review-setup fieldset {
+    @apply border-0 p-0 mt-8 mb-6 min-w-0;
+  }
+  :where(html.dashboard) .review-setup legend {
+    @apply text-[20px] font-semibold p-0 mb-2;
+  }
+  :where(html.dashboard) .review-setup > details {
+    @apply my-4;
+  }
+  :where(html.dashboard) .review-setup [data-review-installation],
+  :where(html.dashboard) .review-setup [data-review-repository] {
+    @apply p-4;
+  }
+  :where(html.dashboard) .review-setup [data-review-installation] label {
+    @apply my-2;
+  }
+  :where(html.dashboard) .review-setup [data-review-installation] .heading {
+    @apply mb-2;
+  }
   :where(html.dashboard) .field small,
   :where(html.dashboard) .help {
     color: #586b62;
