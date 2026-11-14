@@ -223,6 +223,9 @@ func TestReadTrustApprovalFlow(t *testing.T) {
 	if o := call(ctx, "after-revoke", "search"); o.Status != "pending" {
 		t.Fatalf("revoked read trust still applied: %s", o.Status)
 	}
+	if !strings.Contains(page("/audit?period=all"), "Read trust revoked") {
+		t.Fatal("audit history does not name the read trust revocation")
+	}
 }
 
 func TestBrowserToolsHaveFixedClasses(t *testing.T) {

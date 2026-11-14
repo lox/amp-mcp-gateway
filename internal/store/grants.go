@@ -233,7 +233,11 @@ func (s *Store) RevokeApprovalGrant(ctx context.Context, id, actor string) error
 	if n != 1 {
 		return errors.New("approval grant unavailable or already revoked")
 	}
-	if err := event(ctx, tx, g.OperationID, "approval-revoked", actor); err != nil {
+	kind := "approval-revoked"
+	if g.Breadth == "read" {
+		kind = "read-trust-revoked"
+	}
+	if err := event(ctx, tx, g.OperationID, kind, actor); err != nil {
 		return err
 	}
 	return tx.Commit()

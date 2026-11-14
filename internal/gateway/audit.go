@@ -131,6 +131,8 @@ func auditEvent(request store.AuditRequest, i int) string {
 		return "Thread read trust created"
 	case "read-trust-project":
 		return "Project read trust created"
+	case "read-trust-revoked":
+		return "Read trust revoked"
 	case "approval-revoked":
 		return "Standing approval revoked"
 	case "lease-ready":
