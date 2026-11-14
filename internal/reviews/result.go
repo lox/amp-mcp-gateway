@@ -121,7 +121,7 @@ func finalize(result Result, changed map[string]map[int]bool, failOn string) (Re
 		if conclusion == "success" {
 			conclusion = "neutral"
 		}
-		if severityRank(f.Severity) >= severityRank(failOn) {
+		if severityRank(f.Severity) > severityRank(failOn) {
 			conclusion = "failure"
 		}
 	}
