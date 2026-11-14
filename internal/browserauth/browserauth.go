@@ -527,14 +527,14 @@ func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
 		return "", errors.New("actor unavailable")
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("actor endpoint returned HTTP %d", res.StatusCode)
-	}
 	var actor struct {
 		Actor     struct{ Type, ID string }
 		Workspace struct{ ID string }
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("actor endpoint returned HTTP %d", res.StatusCode)
+	}
 	if err != nil || len(body) > 64<<10 {
 		return "", errors.New("actor response unreadable or too large")
 	}
