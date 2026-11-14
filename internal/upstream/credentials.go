@@ -47,6 +47,9 @@ func (m *Manager) Health(ctx context.Context, id string) Health {
 	}
 	defer c.mu.Unlock()
 	h := c.check
+	if c.config.JavaScript != nil {
+		return Health{Status: "Installed", Detail: "Static JavaScript bundle. Review source and capabilities under Tools & permissions; no provider request is made by testing."}
+	}
 	if h.Status == "" {
 		h.Status, h.Detail = "Not tested", "Test the connection to verify MCP access."
 	}

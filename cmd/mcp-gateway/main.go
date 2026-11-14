@@ -249,6 +249,9 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err := bindAccountIdentity(ctx, s, cfg); err != nil {
 		return nil, err
 	}
+	if err := gateway.LoadJavaScript(&cfg); err != nil {
+		return nil, err
+	}
 	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
 		return nil, fmt.Errorf("load saved catalogue: %w", err)
 	}

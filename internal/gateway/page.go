@@ -36,6 +36,7 @@ var page = template.Must(template.New("page").Funcs(auditTemplateFuncs).Funcs(re
 {{else if eq .Status "denied"}}<p class="sub">This request was denied and was not executed.</p>
 {{else if eq .Status "expired"}}<p class="sub">This request expired and was not executed.</p>{{end}}
 {{if .Result}}<div class="card result"><h2>{{if eq .Status "failed"}}Error response{{else}}Result{{end}}</h2>{{range $.ResultBlocks}}<pre>{{.}}</pre>{{end}}<details><summary>{{if eq .Status "unknown"}}Stored response{{else}}Raw MCP response{{end}}</summary><pre>{{$.RawResult}}</pre></details></div>{{end}}
+{{if $.HTTPAttempts}}<details class="card"><summary>HTTP attempts</summary><p class="help">Ordered dispatch journal. A missing response is uncertain, not permission to retry. Authentication headers are not recorded.</p><pre>{{$.HTTPAttempts}}</pre></details>{{end}}
 {{if $.Next}}<p><a class="button" href="/operations/{{$.Next}}">Review next request →</a></p>{{end}}
 {{template "operation-history" $}}
 </div>{{end}}{{end}}
@@ -164,6 +165,7 @@ document.getElementById('secret-form').addEventListener('submit', event => {
 <p class="sub endpoint">{{.Connection.URL}}</p>
 <nav class="tabs" aria-label="Connection pages"><a href="/connections/{{.Connection.ID}}/tools" aria-current="page">Tools &amp; permissions</a><a href="/connections/{{.Connection.ID}}/settings">Settings</a></nav>
 {{template "connection-health" .Connection}}
+{{if .Connection.JavaScript}}<section class="card"><h2>Installed JavaScript bundle</h2><p class="help">Operator-installed source. Refresh tools to review this bundle; metadata review never executes JavaScript. Only tools pinned to this exact artifact can run.</p>{{if .Connection.ReviewRequired}}<p class="note" role="status">Bundle or credentials changed. Previous tool definitions are unavailable until you refresh tools and save the new review.</p>{{end}}<dl><dt>Artifact</dt><dd><code>{{.Connection.Artifact}}</code></dd><dt>HTTP origin</dt><dd>{{.Connection.URL}}</dd></dl><details><summary>Source and HTTP capabilities</summary><h3>Source</h3><pre>{{.Connection.Source}}</pre><h3>Manifest</h3><pre>{{.Connection.Manifest}}</pre></details></section>{{end}}
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="success" role="status">Policies saved. Enabled tools are available to agents now.</p>{{end}}
 <form id="refresh-tools" method="post" action="/connections/{{.Connection.ID}}/discover"></form>
 {{if .Ticket}}

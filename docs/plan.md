@@ -37,6 +37,14 @@ coverage. Planned features below are proposals, not shipped capabilities or date
 - Keep discovery local. Evaluate Jev only if it measurably improves tool selection
   and its data-handling requirements are acceptable.
 
+Operator-installed JavaScript adapters now provide another governed execution
+path without an upstream MCP process. The first slice covers a static read/write
+bundle, bounded Wasm execution, brokered HTTP and encrypted subrequest journals.
+See the [adapter contract](javascript.md) for setup, authority, limits and rollback
+requirements. Local fake-provider validation is complete; live-provider and
+production-memory validation remain. Agent-supplied code and composition are not
+part of this slice.
+
 ## Delivery slices
 
 ### 1. Local vertical slice — complete
