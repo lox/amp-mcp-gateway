@@ -857,7 +857,8 @@ Each remote MCP tool has an owner-reviewed class on **Tools & permissions**:
 **High-risk** (money, deletion, sending or publishing, permissions or security,
 secrets, arbitrary code or destinations). Give a tool with mixed capabilities its
 highest class. New tools start **Unreviewed**; Jev preselects a suggested class
-in the unsaved review, and it counts only once the owner saves. A changed tool
+in the unsaved review, and it counts only once the owner saves. Connections that
+block new tools by default skip Jev, so their new tools stay Unreviewed. A changed tool
 definition resets its class to Unreviewed. Native tools have fixed classes:
 `browser.snapshot`, `screenshot` and `status` are Read, `scroll` is Write, and
 `click`, `type`, `navigate`, Fly.io and secret tools are High-risk. A class
