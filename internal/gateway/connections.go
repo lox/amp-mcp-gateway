@@ -233,7 +233,11 @@ func (draft toolDraft) edit(values url.Values) (toolDraft, error) {
 		if policy == "inherit" {
 			policy = ""
 		}
-		draft.Tools[i].Policy = policy
+		class := values.Get("class_" + strconv.Itoa(i))
+		if !validClass(class) {
+			return draft, errors.New("Choose a class for every tool.")
+		}
+		draft.Tools[i].Policy, draft.Tools[i].Class = policy, class
 	}
 	return draft, nil
 }
@@ -566,6 +570,9 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 	connection["Health"] = m.Health(r.Context(), id)
 	rows := []map[string]any{}
 	added, changed := 0, 0
+	g.mu.RLock()
+	browser := g.browserConnection(id)
+	g.mu.RUnlock()
 	for _, tool := range tools {
 		if draft.Changes[tool.ID] == "New" {
 			added++
@@ -574,7 +581,13 @@ func (g *Gateway) toolsPage(w http.ResponseWriter, r *http.Request, m *upstream.
 			changed++
 		}
 		schema, _ := json.Marshal(tool.InputSchema)
-		rows = append(rows, map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID], "Suggestion": draft.Suggestions[tool.ID]})
+		row := map[string]any{"Tool": tool, "Schema": prettyJSON(schema), "Change": draft.Changes[tool.ID], "Suggestion": draft.Suggestions[tool.ID]}
+		if browser {
+			g.mu.RLock()
+			row["FixedClass"] = g.toolClass(tool)
+			g.mu.RUnlock()
+		}
+		rows = append(rows, row)
 	}
 	g.render(w, r, map[string]any{"ToolReview": true, "Connection": connection, "Rows": rows, "Ticket": ticket, "Draft": draft, "JevAvailable": g.policyClient.Key != "", "Added": added, "Changed": changed, "Error": message, "Saved": saved})
 }
@@ -665,8 +678,9 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				delete(draft.Changes, tools[i].ID)
 				tools[i].ID = old.ID
 				if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description {
-					tools[i].Policy = old.Policy
+					tools[i].Policy, tools[i].Class = old.Policy, old.Class
 				} else {
+					// A changed definition needs its class reviewed again.
 					draft.Changes[old.ID] = "Changed"
 					tools[i].Policy = "require_approval"
 					if g.tools[old.ID].Policy == "deny" {
@@ -688,9 +702,9 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 				continue
 			}
 			if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description {
-				tools[i].Policy = old.Policy
+				tools[i].Policy, tools[i].Class = old.Policy, old.Class
 			} else {
-				tools[i].Policy = "require_approval"
+				tools[i].Policy, tools[i].Class = "require_approval", ""
 				if old.Policy == "deny" || (old.Policy == "" && previous.Default == "deny") {
 					tools[i].Policy = "deny"
 				}

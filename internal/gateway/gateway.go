@@ -33,9 +33,52 @@ import (
 )
 
 // Tool pins a reviewed definition. An empty Policy inherits its connection default.
+// Class is the owner-reviewed capability class of a remote tool: read, write or
+// high_risk. Empty means unreviewed. Native tools have fixed classes; see toolClass.
 type Tool struct {
 	ID, Connection, Name, Description, Policy string
+	Class                                     string `json:",omitempty"`
 	InputSchema                               map[string]any
+}
+
+// Capability classes. A tool with mixed capabilities takes its highest class.
+const (
+	classRead     = "read"
+	classWrite    = "write"
+	classHighRisk = "high_risk"
+)
+
+func validClass(class string) bool {
+	return class == "" || class == classRead || class == classWrite || class == classHighRisk
+}
+
+// toolClass returns the class authorization uses. Native browser and integration
+// tools cannot be reclassified: a click, typed text or navigation can confirm a
+// payment, so they are high-risk, and scrolling can trigger page handlers.
+func (g *Gateway) toolClass(t Tool) string {
+	if _, native := g.integration(t.Connection); native {
+		return classHighRisk // Credential disclosure.
+	}
+	if g.browserConnection(t.Connection) {
+		switch t.Name {
+		case "snapshot", "screenshot", "status":
+			return classRead
+		case "scroll":
+			return classWrite
+		default:
+			return classHighRisk
+		}
+	}
+	return t.Class
+}
+
+func (g *Gateway) browserConnection(id string) bool {
+	for _, c := range g.cfg.Connections {
+		if c.ID == id {
+			return c.Browser
+		}
+	}
+	return false
 }
 
 // Config holds non-secret configuration. Secrets are supplied by environment variables.
@@ -152,6 +195,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		if !validPolicy(t.Policy) {
 			return nil, fmt.Errorf("invalid policy for %s", t.ID)
 		}
+		if !validClass(t.Class) {
+			return nil, fmt.Errorf("invalid class for %s", t.ID)
+		}
 		var connection *upstream.Connection
 		for _, c := range cfg.Connections {
 			if c.ID == t.Connection {
@@ -162,6 +208,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 		integration, native := integrations[t.Connection]
 		if connection == nil && !native {
 			return nil, fmt.Errorf("unknown connection for %s", t.ID)
+		}
+		if t.Class != "" && (native || connection.Browser) {
+			return nil, fmt.Errorf("native tool %s has a fixed class", t.ID)
 		}
 		if native {
 			generated := integrationTool(integration, t.Policy)
@@ -414,7 +463,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	dynamicBinding := g.dynamicBinding(t)
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Class: g.toolClass(t), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -564,7 +613,7 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 		}
 		http.Redirect(w, r, "/approvals", http.StatusSeeOther)
 	})
-	for _, path := range []string{"/approvals", "/connections", "/integrations", "/approval-grants"} {
+	for _, path := range []string{"/approvals", "/connections", "/integrations", "/approval-grants", "/read-trust"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { g.dashboard(w, r, m) })
 	}
 	mux.HandleFunc("GET /connections/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -585,7 +634,17 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			if r.Form.Get("remember") != "on" {
+			if r.Form.Get("trust") == "read" {
+				// The store accepts read trust only for an operation submitted with a
+				// reviewed Read class, and binds it to that connection's catalogue.
+				options := store.ApprovalOptions{Breadth: "read", Scope: r.Form.Get("scope"), Expiry: r.Form.Get("expiry")}
+				o, getErr := g.store.Get(r.Context(), r.PathValue("id"))
+				if getErr != nil || !g.readTrustAvailable(o) || !slices.Contains([]string{"thread", "project"}, options.Scope) || !slices.Contains([]string{"1h", "24h"}, options.Expiry) {
+					http.Error(w, "Invalid approval.", http.StatusBadRequest)
+					return
+				}
+				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
+			} else if r.Form.Get("remember") != "on" {
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
 			} else {
 				options := store.ApprovalOptions{Breadth: r.Form.Get("breadth"), Scope: r.Form.Get("scope"), Expiry: r.Form.Get("expiry")}
@@ -604,13 +663,15 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 		}
 		http.Redirect(w, r, "/operations/"+r.PathValue("id"), 303)
 	})
-	mux.HandleFunc("POST /approval-grants/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if err := g.store.RevokeApprovalGrant(r.Context(), r.PathValue("id"), browserActor(r)); err != nil {
-			http.Error(w, "Approval unavailable or already revoked.", 409)
-			return
-		}
-		http.Redirect(w, r, "/approval-grants", 303)
-	})
+	for _, path := range []string{"/approval-grants", "/read-trust"} {
+		mux.HandleFunc("POST "+path+"/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
+			if err := g.store.RevokeApprovalGrant(r.Context(), r.PathValue("id"), browserActor(r)); err != nil {
+				http.Error(w, "Approval unavailable or already revoked.", 409)
+				return
+			}
+			http.Redirect(w, r, path+"?revoked=1", 303)
+		})
+	}
 	return auth.Require(http.NewCrossOriginProtection().Handler(mux))
 }
 
@@ -620,8 +681,16 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	switch r.URL.Path {
 	case "/approvals":
 		data["Operations"], err = g.store.ListStatus(r.Context(), "pending")
-	case "/approval-grants":
-		data["ApprovalGrants"], err = g.store.ApprovalGrants(r.Context())
+	case "/approval-grants", "/read-trust":
+		var grants []store.ApprovalGrant
+		grants, err = g.store.ApprovalGrants(r.Context())
+		// Read trust has its own page; standing approvals lists the other breadths.
+		readTrust := r.URL.Path == "/read-trust"
+		grants = slices.DeleteFunc(grants, func(grant store.ApprovalGrant) bool { return (grant.Breadth == "read") != readTrust })
+		data["ApprovalGrants"], data["Revoked"] = grants, r.URL.Query().Get("revoked") == "1"
+		if readTrust {
+			data["ReadTrust"] = g.readTrustViews(grants)
+		}
 	case "/connections":
 		var rows []connectionRow
 		rows, err = g.connectionRows(r.Context(), m)
@@ -703,6 +772,9 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next}
+	if o.Status == "pending" && g.readTrustAvailable(o) {
+		data["ReadTrust"], data["ReadTools"] = true, g.readTools(o.Connection)
+	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
@@ -722,7 +794,7 @@ func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string
 	data["ActorNames"] = g.actorNames(r)
 	data["AmpNames"] = browserauth.ProjectNames{}
 	op, _ := data["Operation"].(store.Operation)
-	needsProjects := op.Status == "pending" && op.AmpProjectID != ""
+	needsProjects := (op.Status == "pending" || op.ApprovalScope == "project") && op.AmpProjectID != ""
 	grants, _ := data["ApprovalGrants"].([]store.ApprovalGrant)
 	for _, grant := range grants {
 		needsProjects = needsProjects || grant.Scope == "project"
@@ -734,4 +806,54 @@ func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string
 	if err := page.Execute(w, data); err != nil {
 		slog.Error("render page", "error", err)
 	}
+}
+
+// readTrustAvailable reports whether the owner may grant read trust from o: a
+// call to a reviewed Read tool on a remote MCP connection from a verified Amp
+// thread. Browser and native integration tools are never covered.
+func (g *Gateway) readTrustAvailable(o store.Operation) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return o.Class == classRead && o.AmpUserID != "" && o.AmpThreadID != "" && !g.browserConnection(o.Connection)
+}
+
+// readTools lists the tools read trust on a connection covers now: reviewed Read
+// tools that are not blocked. Catalogue changes revoke trust, so a grant covers
+// exactly the tools listed while it is active.
+func (g *Gateway) readTools(connection string) []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	names := []string{}
+	if g.browserConnection(connection) {
+		return names
+	}
+	for _, t := range g.tools {
+		if t.Connection == connection && t.Policy != "deny" && g.toolClass(t) == classRead {
+			names = append(names, t.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+type readTrustView struct {
+	store.ApprovalGrant
+	Account string
+	Tools   []string
+}
+
+func (g *Gateway) readTrustViews(grants []store.ApprovalGrant) []readTrustView {
+	views := make([]readTrustView, 0, len(grants))
+	for _, grant := range grants {
+		view := readTrustView{ApprovalGrant: grant, Tools: g.readTools(grant.Connection)}
+		g.mu.RLock()
+		for _, c := range g.cfg.Connections {
+			if c.ID == grant.Connection {
+				view.Account = c.Account
+			}
+		}
+		g.mu.RUnlock()
+		views = append(views, view)
+	}
+	return views
 }

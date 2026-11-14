@@ -55,7 +55,7 @@ var auditTemplateFuncs = template.FuncMap{
 		case actor == "catalogue-changed":
 			return "Catalogue changed"
 		case actor == "approval-grant-unavailable":
-			return "Standing approval unavailable"
+			return "Standing approval or read trust unavailable"
 		case names[actor] != "":
 			return names[actor]
 		case strings.HasPrefix(actor, "amp:"):
@@ -65,6 +65,18 @@ var auditTemplateFuncs = template.FuncMap{
 		}
 	},
 	"requestURL": func(id string) string { return "/operations/" + url.PathEscape(id) },
+	"classLabel": func(class string) string {
+		switch class {
+		case "read":
+			return "Read"
+		case "write":
+			return "Write"
+		case "high_risk":
+			return "High-risk"
+		default:
+			return "Unreviewed"
+		}
+	},
 }
 
 func auditStatus(status string) string {
@@ -97,6 +109,9 @@ func auditEvent(request store.AuditRequest, i int) string {
 	case "ready":
 		if i == 0 {
 			if scope := request.Operation.ApprovalScope; scope != "" {
+				if request.Operation.ApprovalBreadth == "read" {
+					return "Allowed by " + scope + " read trust"
+				}
 				return "Allowed by standing " + scope + " approval"
 			}
 			return "Allowed by policy"
@@ -104,7 +119,7 @@ func auditEvent(request store.AuditRequest, i int) string {
 		if events[i-1].Kind == "pending" {
 			return "Approved once"
 		}
-		if strings.HasPrefix(events[i-1].Kind, "approval-") {
+		if strings.HasPrefix(events[i-1].Kind, "approval-") || strings.HasPrefix(events[i-1].Kind, "read-trust-") {
 			return "Approved for this request"
 		}
 		return "Queued for execution"
@@ -112,6 +127,12 @@ func auditEvent(request store.AuditRequest, i int) string {
 		return "Standing thread approval created"
 	case "approval-project":
 		return "Standing project approval created"
+	case "read-trust-thread":
+		return "Thread read trust created"
+	case "read-trust-project":
+		return "Project read trust created"
+	case "read-trust-revoked":
+		return "Read trust revoked"
 	case "approval-revoked":
 		return "Standing approval revoked"
 	case "lease-ready":
@@ -139,6 +160,9 @@ func auditEvent(request store.AuditRequest, i int) string {
 			return "Denied after catalogue change"
 		}
 		if e.Actor == "approval-grant-unavailable" {
+			if request.Operation.ApprovalBreadth == "read" {
+				return "Read trust expired or revoked"
+			}
 			return "Standing approval expired or revoked"
 		}
 		if events[i-1].Kind == "running" {

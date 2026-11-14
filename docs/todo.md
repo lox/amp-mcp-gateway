@@ -14,7 +14,7 @@ separate copies of this matrix in each document.
 | --- | --- | --- |
 | One MCP endpoint | Implemented | Streamable HTTP with `find_tools`, `call_tools`, `get_operation`, `propose_policy_changes`. |
 | Agent policy proposals | Implemented | Immutable multi-provider batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
-| Jev policy suggestions | Implemented | Dashboard discovery automatically suggests policies for new tools, with inline explanations before the owner saves. Missing key or classification failure requires approval; saved choices and blocked defaults are preserved. |
+| Jev policy suggestions | Implemented | Dashboard discovery automatically suggests policies and Read / Write / High-risk classes for new tools, with inline explanations before the owner saves. Missing key or classification failure requires approval and leaves the class unreviewed; saved choices and blocked defaults are preserved. |
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
@@ -32,6 +32,7 @@ separate copies of this matrix in each document.
 | Model provenance | Partial | Optional unverified client label; no runtime assertions or inference-proxy observations. |
 | Tool policies | Implemented | Connection defaults and explicit allow / require approval / deny exceptions, with search and bulk editing. Connections can independently require an Amp-attested private, owner-only, non-multiplayer context on every discovery, call and result lookup. New tools inherit defaults after save; unknown tools cannot execute. |
 | Human approval | Implemented | Exact arguments, account label, digest, once/thread/project approve scopes, deny, ten-minute pending expiry, revocation and status polling. |
+| Read trust | Implemented | Approving a reviewed Read tool can trust all reviewed Read tools on that connection for the thread or project for one or 24 hours; see [Read trust](dev.md#read-trust). Browser and native integration tools are never covered. No runtime model approval, write trust or resource-scoped mandates. |
 | Effect previews | Planned | Exact payload only; no before/after effect or resource-state-aware approval. |
 | Bounded mandates | Partial | One-hour thread/project standing grants bind verified Amp identity, tool and configuration; expiry and revocation are checked at submission and atomic claim. No resource scope, call budgets or subagent delegation. |
 | Duplicate / restart safety | Implemented | Idempotency keys, atomic claims and persisted approvals; ambiguous outcomes are not retried. |

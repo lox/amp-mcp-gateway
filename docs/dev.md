@@ -132,6 +132,11 @@ Explanations distinguish likely capabilities (scores at least 0.5) from risks th
 cannot be ruled out (above 0.05). Missing or invalid assessments are labelled as
 approval fallbacks, never model recommendations.
 
+Jev also suggests a [Read, Write or High-risk class](#read-trust) from the same
+answers: any risk other than writes or private data makes a tool High-risk,
+writes make it Write, and otherwise it is Read. Failed assessments leave it
+Unreviewed.
+
 Suggestions live only in the existing ten-minute, catalogue-bound review draft.
 Nothing becomes executable until the owner saves. Concurrent configuration changes
 invalidate the review; saving uses the existing atomic catalogue update and queued
@@ -783,7 +788,8 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- A pending operation can be approved once, or **Remember this approval** can
+- A pending operation can be approved once, saved as [read trust](#read-trust),
+  or **Remember this approval** can
   authorize exact tool/argument matches, that tool with any arguments, or any
   non-blocked tool on its connection. Saved approvals are limited to the verified
   owner's thread or project. Project approval requires an Amp project claim.
@@ -843,6 +849,37 @@ The UI pretty-prints schemas, arguments and JSON results only when the added
 whitespace stays within twice the compact input size plus 4 KiB. Deeper or larger
 expansions use complete compact JSON instead; approval arguments and stored
 results are never truncated or changed by presentation.
+
+## Read trust
+
+Each remote MCP tool has an owner-reviewed class on **Tools & permissions**:
+**Read** (fetches data without changing anything), **Write** (ordinary changes) or
+**High-risk** (money, deletion, sending or publishing, permissions or security,
+secrets, arbitrary code or destinations). Give a tool with mixed capabilities its
+highest class. New tools start **Unreviewed**; Jev preselects a suggested class
+in the unsaved review, and it counts only once the owner saves. Connections that
+block new tools by default skip Jev, so their new tools stay Unreviewed. A changed tool
+definition resets its class to Unreviewed. Native tools have fixed classes:
+`browser.snapshot`, `screenshot` and `status` are Read, `scroll` is Write, and
+`click`, `type`, `navigate`, Fly.io and secret tools are High-risk. A class
+never changes a tool's allow, require-approval or block policy.
+
+When the owner reviews a pending call to a reviewed Read tool on a remote MCP
+connection, the page offers **Approve & allow reads**. It approves that call and
+saves read trust for this thread (default) or this project (the owner's current
+and future threads in it) for one hour (default) or 24 hours. It never lasts
+until revoked. Read trust covers every saved Read tool on that connection with
+any schema-valid arguments, not just the current request. Blocked, unreviewed,
+Write and High-risk tools are never covered and follow their own policies. **Approve once** stays available and saves
+nothing. Read requests offer read trust in place of **Remember this approval**.
+
+Read trust uses the standing-approval machinery: it binds the connection's full
+tool catalogue, including every tool's class and policy, so any catalogue save
+revokes it, and it is checked at submission and again at atomic claim. Requests
+it allows say so on their request page and in audit history. Approvals → **Read
+trust** lists and revokes it. Revocation stops future and queued calls, not
+calls already running or approved once. Private connections still require a
+private solo thread. Read data can still be private; the consent text says so.
 
 ## Identity and audit boundaries
 

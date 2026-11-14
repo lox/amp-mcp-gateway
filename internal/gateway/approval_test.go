@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -130,5 +132,125 @@ func TestConnectionApprovalCatalogueBinding(t *testing.T) {
 	await(t, s, queued.ID, "denied")
 	if b.calls.Load() != 0 {
 		t.Fatal("old catalogue consent dispatched")
+	}
+}
+
+func TestReadTrustApprovalFlow(t *testing.T) {
+	g, s, b := fixture(t)
+	g.cfg.AmpUserID = "user-owner"
+	tool := func(name, class, policy string) Tool {
+		t := g.cfg.Tools[0]
+		t.ID, t.Name, t.Class, t.Policy = "notes."+name, name, class, policy
+		return t
+	}
+	g.cfg.Tools = []Tool{tool("list", "read", "require_approval"), tool("search", "read", "require_approval"), tool("write", "write", "require_approval"), tool("draft", "", "require_approval"), tool("purge", "read", "deny")}
+	var err error
+	g, err = New(g.cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := func(thread string) context.Context {
+		return withAmpIdentity(t.Context(), ampIdentity{Subject: "amp:user-owner", UserID: "user-owner", ThreadID: thread, ProjectID: "project"})
+	}
+	ctx := identity("T-01a0b6d8-e50f-7723-941c-60bca63723ba")
+	call := func(ctx context.Context, id, name string) store.Operation {
+		t.Helper()
+		in := input(id, "query")
+		in.Calls[0].ToolID = "notes." + name
+		o, err := g.submit(ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	h, cookie := adminUI(t, g, nil)
+	page := func(path string) string {
+		t.Helper()
+		w := formRequest(h, cookie, "GET", path, nil)
+		if w.Code != 200 {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	trust := url.Values{"trust": {"read"}, "scope": {"thread"}, "expiry": {"1h"}}
+
+	call(ctx, "write-request", "write")
+	if strings.Contains(page("/operations/write-request"), "allow reads") {
+		t.Fatal("a write offered read trust")
+	}
+	if w := formRequest(h, cookie, "POST", "/operations/write-request/approve", trust); w.Code != 400 {
+		t.Fatalf("read trust from a write: %d", w.Code)
+	}
+	call(ctx, "read-source", "list")
+	review := page("/operations/read-source")
+	if !strings.Contains(review, "Approve &amp; allow reads in this thread") || !strings.Contains(review, "<code>list</code>, <code>search</code></p>") {
+		t.Fatalf("read trust offer missing or lists the wrong tools:\n%s", review)
+	}
+	never := url.Values{"trust": {"read"}, "scope": {"thread"}, "expiry": {"never"}}
+	if w := formRequest(h, cookie, "POST", "/operations/read-source/approve", never); w.Code != 400 {
+		t.Fatalf("indefinite read trust: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "POST", "/operations/read-source/approve", trust); w.Code != 303 {
+		t.Fatalf("grant read trust: %d %s", w.Code, w.Body.String())
+	}
+	if o := call(ctx, "read-auto", "search"); o.Status != "ready" || o.ApprovalBreadth != "read" {
+		t.Fatalf("trusted read = %+v", o)
+	}
+	for _, name := range []string{"write", "draft"} {
+		if o := call(ctx, name+"-after", name); o.Status != "pending" {
+			t.Fatalf("%s ran under read trust: %s", name, o.Status)
+		}
+	}
+	if o := call(identity("T-01a0b6d8-e50f-7723-941c-60bca63723bb"), "other-thread", "search"); o.Status != "pending" {
+		t.Fatalf("thread trust covered another thread: %s", o.Status)
+	}
+	if !strings.Contains(page("/operations/read-auto"), "Allowed by your thread read trust") {
+		t.Fatal("automatic read does not name its trust")
+	}
+	if strings.Contains(page("/approval-grants"), "/revoke") {
+		t.Fatal("read trust listed as a standing approval")
+	}
+	grants, err := s.ApprovalGrants(t.Context())
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("grants = %v: %v", grants, err)
+	}
+	if manage := page("/read-trust"); !strings.Contains(manage, "/read-trust/"+grants[0].ID+"/revoke") {
+		t.Fatalf("read trust page does not offer revocation:\n%s", manage)
+	}
+	if w := formRequest(h, cookie, "POST", "/read-trust/"+grants[0].ID+"/revoke", nil); w.Code != 303 {
+		t.Fatalf("revoke: %d", w.Code)
+	}
+	if o := call(ctx, "after-revoke", "search"); o.Status != "pending" {
+		t.Fatalf("revoked read trust still applied: %s", o.Status)
+	}
+	if !strings.Contains(page("/audit?period=all"), "Read trust revoked") {
+		t.Fatal("audit history does not name the read trust revocation")
+	}
+}
+
+func TestBrowserToolsHaveFixedClasses(t *testing.T) {
+	_, s, b := fixture(t)
+	cfg := Config{AmpUserID: "owner", BaseURL: "http://localhost"}
+	ConfigureChrome(&cfg)
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"snapshot": "read", "screenshot": "read", "status": "read", "scroll": "write", "click": "high_risk", "type": "high_risk", "navigate": "high_risk"}
+	for _, tool := range g.tools {
+		if got := g.toolClass(tool); got != want[tool.Name] {
+			t.Errorf("%s class = %q, want %q", tool.ID, got, want[tool.Name])
+		}
+	}
+	if g.readTrustAvailable(store.Operation{Class: "read", Connection: "browser", AmpUserID: "owner", AmpThreadID: "thread"}) {
+		t.Fatal("browser reads offered read trust")
+	}
+	for i := range cfg.Tools {
+		if cfg.Tools[i].ID == "browser.click" {
+			cfg.Tools[i].Class = "read"
+		}
+	}
+	if _, err := New(cfg, s, b); err == nil {
+		t.Fatal("browser click was reclassified as Read")
 	}
 }

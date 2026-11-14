@@ -48,7 +48,9 @@ type Operation struct {
 	Digest                        string          `json:"digest"`
 	Binding                       string          `json:"binding"`
 	ConnectionBinding             string          `json:"connection_binding,omitempty"`
+	Class                         string          `json:"class,omitempty"`
 	ApprovalScope                 string          `json:"approval_scope,omitempty"`
+	ApprovalBreadth               string          `json:"approval_breadth,omitempty"`
 	ApprovalGrant                 string          `json:"approval_grant,omitempty"`
 	ApprovalGrantSource           string          `json:"approval_grant_source,omitempty"`
 	Private                       bool            `json:"private,omitempty"`
@@ -440,7 +442,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 				return o, err
 			}
 			if grant != nil {
-				o.ApprovalScope, o.ApprovalGrant = grant.Scope, grant.ID
+				o.ApprovalScope, o.ApprovalBreadth, o.ApprovalGrant = grant.Scope, grant.Breadth, grant.ID
 				o.ApprovalGrantSource = grant.OperationID
 				o.Status = "ready"
 				break
@@ -469,7 +471,7 @@ func (s *Store) Submit(ctx context.Context, o Operation) (Operation, error) {
 	if err = event(ctx, tx, o.ID, o.Status, actor); err != nil {
 		return o, err
 	}
-	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
+	if err := s.saveSummary(ctx, tx, OperationSummary{ID: o.ID, Tool: o.Tool, Account: o.Account, Connection: o.Connection, AmpUserID: o.AmpUserID, ApprovalScope: o.ApprovalScope, ApprovalBreadth: o.ApprovalBreadth, ApprovalGrantSource: o.ApprovalGrantSource}); err != nil {
 		return o, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -531,7 +533,7 @@ func (s *Store) decide(ctx context.Context, id, actor string, approve bool, opti
 		if err := s.saveGrant(ctx, tx, o, *options); err != nil {
 			return err
 		}
-		if err := event(ctx, tx, id, "approval-"+options.Scope, actor); err != nil {
+		if err := event(ctx, tx, id, grantEvent(options.Breadth, options.Scope), actor); err != nil {
 			return err
 		}
 	}

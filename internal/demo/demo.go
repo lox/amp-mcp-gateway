@@ -61,8 +61,8 @@ func Start(ctx context.Context, baseURL, token string) (gateway.Config, http.Han
 		{ID: "reference", URL: endpoint + "/read", Account: "Disposable reference account", TokenEnv: "GATEWAY_DEMO_UPSTREAM_TOKEN"},
 		{ID: "notes", URL: endpoint + "/write", Account: "Disposable OAuth notes account", OAuth: &upstream.OAuthConfig{ClientID: "gateway-demo", AuthURL: baseURL + "/demo/authorize", TokenURL: endpoint + "/token", Scopes: []string{"notes:write"}}},
 	}, Tools: []gateway.Tool{
-		{ID: "reference.echo", Connection: "reference", Name: "echo", Description: "Read back reference text", Policy: "allow", InputSchema: schema},
-		{ID: "notes.create", Connection: "notes", Name: "create_note", Description: "Create a disposable note", Policy: "require_approval", InputSchema: schema},
+		{ID: "reference.echo", Connection: "reference", Name: "echo", Description: "Read back reference text", Policy: "allow", Class: "read", InputSchema: schema},
+		{ID: "notes.create", Connection: "notes", Name: "create_note", Description: "Create a disposable note", Policy: "require_approval", Class: "write", InputSchema: schema},
 	}}
 	mux := http.NewServeMux()
 	for _, spec := range []struct{ path, name string }{{"/read", "echo"}, {"/write", "create_note"}} {
