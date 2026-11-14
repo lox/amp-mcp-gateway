@@ -609,8 +609,14 @@ persistent volume. It does not run demo mode or fake providers. Before relying o
 a deployment, verify health, authenticated Amp discovery, unauthenticated rejection
 and a complete browser login against its configured identity provider.
 
-Login verifies Amp OIDC and requires `/api/v2/actor` to return a user actor and
-the configured `AmpWorkspaceID`. Email addresses are not identity keys.
+Login verifies Amp OIDC and requires `/api/v2/actor` to return a user actor.
+The [current actor API](https://ampcode.com/api/external) returns identity and scopes,
+not workspace data. The gateway separately checks
+`GET /api/v2/workspaces/{AmpWorkspaceID}/projects?limit=1` with the same access token.
+Amp enforces the selected workspace and current membership on this endpoint; the
+gateway rejects failed, redirected or malformed responses and accepts an empty
+project list. This uses the already-required `amp.api:workspace.projects:view`
+scope, not a new permission. Email addresses are not identity keys.
 If the browser reports `authentication failed`, check Fly logs for
 `browser authentication failed` and its `reason`: `token_exchange`,
 `missing_id_token`, `id_token_verification`, `nonce` or `actor`.
@@ -646,7 +652,7 @@ To configure a deployment:
    If your workspace requires a custom domain, set `AmpAPIBaseURL` to
    `https://YOUR-WORKSPACE-DOMAIN/api/v2`. It defaults to `https://ampcode.com/api/v2`
    and must be HTTPS with no credentials, query or fragment. This changes the
-   actor endpoint only; the OAuth issuer and resource remain Amp's fixed URLs.
+   Amp API endpoints; the OAuth issuer and resource remain Amp's fixed URLs.
 3. Enable `amp.api:workspace.projects:view` on the OAuth application. Login requests
    `openid profile email offline_access amp.api:workspace.projects:view` with
    `resource=https://ampcode.com/api/v2`. Confirm refresh-token issuance in a real
@@ -660,9 +666,9 @@ To configure a deployment:
 If browser login returns `authentication failed`, inspect the gateway's
 `browser authentication failed` log entry. `reason=actor` includes a safe `detail`
 distinguishing an upstream HTTP status, an unreadable/malformed response, a non-user
-actor, a missing identity or a workspace mismatch. Tokens and upstream response
-bodies are never logged. A workspace mismatch is not permission to remove the
-workspace check; verify the configured workspace and OAuth application instead.
+actor, a missing identity or failed workspace authorization. Tokens and upstream
+response bodies are never logged. For a workspace denial, verify the configured
+workspace and OAuth application rather than removing the workspace check.
 
 Import configuration without printing it or putting it into process arguments:
 
