@@ -237,7 +237,7 @@ func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding st
 	}
 	if !browser {
 		m.mu.Unlock()
-		return m.fallback.Call(ctx, connection, tool, "", args)
+		return m.fallback.Call(ctx, connection, tool, expectedBinding, args)
 	}
 	id, pending, err := c.start(tool, args)
 	m.mu.Unlock()

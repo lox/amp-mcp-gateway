@@ -37,6 +37,8 @@ import (
 type Tool struct {
 	ID, Connection, Name, Description, Policy string
 	InputSchema                               map[string]any
+	// Artifact pins a reviewed JavaScript bundle, capabilities and credential generation.
+	Artifact string `json:",omitempty"`
 }
 
 // Config holds non-secret configuration. Secrets are supplied by environment variables.
@@ -171,6 +173,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				return nil, errors.New("invalid native integration tool")
 			}
 		}
+		if connection != nil && connection.JavaScript != nil && t.Artifact != connection.JavaScript.Binding(os.Getenv(connection.TokenEnv)) {
+			continue
+		} // Candidate code is unavailable until its metadata is reviewed.
 		compiler := jsonschema.NewCompiler()
 		// Upstream schemas are untrusted: only references within this document are allowed.
 		compiler.UseLoader(jsonschema.SchemeURLLoader{})
@@ -203,6 +208,9 @@ func (g *Gateway) binding(tool Tool) string {
 }
 
 func (g *Gateway) dynamicBinding(tool Tool) string {
+	if artifact := g.javascriptArtifact(tool.Connection); artifact != "" {
+		return artifact
+	}
 	if tool.ID == "browser.status" && tool.Name == "status" {
 		for _, connection := range g.cfg.Connections {
 			if connection.ID == tool.Connection && connection.Browser {
@@ -328,7 +336,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) {
+			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) || t.Artifact != g.javascriptArtifact(t.Connection) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -388,7 +396,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	}
 	c := in.Calls[0]
 	t, ok := g.tools[c.ToolID]
-	if !ok {
+	if !ok || t.Artifact != g.javascriptArtifact(t.Connection) {
 		return store.Operation{}, errors.New("unknown tool")
 	}
 	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
@@ -491,10 +499,10 @@ func (g *Gateway) Run(ctx context.Context) error {
 			expectedBinding := ""
 			valid := false
 			integration, native := g.integration(t.Connection)
-			if ok && t.Policy != "deny" && !native {
+			if ok && t.Policy != "deny" && !native && t.Artifact == g.javascriptArtifact(t.Connection) {
 				expectedBinding = g.dynamicBinding(t)
 				valid = g.bindingWith(t, expectedBinding) == o.Binding
-			} else if ok && t.Policy != "deny" {
+			} else if ok && t.Policy != "deny" && native {
 				valid = g.bindingWith(t, "") == o.Binding
 			}
 			if valid && o.ConnectionBinding != "" {
@@ -513,7 +521,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			if native {
 				result, callErr = g.callIntegration(operationContext{Context: callCtx, Operation: o}, integration, t.Name, o.Arguments)
 			} else {
-				result, callErr = g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
+				result, callErr = g.backend.Call(upstream.WithOperation(callCtx, o.ID), t.Connection, t.Name, expectedBinding, o.Arguments)
 			}
 			cancel()
 			status := "succeeded"
@@ -739,6 +747,15 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
 		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }
 		data["ThreadShort"], data["WorkspaceShort"], data["ProjectShort"] = short(o.AmpThreadID), short(o.AmpWorkspaceID), short(o.AmpProjectID)
+	}
+	attempts, err := g.store.HTTPAttempts(r.Context(), o.ID)
+	if err != nil {
+		http.Error(w, "HTTP journal unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if len(attempts) > 0 {
+		encoded, _ := json.Marshal(attempts)
+		data["HTTPAttempts"] = prettyJSON(encoded)
 	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
