@@ -657,6 +657,13 @@ To configure a deployment:
    standard base64. Back up the encryption key separately from the database.
    Never put credentials in source, command arguments, logs or chat.
 
+If browser login returns `authentication failed`, inspect the gateway's
+`browser authentication failed` log entry. `reason=actor` includes a safe `detail`
+distinguishing an upstream HTTP status, an unreadable/malformed response, a non-user
+actor, a missing identity or a workspace mismatch. Tokens and upstream response
+bodies are never logged. A workspace mismatch is not permission to remove the
+workspace check; verify the configured workspace and OAuth application instead.
+
 Import configuration without printing it or putting it into process arguments:
 
 ```sh
