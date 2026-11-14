@@ -36,6 +36,6 @@ kill_timeout = "10s"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "256mb"
+  memory = "1gb"
 
 # No replicas: one process owns the SQLite volume. Use fly deploy --ha=false.
