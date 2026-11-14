@@ -201,9 +201,6 @@
     border-left: 3px solid;
     @apply p-[12px_16px] text-[14px] leading-[1.6];
   }
-  :where(html.dashboard) footer {
-    @apply text-[12px] mt-8;
-  }
   @media (max-width: 600px) {
     :where(html.dashboard) dl {
       @apply grid-cols-[1fr] gap-[6px];
@@ -1195,9 +1192,6 @@
   }
   :where(html.dashboard) .operation .scope-option input {
     @apply accent-ink;
-  }
-  :where(html.dashboard) footer {
-    @apply text-muted leading-[1.6];
   }
   @media (max-width: 800px) {
     :where(html.dashboard) .shell {
