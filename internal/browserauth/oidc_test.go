@@ -1,6 +1,7 @@
 package browserauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,8 +31,12 @@ func TestAmpHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"valid", "valid access hash", "valid userinfo", "valid mismatched userinfo", "valid unavailable userinfo", "valid oversized profile", "valid unsafe picture", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
+	for _, scenario := range []string{"valid", "valid access hash", "valid userinfo", "valid mismatched userinfo", "valid unavailable userinfo", "valid oversized profile", "valid unsafe picture", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "actor unauthorized", "actor forbidden", "actor malformed", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
 		t.Run(scenario, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
 			var issuer, nonce, challenge string
 			mux := http.NewServeMux()
 			write := func(w http.ResponseWriter, v any) {
@@ -115,6 +121,15 @@ func TestAmpHandshake(t *testing.T) {
 					id = ""
 				case "actor failure":
 					http.Error(w, "secret", 500)
+					return
+				case "actor unauthorized":
+					http.Error(w, "access-secret", 401)
+					return
+				case "actor forbidden":
+					http.Error(w, "sensitive upstream details", 403)
+					return
+				case "actor malformed":
+					_, _ = w.Write([]byte("sensitive invalid JSON"))
 					return
 				}
 				write(w, map[string]any{"actor": map[string]string{"type": kind, "id": id}, "workspace": map[string]string{"id": workspace}})
@@ -210,6 +225,20 @@ func TestAmpHandshake(t *testing.T) {
 			}
 			if strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), "sensitive") {
 				t.Fatal("leaked sensitive error")
+			}
+			if strings.Contains(logs.String(), "secret") || strings.Contains(logs.String(), "sensitive") {
+				t.Fatal("leaked credentials or upstream response in logs")
+			}
+			if detail := map[string]string{
+				"wrong workspace": "actor workspace mismatch", "missing workspace": "actor workspace mismatch",
+				"machine actor": "actor is not a user", "empty actor": "missing actor ID",
+				"actor failure": "actor endpoint returned HTTP 500", "actor unauthorized": "actor endpoint returned HTTP 401",
+				"actor forbidden": "actor endpoint returned HTTP 403", "actor malformed": "invalid actor response JSON",
+			}[scenario]; detail != "" {
+				var event struct{ Reason, Detail string }
+				if err := json.Unmarshal(logs.Bytes(), &event); err != nil || event.Reason != "actor" || event.Detail != detail {
+					t.Fatalf("missing safe actor diagnostic: %s", logs.String())
+				}
 			}
 			if callback().Code != http.StatusBadRequest {
 				t.Fatal("replayed callback accepted")

@@ -453,8 +453,12 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ampID, err := a.actor(ctx, token.AccessToken)
-	if err != nil || idToken.Subject == "" {
-		slog.Warn("browser authentication failed", "reason", "actor")
+	if err == nil && idToken.Subject == "" {
+		err = errors.New("missing ID token subject")
+	}
+	if err != nil {
+		// actor returns only gateway-owned diagnostics, never upstream bodies or tokens.
+		slog.Warn("browser authentication failed", "reason", "actor", "detail", err)
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
@@ -528,8 +532,23 @@ func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
 		Workspace struct{ ID string }
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
-	if err != nil || len(body) > 64<<10 || res.StatusCode != http.StatusOK || json.Unmarshal(body, &actor) != nil || actor.Actor.Type != "user" || strings.TrimSpace(actor.Actor.ID) == "" || actor.Workspace.ID != a.workspaceID {
-		return "", errors.New("invalid actor or workspace")
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("actor endpoint returned HTTP %d", res.StatusCode)
+	}
+	if err != nil || len(body) > 64<<10 {
+		return "", errors.New("actor response unreadable or too large")
+	}
+	if json.Unmarshal(body, &actor) != nil {
+		return "", errors.New("invalid actor response JSON")
+	}
+	if actor.Actor.Type != "user" {
+		return "", errors.New("actor is not a user")
+	}
+	if strings.TrimSpace(actor.Actor.ID) == "" {
+		return "", errors.New("missing actor ID")
+	}
+	if actor.Workspace.ID != a.workspaceID {
+		return "", errors.New("actor workspace mismatch")
 	}
 	return actor.Actor.ID, nil
 }
