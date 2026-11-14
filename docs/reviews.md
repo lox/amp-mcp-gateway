@@ -242,7 +242,15 @@ legacy jobs remain visible but cannot be rerun with invented text.
 
 The importer and its tests are excluded from normal gateway builds. Before use,
 run `mise exec -- go test -tags=reviewimport ./internal/reviews -run TestLegacyOfflineImport`.
-No production-sized export has been rehearsed yet; allow for offline import time.
+Rehearse the export against a disposable copy of the configured account database;
+compare records and verify that a second import adds nothing. Allow for offline
+import time and take a fresh, drained export at cutover.
+
+Keep the original export unchanged. If repository names have changed, prepare a
+separate import copy only after verifying the immutable repository ID. Keep records
+for transferred or unapproved repositories in the protected backup rather than
+expanding approvals merely to import their history. Historical project mappings
+do not prove current execution access; verify them before enabling repository rows.
 
 ### Existing gateway configuration
 
