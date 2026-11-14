@@ -110,6 +110,11 @@ whose mode is not `reviewbot-v1`; this verifies the mode key, **not cryptographi
 attestation of its model definition**. Keep the execution account's plugin under
 operator control.
 
+Size the host for the native CLI and its plugin subprocesses as well as the Go
+gateway, even though review inference runs in remote orbs. The deployment baseline
+is in [`fly.toml`](../fly.toml); a 256 MiB host is insufficient for the measured
+single-review footprint. Check memory headroom before adding concurrent accounts.
+
 ## Lifecycle and operational limits
 
 - Signed `opened`, `reopened`, `synchronize` and `ready_for_review` events enqueue
