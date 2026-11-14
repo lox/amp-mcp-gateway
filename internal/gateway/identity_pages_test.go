@@ -43,7 +43,7 @@ func TestIdentityNamesOnApprovalAndAuditPages(t *testing.T) {
 	mac := hmac.New(sha256.New, make([]byte, 32))
 	_, _ = mac.Write([]byte(encoded))
 	cookie.Value = encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	approved := formRequest(h, cookie, "POST", "/operations/standing-source/approve", url.Values{"trust": {"project"}, "expiry": {"never"}})
+	approved := formRequest(h, cookie, "POST", "/operations/standing-source/approve", url.Values{"trust": {"project"}, "expiry": {"never"}, "arguments": {"exact"}})
 	if approved.Code != 303 {
 		t.Fatal("could not save project approval")
 	}

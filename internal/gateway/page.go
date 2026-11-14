@@ -288,7 +288,7 @@ document.getElementById('secret-form').addEventListener('submit', event => {
 <dt>Arguments</dt><dd>{{range $.ArgumentRows}}<div class="receipt-arg"><code>{{index . 0}}</code><span aria-hidden="true">=</span><pre>{{index . 1}}</pre></div>{{else}}None{{end}}</dd>
 <dt>Requested</dt><dd><time datetime="{{iso .Created}}">{{ago $.Requested}}</time></dd></dl>
 <form class="receipt-actions" method="post" action="/operations/{{.ID}}/approve"><button class="primary" name="trust" value="once">Trust once</button>{{if and .AmpUserID .AmpThreadID}}<button name="trust" value="thread">Trust for this thread</button>{{if .AmpProjectID}}<button name="trust" value="project">Trust for this project</button>{{end}}{{end}}<button class="danger" formaction="/operations/{{.ID}}/deny">Deny</button>
-{{if and .AmpUserID .AmpThreadID}}<label class="receipt-expiry">Trust lasts <select name="expiry"><option value="24h" selected>24 hours</option><option value="never">Forever</option></select></label>{{end}}</form>
+{{if and .AmpUserID .AmpThreadID}}<div class="receipt-settings"><label class="receipt-setting">Trust lasts <select name="expiry"><option value="24h" selected>24 hours</option><option value="never">Forever</option></select></label><label class="receipt-setting">Arguments <select name="arguments"><option value="exact" selected>Exact match</option><option value="any">Any</option></select></label></div>{{end}}</form>
 </article>
 {{else}}<a href="/audit">← Audit</a><div class="heading"><h1>{{$.Title}}</h1></div>
 <p class="sub"><code>{{.Tool}}</code> · {{.Account}} <small>(configured account label)</small></p>

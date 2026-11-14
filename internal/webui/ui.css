@@ -1397,14 +1397,17 @@
   :where(html.dashboard) .receipt-actions .danger {
     @apply ml-auto;
   }
-  :where(html.dashboard) .receipt-expiry {
-    @apply basis-full flex items-center gap-1 text-muted text-[13px] font-normal m-0;
+  :where(html.dashboard) .receipt-settings {
+    @apply basis-full flex flex-wrap gap-x-6 gap-y-1;
   }
-  :where(html.dashboard) .receipt-expiry select {
+  :where(html.dashboard) .receipt-setting {
+    @apply flex items-center gap-1 text-muted text-[13px] font-normal m-0;
+  }
+  :where(html.dashboard) .receipt-setting select {
     @apply w-auto m-0 p-[2px_4px] text-[13px] text-ink bg-transparent rounded-[3px] cursor-pointer;
     border: 1px solid transparent;
   }
-  :where(html.dashboard) .receipt-expiry select:hover {
+  :where(html.dashboard) .receipt-setting select:hover {
     border-color: var(--color-divider);
   }
   :where(html.dashboard) .approval-grants button {

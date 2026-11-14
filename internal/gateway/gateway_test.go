@@ -491,7 +491,7 @@ func TestOperationPresentation(t *testing.T) {
 			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Trust once") {
 				t.Fatal("arguments must precede approval")
 			}
-			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) || strings.Contains(body, `name="expiry"`) {
+			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) || strings.Contains(body, `name="expiry"`) || strings.Contains(body, `name="arguments"`) {
 				t.Fatal("standing scope offered without verified Amp identity")
 			}
 			if len(o.Result) > 0 {
@@ -536,7 +536,7 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
