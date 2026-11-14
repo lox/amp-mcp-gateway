@@ -536,7 +536,7 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`, `<strong>test account</strong> <span class="receipt-unverified"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}

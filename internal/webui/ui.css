@@ -1378,6 +1378,10 @@
   :where(html.dashboard) .receipt-rows dt {
     @apply text-muted font-normal;
   }
+  :where(html.dashboard) .receipt-unverified {
+    @apply inline-block ml-2 px-[6px] py-[1px] rounded-[3px] text-[11px] font-semibold text-muted align-middle bg-inset;
+    border: 1px solid var(--color-divider);
+  }
   :where(html.dashboard) .receipt-arg {
     @apply flex items-baseline gap-2 font-mono text-[13px];
   }
