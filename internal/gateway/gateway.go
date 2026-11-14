@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -585,15 +586,22 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			if r.Form.Get("remember") != "on" {
+			// Trust once approves only this request. Thread or project trust also
+			// saves a standing approval for this tool with the exact arguments or any.
+			switch trust := r.Form.Get("trust"); trust {
+			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
-			} else {
-				options := store.ApprovalOptions{Breadth: r.Form.Get("breadth"), Scope: r.Form.Get("scope"), Expiry: r.Form.Get("expiry")}
-				if !slices.Contains([]string{"exact", "tool", "connection"}, options.Breadth) || !slices.Contains([]string{"thread", "project"}, options.Scope) || !slices.Contains([]string{"never", "1h", "24h"}, options.Expiry) {
+			case "thread", "project":
+				breadth := map[string]string{"exact": "exact", "any": "tool"}[r.Form.Get("arguments")]
+				options := store.ApprovalOptions{Breadth: breadth, Scope: trust, Expiry: r.Form.Get("expiry")}
+				if breadth == "" || (options.Expiry != "24h" && options.Expiry != "never") {
 					http.Error(w, "Invalid approval.", http.StatusBadRequest)
 					return
 				}
 				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
+			default:
+				http.Error(w, "Invalid approval.", http.StatusBadRequest)
+				return
 			}
 		} else {
 			err = g.store.Decide(r.Context(), r.PathValue("id"), actor, false)
@@ -703,6 +711,17 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next}
+	if o.Status == "pending" {
+		rows := make([][2]string, 0, len(o.Arguments))
+		for _, key := range slices.Sorted(maps.Keys(o.Arguments)) {
+			value, _ := json.Marshal(o.Arguments[key])
+			rows = append(rows, [2]string{key, prettyJSON(value)})
+		}
+		data["ArgumentRows"] = rows
+		data["Requested"] = time.Unix(o.Created, 0)
+		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
+		data["ThreadShort"] = "…" + o.AmpThreadID[max(0, len(o.AmpThreadID)-4):]
+	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")

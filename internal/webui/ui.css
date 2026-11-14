@@ -201,9 +201,6 @@
     border-left: 3px solid;
     @apply p-[12px_16px] text-[14px] leading-[1.6];
   }
-  :where(html.dashboard) footer {
-    @apply text-[12px] mt-8;
-  }
   @media (max-width: 600px) {
     :where(html.dashboard) dl {
       @apply grid-cols-[1fr] gap-[6px];
@@ -1190,15 +1187,11 @@
     @apply text-muted mt-[5px];
     overflow-wrap: anywhere;
   }
-  :where(html.dashboard) .operation .result pre,
-  :where(html.dashboard) .operation .amp-context {
+  :where(html.dashboard) .operation .result pre {
     @apply bg-inset rounded-[3px];
   }
   :where(html.dashboard) .operation .scope-option input {
     @apply accent-ink;
-  }
-  :where(html.dashboard) footer {
-    @apply text-muted leading-[1.6];
   }
   @media (max-width: 800px) {
     :where(html.dashboard) .shell {
@@ -1344,78 +1337,108 @@
     @apply text-[13px];
     color: #586b62;
   }
-  :where(html.dashboard) .amp-context {
-    background: #f2f5ef;
-    @apply rounded-[8px] p-4 m-[18px_0];
+  :where(html.dashboard) .receipt {
+    @apply p-0 pb-6 mt-4 rounded-[8px] overflow-hidden bg-white;
   }
-  :where(html.dashboard) .amp-context dl {
-    @apply grid-cols-[110px_1fr] m-0;
+  :where(html.dashboard) .receipt-head {
+    @apply flex items-start gap-4 p-[24px_28px_0];
   }
-  :where(html.dashboard) .approval-actions {
-    @apply grid grid-cols-[auto_1fr] items-end mt-6;
+  :where(html.dashboard) .receipt-head > div {
+    @apply min-w-0;
   }
-  :where(html.dashboard) .approval-form {
-    display: contents;
+  :where(html.dashboard) .operation .receipt-head h1 {
+    @apply m-0 text-[24px] leading-tight;
   }
-  :where(html.dashboard) .approval-form .primary {
-    justify-self: start;
+  :where(html.dashboard) .receipt-head .sub {
+    @apply text-muted m-0 mt-1;
+    overflow-wrap: normal;
   }
-  :where(html.dashboard) .remember-approval {
-    grid-column: 1 / -1;
+  :where(html.dashboard) .receipt-head .badge {
+    @apply ml-auto font-sans font-semibold rounded-[4px] whitespace-nowrap;
   }
-  :where(html.dashboard) .remember-toggle {
-    @apply flex items-start gap-3 cursor-pointer;
+  :where(html.dashboard) .receipt-icon {
+    @apply grid place-items-center size-11 rounded-[6px] font-mono text-[14px] font-semibold flex-none bg-inset;
+    border: 1px solid var(--color-divider);
   }
-  :where(html.dashboard) .remember-toggle input {
-    @apply w-4 h-4 m-[3px_0_0];
-    flex: none;
-    accent-color: #216442;
+  :where(html.dashboard) .receipt-context {
+    @apply flex flex-wrap gap-2 items-center text-muted text-[13px] m-[16px_28px_0];
   }
-  :where(html.dashboard) .remember-toggle span {
-    @apply grid gap-1;
+  :where(html.dashboard) .receipt-warning {
+    @apply bg-selected rounded-[4px] p-[8px_12px] text-[13px] m-[16px_28px_0];
   }
-  :where(html.dashboard) .remember-toggle small {
-    color: #586b62;
-    @apply leading-[1.5];
+  :where(html.dashboard) .receipt-rows {
+    @apply grid gap-0 m-[16px_28px_0];
+    grid-template-columns: 120px minmax(0, 1fr);
+    border-top: 1px solid var(--color-divider);
   }
-  :where(html.dashboard) .remember-options {
-    @apply hidden ml-7 mt-3 max-w-150;
+  :where(html.dashboard) .receipt-rows :is(dt, dd) {
+    @apply m-0 py-3;
+    border-bottom: 1px solid var(--color-divider);
   }
-  :where(html.dashboard) .remember-approval:has(input[name="remember"]:checked) .remember-options {
-    @apply grid gap-2;
+  :where(html.dashboard) .receipt-rows dt {
+    @apply text-muted font-normal;
   }
-  :where(html.dashboard) .remember-options details {
-    border-bottom: 1px solid #e7ebe5;
-    @apply pb-2;
+  :where(html.dashboard) .receipt-unverified {
+    @apply inline-block ml-2 px-[6px] py-[1px] rounded-[3px] text-[11px] font-semibold text-muted align-middle bg-inset;
+    border: 1px solid var(--color-divider);
   }
-  :where(html.dashboard) .remember-options summary {
-    @apply text-[14px];
+  :where(html.dashboard) .receipt-arg {
+    @apply flex items-baseline gap-2 font-mono text-[13px];
   }
-  :where(html.dashboard) .remember-options .change {
-    color: #226a4d;
-    @apply underline;
+  :where(html.dashboard) .receipt-arg + .receipt-arg {
+    @apply mt-1;
   }
-  :where(html.dashboard) .remember-options label {
-    @apply block text-[12px] font-semibold mt-3 mb-1;
+  :where(html.dashboard) .operation .receipt-arg pre {
+    @apply m-0 p-0 bg-transparent whitespace-pre-wrap text-[13px] leading-[1.5];
+    overflow-wrap: anywhere;
   }
-  :where(html.dashboard) .remember-options select {
-    @apply text-[13px] py-2;
+  :where(html.dashboard) .receipt-actions {
+    @apply flex flex-wrap items-center gap-3 p-[20px_28px_0];
   }
-  :where(html.dashboard) .remember-warning {
-    @apply bg-selected p-3 m-[8px_0_0] text-[13px] leading-[1.5];
+  :where(html.dashboard) .receipt-actions button {
+    @apply rounded-[4px];
   }
-  :where(html.dashboard) .remember-options .help {
-    @apply text-[12px] m-[2px_0_0];
+  :where(html.dashboard) .receipt-actions .danger {
+    @apply ml-auto;
+  }
+  :where(html.dashboard) .receipt-settings {
+    @apply basis-full flex flex-wrap gap-x-6 gap-y-1;
+  }
+  :where(html.dashboard) .receipt-setting {
+    @apply flex items-center gap-1 text-muted text-[13px] font-normal m-0;
+  }
+  :where(html.dashboard) .receipt-setting select {
+    @apply w-auto m-0 p-[2px_4px] text-[13px] text-ink bg-transparent rounded-[3px] cursor-pointer;
+    border: 1px solid transparent;
+  }
+  :where(html.dashboard) .receipt-setting select:hover {
+    border-color: var(--color-divider);
   }
   :where(html.dashboard) .approval-grants button {
     @apply whitespace-nowrap;
   }
   @media (max-width: 600px) {
-    :where(html.dashboard) .amp-context dl {
-      @apply grid-cols-[1fr];
+    :where(html.dashboard) .receipt-rows {
+      grid-template-columns: minmax(0, 1fr);
     }
-    :where(html.dashboard) .approval-actions {
-      @apply grid-cols-[1fr];
+    :where(html.dashboard) .receipt-rows dt {
+      @apply pb-0;
+      border-bottom: 0;
+    }
+    :where(html.dashboard) .receipt-head {
+      @apply flex-wrap p-[20px_20px_0];
+    }
+    :where(html.dashboard) .receipt-head .badge {
+      @apply ml-0 basis-full w-fit;
+    }
+    :where(html.dashboard) :is(.receipt-context, .receipt-warning, .receipt-rows) {
+      @apply mx-5;
+    }
+    :where(html.dashboard) .receipt-actions {
+      @apply flex-col items-stretch p-[20px_20px_0];
+    }
+    :where(html.dashboard) .receipt-actions .danger {
+      @apply ml-0;
     }
   }
 
