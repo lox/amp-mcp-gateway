@@ -528,8 +528,7 @@ func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
 	}
 	defer res.Body.Close()
 	var actor struct {
-		Actor     struct{ Type, ID string }
-		Workspace struct{ ID string }
+		Actor struct{ Type, ID string }
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
 	if res.StatusCode != http.StatusOK {
@@ -547,8 +546,28 @@ func (a *Auth) actor(ctx context.Context, accessToken string) (string, error) {
 	if strings.TrimSpace(actor.Actor.ID) == "" {
 		return "", errors.New("missing actor ID")
 	}
-	if actor.Workspace.ID != a.workspaceID {
-		return "", errors.New("actor workspace mismatch")
+	// /actor identifies the user but no longer returns workspace data. This
+	// explicit workspace endpoint verifies the token's workspace and membership
+	// using the projects:view scope already requested at login. An empty list is OK.
+	endpoint := strings.TrimSuffix(a.actorURL, "/actor") + "/workspaces/" + url.PathEscape(a.workspaceID) + "/projects?limit=1"
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", errors.New("invalid workspace endpoint")
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+	res, err = a.client.Do(req)
+	if err != nil {
+		return "", errors.New("workspace unavailable")
+	}
+	defer res.Body.Close()
+	body, err = io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("workspace endpoint returned HTTP %d", res.StatusCode)
+	}
+	var page struct{ Projects []json.RawMessage }
+	if err != nil || len(body) > 64<<10 || json.Unmarshal(body, &page) != nil || page.Projects == nil {
+		return "", errors.New("invalid workspace response")
 	}
 	return actor.Actor.ID, nil
 }

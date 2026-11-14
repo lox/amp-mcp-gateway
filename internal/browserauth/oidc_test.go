@@ -31,7 +31,7 @@ func TestAmpHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"valid", "valid access hash", "valid userinfo", "valid mismatched userinfo", "valid unavailable userinfo", "valid oversized profile", "valid unsafe picture", "wrong access hash", "wrong workspace", "missing workspace", "machine actor", "empty actor", "actor failure", "actor unauthorized", "actor forbidden", "actor malformed", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
+	for _, scenario := range []string{"valid", "valid access hash", "valid userinfo", "valid mismatched userinfo", "valid unavailable userinfo", "valid oversized profile", "valid unsafe picture", "wrong access hash", "wrong workspace", "missing workspace", "workspace unavailable", "workspace malformed", "workspace redirect", "machine actor", "empty actor", "actor failure", "actor unauthorized", "actor forbidden", "actor malformed", "wrong nonce", "wrong audience", "expired", "exchange rejected", "missing ID token", "save failed", "swapped state", "duplicate state"} {
 		t.Run(scenario, func(t *testing.T) {
 			var logs bytes.Buffer
 			previousLogger := slog.Default()
@@ -109,12 +109,8 @@ func TestAmpHandshake(t *testing.T) {
 				if r.Header.Get("Authorization") != "Bearer access-secret" {
 					t.Error("actor did not use access token")
 				}
-				id, kind, workspace := "amp-user", "user", "allowed-workspace"
+				id, kind := "amp-user", "user"
 				switch scenario {
-				case "wrong workspace":
-					workspace = "foreign-workspace"
-				case "missing workspace":
-					workspace = ""
 				case "machine actor":
 					kind = "m2m"
 				case "empty actor":
@@ -132,7 +128,33 @@ func TestAmpHandshake(t *testing.T) {
 					_, _ = w.Write([]byte("sensitive invalid JSON"))
 					return
 				}
-				write(w, map[string]any{"actor": map[string]string{"type": kind, "id": id}, "workspace": map[string]string{"id": workspace}})
+				// The current actor API has no workspace field, even on success.
+				write(w, map[string]any{"actor": map[string]any{"type": kind, "id": id, "scopes": []string{"amp.api:workspace.projects:view"}}})
+			})
+			mux.HandleFunc("GET /workspaces/{workspace}/projects", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer access-secret" || r.URL.Query().Get("limit") != "1" {
+					t.Error("wrong workspace authorization request")
+				}
+				if r.PathValue("workspace") != "allowed-workspace" {
+					// Following a redirect to another accessible workspace must not admit login.
+					write(w, map[string]any{"projects": []any{}})
+					return
+				}
+				switch scenario {
+				case "wrong workspace":
+					http.Error(w, "sensitive workspace denial", 403)
+				case "missing workspace":
+					http.Error(w, "sensitive missing workspace", 404)
+				case "workspace unavailable":
+					http.Error(w, "sensitive provider failure", 500)
+				case "workspace malformed":
+					_, _ = w.Write([]byte(`{"error":"sensitive unexpected response"}`))
+				case "workspace redirect":
+					http.Redirect(w, r, "/workspaces/foreign-workspace/projects?limit=1", http.StatusFound)
+				default:
+					// Membership does not require having any projects.
+					write(w, map[string]any{"projects": []any{}})
+				}
 			})
 			server := httptest.NewServer(mux)
 			defer server.Close()
@@ -230,8 +252,10 @@ func TestAmpHandshake(t *testing.T) {
 				t.Fatal("leaked credentials or upstream response in logs")
 			}
 			if detail := map[string]string{
-				"wrong workspace": "actor workspace mismatch", "missing workspace": "actor workspace mismatch",
-				"machine actor": "actor is not a user", "empty actor": "missing actor ID",
+				"wrong workspace": "workspace endpoint returned HTTP 403", "missing workspace": "workspace endpoint returned HTTP 404",
+				"workspace unavailable": "workspace endpoint returned HTTP 500", "workspace malformed": "invalid workspace response",
+				"workspace redirect": "workspace endpoint returned HTTP 302",
+				"machine actor":      "actor is not a user", "empty actor": "missing actor ID",
 				"actor failure": "actor endpoint returned HTTP 500", "actor unauthorized": "actor endpoint returned HTTP 401",
 				"actor forbidden": "actor endpoint returned HTTP 403", "actor malformed": "invalid actor response JSON",
 			}[scenario]; detail != "" {
@@ -256,11 +280,19 @@ func TestCustomWorkspaceAPIBase(t *testing.T) {
 	defer idp.Close()
 	issuer = idp.URL
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v2/actor" || r.Header.Get("Authorization") != "Bearer fixture-token" {
-			t.Error("wrong actor request")
+		if r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Error("wrong API token")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"actor":{"type":"user","id":"custom-user"},"workspace":{"id":"custom-workspace"}}`))
+		switch r.URL.Path {
+		case "/api/v2/actor":
+			_, _ = w.Write([]byte(`{"actor":{"type":"user","id":"custom-user","scopes":["amp.api:workspace.projects:view"]}}`))
+		case "/api/v2/workspaces/custom-workspace/projects":
+			_, _ = w.Write([]byte(`{"projects":[]}`))
+		default:
+			t.Error("wrong custom API path")
+			http.NotFound(w, r)
+		}
 	}))
 	defer api.Close()
 	cfg := Config{BaseURL: "https://gateway.example", Issuer: issuer, APIBaseURL: api.URL + "/api/v2/", ClientID: "client", ClientSecret: "fixture", WorkspaceID: "custom-workspace", SessionKey: base64.StdEncoding.EncodeToString(make([]byte, 32)), Login: func(context.Context, string, *oauth2.Token) error { return nil }}

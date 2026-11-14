@@ -68,7 +68,13 @@ func TestAmpLoginBrowserRoundTrip(t *testing.T) {
 		write(w, map[string]any{"access_token": "fixture-access", "refresh_token": "fixture-refresh", "token_type": "Bearer", "expires_in": 3600, "id_token": raw})
 	})
 	idpMux.HandleFunc("/actor", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]any{"actor": map[string]string{"type": "user", "id": "amp-fixture-alice"}, "workspace": map[string]string{"id": "fixture-workspace"}})
+		write(w, map[string]any{"actor": map[string]string{"type": "user", "id": "amp-fixture-alice"}})
+	})
+	idpMux.HandleFunc("/workspaces/fixture-workspace/projects", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fixture-access" {
+			t.Error("workspace check did not use the login access token")
+		}
+		write(w, map[string]any{"projects": []any{}})
 	})
 	app := httptest.NewUnstartedServer(nil)
 	preview := os.Getenv("AMP_LOGIN_PREVIEW") == "1"
