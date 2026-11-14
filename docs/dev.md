@@ -495,11 +495,10 @@ encrypted and is never rendered again. The ID publishes one governed tool named
 {"purpose":"publish the reviewed release"}
 ```
 
-With **Require approval**, the owner can approve one request or use the existing
-Remember controls to grant matching access to that Amp thread or project. Exact
-approvals also bind the purpose; tool-wide approvals permit any schema-valid purpose
-for that one secret. Because each secret is a separate native integration, a
-connection-wide approval is also limited to that secret. The configured **Allow**
+With **Require approval**, the owner can trust one request or trust that secret's
+tool for the Amp thread or project. Trusting the tool permits any schema-valid
+purpose for that one secret. Older exact or connection-wide grants stay limited to
+that secret, because each secret is a separate native integration. The configured **Allow**
 policy skips human review for any authenticated owner thread, while **Block** hides
 and denies the tool.
 
@@ -783,18 +782,19 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- A pending operation can be approved once, or **Remember this approval** can
-  authorize exact tool/argument matches, that tool with any arguments, or any
-  non-blocked tool on its connection. Saved approvals are limited to the verified
-  owner's thread or project. Project approval requires an Amp project claim.
+- The review card offers **Trust once**, **Trust for this thread**, **Trust for this
+  project** and **Deny**. Trust once approves only this request. Thread or project
+  trust also saves a standing approval for that tool with any arguments, limited to
+  the verified owner's thread or project; project trust requires an Amp project
+  claim. It lasts 24 hours by default, or until revoked when the owner picks
+  **Forever**. The card warns when Amp reports a multiplayer thread or one that
+  non-owners can influence.
 - The pending operation expires ten minutes after submission, including time spent
-  queued. New saved approvals default to exact arguments in this thread until
-  revoked, with optional one-hour or 24-hour expiry. Existing one-hour grants keep
-  their deadline. Restarting does not extend consent. Exact argument matching
-  ignores object key order and preserves JSON number spellings and precision.
-- Connection-wide approval binds the full current tool catalogue and its account,
-  policy and credential configuration. It does not silently cover added tools or
-  override blocked tools. Without JavaScript, the browser offers one-off approval only.
+  queued. Restarting does not extend consent. Exact-argument and connection-wide
+  grants saved before this card remain valid and revocable: exact matching ignores
+  object key order and preserves JSON number spellings and precision, and
+  connection-wide grants bind the full tool catalogue, never covering added or
+  blocked tools. Existing one-hour grants keep their deadline.
 - A queued grant-authorized call is checked again in the atomic claim transaction.
   Expiry, revocation or replacement of its original consent denies the call with
   audit actor `approval-grant-unavailable`. New consent cannot revive old queued

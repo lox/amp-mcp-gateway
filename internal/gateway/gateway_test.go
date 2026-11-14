@@ -445,7 +445,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || !strings.Contains(page.Body.String(), "Remember this approval") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Trust once") || !strings.Contains(page.Body.String(), "Trust for this thread") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -485,13 +485,13 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
 				t.Fatal("incorrect refresh control")
 			}
-			if strings.Contains(body, "Approve once") != (status == "pending") {
+			if strings.Contains(body, "Trust once") != (status == "pending") {
 				t.Fatal("incorrect approval control")
 			}
-			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once") {
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Trust once") {
 				t.Fatal("arguments must precede approval")
 			}
-			if strings.Contains(body, "This thread") || strings.Contains(body, "This project") {
+			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) || strings.Contains(body, `name="expiry"`) {
 				t.Fatal("standing scope offered without verified Amp identity")
 			}
 			if len(o.Result) > 0 {
@@ -522,11 +522,12 @@ func TestApprovalScopePresentation(t *testing.T) {
 	for _, tc := range []struct {
 		id, project string
 		wantProject bool
+		multiplayer bool
 	}{
-		{"with-project", "project-one", true},
-		{"without-project", "", false},
+		{"with-project", "project-one", true, false},
+		{"without-project", "", false, true},
 	} {
-		o := store.Operation{ID: tc.id, Tool: "notes.write", Connection: "notes", Account: "test account", Status: "pending", Arguments: map[string]any{"text": "review"}, AmpUserID: "user-owner", AmpWorkspaceID: "workspace-one", AmpProjectID: tc.project, AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+		o := store.Operation{ID: tc.id, Tool: "notes.write", Connection: "notes", Account: "test account", Status: "pending", Arguments: map[string]any{"text": "review"}, AmpUserID: "user-owner", AmpWorkspaceID: "workspace-one", AmpProjectID: tc.project, AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", AmpThreadMultiplayer: tc.multiplayer}
 		if _, err := s.Submit(t.Context(), o); err != nil {
 			t.Fatal(err)
 		}
@@ -535,13 +536,16 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once", "Remember this approval", `value="exact">Same tool + same arguments`, `value="thread">This thread`, `value="never">Until revoked`, "Expiry or revocation stops queued calls"} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, `value="project">This project`) != tc.wantProject {
+		if strings.Contains(body, `value="project">Trust for this project</button>`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
+		}
+		if strings.Contains(body, "Other people can influence this thread") != tc.multiplayer {
+			t.Errorf("%s: multiplayer warning mismatch", tc.id)
 		}
 	}
 }

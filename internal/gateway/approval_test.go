@@ -42,24 +42,26 @@ func TestExactApprovalPreservesMCPNumbers(t *testing.T) {
 	}
 }
 
-func TestRememberApprovalForm(t *testing.T) {
+func TestTrustApprovalForm(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		values url.Values
 		status int
-		grants int
+		grant  string // scope:expiry of the saved tool-wide grant, if any
 	}{
-		{"once ignores stale fields", url.Values{"breadth": {"connection"}, "scope": {"project"}, "expiry": {"never"}}, 303, 0},
-		{"remember exact", url.Values{"remember": {"on"}, "breadth": {"exact"}, "scope": {"thread"}, "expiry": {"never"}}, 303, 1},
-		{"remember connection", url.Values{"remember": {"on"}, "breadth": {"connection"}, "scope": {"project"}, "expiry": {"24h"}}, 303, 1},
-		{"missing options", url.Values{"remember": {"on"}}, 400, 0},
-		{"invalid expiry", url.Values{"remember": {"on"}, "breadth": {"tool"}, "scope": {"thread"}, "expiry": {"forever"}}, 400, 0},
+		{"once ignores expiry", url.Values{"trust": {"once"}, "expiry": {"never"}}, 303, ""},
+		{"no trust field approves once", nil, 303, ""},
+		{"thread for 24 hours", url.Values{"trust": {"thread"}, "expiry": {"24h"}}, 303, "thread:24h"},
+		{"project forever", url.Values{"trust": {"project"}, "expiry": {"never"}}, 303, "project:never"},
+		{"missing expiry", url.Values{"trust": {"thread"}}, 400, ""},
+		{"unoffered expiry", url.Values{"trust": {"thread"}, "expiry": {"1h"}}, 400, ""},
+		{"unknown trust", url.Values{"trust": {"connection"}, "expiry": {"24h"}}, 400, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g, s, _ := fixture(t)
 			g.cfg.AmpUserID = "user-owner"
 			ctx := withAmpIdentity(t.Context(), ampIdentity{Subject: "amp:user-owner", UserID: "user-owner", ThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", ProjectID: "project"})
-			o, err := g.submit(ctx, input("remember-form", "exact text"))
+			o, err := g.submit(ctx, input("trust-form", "exact text"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,10 +71,17 @@ func TestRememberApprovalForm(t *testing.T) {
 				t.Fatalf("status %d: %s", w.Code, w.Body.String())
 			}
 			grants, err := s.ApprovalGrants(t.Context())
-			if err != nil || len(grants) != tc.grants {
-				t.Fatalf("grants = %v: %v", grants, err)
+			if err != nil {
+				t.Fatal(err)
 			}
-			got, err := s.Get(t.Context(), o.ID)
+			got := ""
+			if len(grants) == 1 && grants[0].Breadth == "tool" && grants[0].Tool == o.Tool {
+				got = grants[0].Scope + ":" + grants[0].Expiry
+			}
+			if got != tc.grant || len(grants) > 1 || (tc.grant == "" && len(grants) != 0) {
+				t.Fatalf("grants = %+v, want %q", grants, tc.grant)
+			}
+			op, err := s.Get(t.Context(), o.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,8 +89,8 @@ func TestRememberApprovalForm(t *testing.T) {
 			if tc.status == 303 {
 				want = "ready"
 			}
-			if got.Status != want {
-				t.Fatalf("operation = %s, want %s", got.Status, want)
+			if op.Status != want {
+				t.Fatalf("operation = %s, want %s", op.Status, want)
 			}
 		})
 	}
