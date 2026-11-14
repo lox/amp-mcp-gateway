@@ -52,7 +52,7 @@ func (draft *toolDraft) suggestPolicies(ctx context.Context, enabled bool, clien
 		if result.Policy == "" {
 			continue
 		}
-		draft.Tools[i].Policy = result.Policy
+		draft.Tools[i].Policy, draft.Tools[i].Class = result.Policy, result.Class
 		draft.Suggestions[draft.Tools[i].ID] = result
 	}
 }

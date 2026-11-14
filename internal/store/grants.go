@@ -41,7 +41,8 @@ func (g ApprovalGrant) Expires() time.Time {
 	return time.Unix(g.Created, 0).Add(time.Hour)
 }
 
-// ApprovalOptions describes reusable consent. All fields are required.
+// ApprovalOptions describes reusable consent. All fields are required. Breadth
+// "read" is read trust: every reviewed Read tool on the operation's connection.
 type ApprovalOptions struct {
 	Breadth string
 	Scope   string
@@ -68,6 +69,17 @@ func approvalGrant(o Operation, options ApprovalOptions) (ApprovalGrant, error) 
 	case "connection":
 		if o.ConnectionBinding == "" {
 			return g, errors.New("connection approval requires connection binding")
+		}
+		g.Tool, g.Binding = "", o.ConnectionBinding
+	case "read":
+		// Read trust covers every reviewed Read tool on the connection as
+		// configured now. The connection binding covers each tool's class and
+		// policy, so reclassifying or adding a tool needs new consent.
+		if o.Class != "read" || o.ConnectionBinding == "" {
+			return g, errors.New("read trust requires a reviewed Read tool and connection binding")
+		}
+		if options.Expiry == "never" {
+			return g, errors.New("read trust must expire")
 		}
 		g.Tool, g.Binding = "", o.ConnectionBinding
 	default:
@@ -102,7 +114,7 @@ func grantID(g ApprovalGrant) string {
 func approvalGrantIDs(o Operation) []string {
 	ids := []string{}
 	for _, scope := range []string{"thread", "project"} {
-		for _, breadth := range []string{"exact", "tool", "connection"} {
+		for _, breadth := range []string{"exact", "tool", "connection", "read"} {
 			if g, err := approvalGrant(o, ApprovalOptions{Breadth: breadth, Scope: scope, Expiry: "1h"}); err == nil {
 				// Expiry is deliberately not part of grant identity, allowing renewal.
 				ids = append(ids, g.ID)
@@ -256,4 +268,12 @@ func (s *Store) revokeConnectionGrants(ctx context.Context, tx *sql.Tx, credenti
 		}
 	}
 	return nil
+}
+
+// grantEvent names the audit event that records consent being saved.
+func grantEvent(breadth, scope string) string {
+	if breadth == "read" {
+		return "read-trust-" + scope
+	}
+	return "approval-" + scope
 }

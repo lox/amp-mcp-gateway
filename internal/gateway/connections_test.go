@@ -328,14 +328,17 @@ func TestDiscoverReviewPublishAndRevoke(t *testing.T) {
 	if o.Status != "denied" {
 		t.Fatal("pending request survived policy change")
 	}
-	if w := save(discover(), "allow"); w.Code != 303 {
+	if w := formRequest(h, cookie, "POST", "/connections/notes/tools", url.Values{"ticket": {discover()}, "default_policy": {"require_approval"}, "policy_0": {"allow"}, "class_0": {"read"}}); w.Code != 303 {
 		t.Fatal(w.Body.String())
 	}
-	// A remotely changed description resets permission in the review, without
-	// changing the published catalogue until an explicit save.
+	if g.tools["notes.write"].Class != "read" || g.drafts[discover()].Tools[0].Class != "read" {
+		t.Fatal("saved class not kept for an unchanged tool")
+	}
+	// A remotely changed description resets permission and class in the review,
+	// without changing the published catalogue until an explicit save.
 	add("Changed operation meaning")
 	changed := discover()
-	if g.drafts[changed].Tools[0].Policy != "require_approval" || g.tools["notes.write"].Policy != "allow" {
+	if g.drafts[changed].Tools[0].Policy != "require_approval" || g.drafts[changed].Tools[0].Class != "" || g.tools["notes.write"].Policy != "allow" {
 		t.Fatal("incorrect drift review behavior")
 	}
 	if w := save(changed, "require_approval"); w.Code != 303 {

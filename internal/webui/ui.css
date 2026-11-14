@@ -1574,3 +1574,52 @@
     .audit .filters { @apply grid-cols-1; }
   }
 }
+
+@layer components {
+  /* Read trust: class badges, the approval card and the management list. */
+  :where(html.dashboard) .heading-badges { @apply flex gap-2 items-center; }
+  :where(html.dashboard) .badge.class-read { @apply bg-positive text-positive-ink; }
+  :where(html.dashboard) .badge.class-write,
+  :where(html.dashboard) .badge.class-unreviewed { @apply bg-inset text-muted; }
+  :where(html.dashboard) .badge.class-high_risk { @apply bg-selected; color: #765000; }
+  :where(html.dashboard) .tool-class { @apply w-[110px]; flex: none; }
+  :where(html.dashboard) .policy-choice:has(.tool-class) .tool-policy { min-width: 0; }
+  :where(html.dashboard) .class-fixed { @apply whitespace-nowrap m-0; }
+  :where(html.dashboard) .policy-columns,
+  :where(html.dashboard) .policy-row { grid-template-columns: minmax(0, 1fr) 340px 32px; }
+  :where(html.dashboard) .bulk-mode .policy-columns,
+  :where(html.dashboard) .bulk-mode .policy-row { grid-template-columns: 20px minmax(0, 1fr) 340px 32px; }
+  :where(html.dashboard) .read-trust fieldset { @apply border-0 p-0 m-[16px_0]; }
+  :where(html.dashboard) .read-trust legend { @apply font-semibold p-0 mb-2; }
+  :where(html.dashboard) .trust-choices { @apply grid gap-[10px]; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  :where(html.dashboard) .trust-choice { @apply flex gap-[10px] p-[13px] rounded-[4px] cursor-pointer; border: 1px solid var(--color-divider); }
+  :where(html.dashboard) .trust-choice:has(input:checked) { border-color: var(--color-ink); box-shadow: inset 0 0 0 1px var(--color-ink); background: #f3f5f9; }
+  :where(html.dashboard) .trust-choice input { @apply m-[4px_0_0] w-4 h-4 self-start; flex: none; accent-color: var(--color-ink); }
+  :where(html.dashboard) .trust-choice strong,
+  :where(html.dashboard) .trust-choice small { @apply block; }
+  :where(html.dashboard) .trust-choice small { @apply text-muted mt-1; }
+  :where(html.dashboard) .trust-duration { @apply flex items-center gap-3; }
+  :where(html.dashboard) .trust-duration select { @apply w-auto; }
+  :where(html.dashboard) .read-trust .notice { @apply p-[12px_15px] text-[13px] m-[16px_0]; background: var(--color-inset); border-left: 3px solid #aab1bf; }
+  :where(html.dashboard) .read-trust .project-note { display: none; background: #fff7dc; border-left-color: #b28215; }
+  :where(html.dashboard) .read-trust:has(input[value="project"]:checked) .project-note { display: block; }
+  :where(html.dashboard) .read-trust:has(input[value="project"]:checked) .thread-note { display: none; }
+  :where(html.dashboard) .read-trust button .project-note { background: none; }
+  :where(html.dashboard) .read-trust:has(input[value="project"]:checked) button .project-note { display: inline; }
+  :where(html.dashboard) .trust-boundary { @apply flex flex-wrap gap-[22px] text-[12px] text-muted pt-4 m-[16px_0]; border-top: 1px solid var(--color-divider); }
+  :where(html.dashboard) .trust-source { @apply bg-positive; border-color: #a8cdb3; }
+  :where(html.dashboard) .trust-source h2 { @apply text-positive-ink; }
+  :where(html.dashboard) .trust-grant { @apply flex justify-between items-center gap-[14px] py-[18px]; border-top: 1px solid var(--color-divider); }
+  :where(html.dashboard) .trust-grant:first-child { @apply pt-0; border-top: 0; }
+  :where(html.dashboard) .trust-grant:last-child { @apply pb-0; }
+  :where(html.dashboard) .trust-grant .help { @apply m-[5px_0_0]; overflow-wrap: anywhere; }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .policy-columns,
+    :where(html.dashboard) .policy-row { grid-template-columns: minmax(0, 1fr) 32px; }
+    :where(html.dashboard) .bulk-mode .policy-columns,
+    :where(html.dashboard) .bulk-mode .policy-row { grid-template-columns: 20px minmax(0, 1fr) 32px; }
+    :where(html.dashboard) .trust-grant { @apply items-start; }
+    :where(html.dashboard) .policy-choice:has(.tool-class) { @apply flex-wrap; }
+    :where(html.dashboard) .policy-choice:has(.tool-class) .tool-policy { flex: 1 1 100%; }
+  }
+}

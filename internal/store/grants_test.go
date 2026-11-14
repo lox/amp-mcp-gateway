@@ -431,3 +431,62 @@ func TestApprovalGrantRevocationDoesNotCancelDirectOrRunningCalls(t *testing.T) 
 		t.Fatal("unknown call retried")
 	}
 }
+
+func TestReadTrustCoversReviewedReadsOnOneConnection(t *testing.T) {
+	s, _, _ := testStore(t)
+	op := func(id, tool, class, thread, project, connection string) Operation {
+		o := ampOperation(id, thread, project, tool+"-binding")
+		o.Tool, o.Class, o.ConnectionBinding = tool, class, connection
+		return o
+	}
+	write := submitWithGrants(t, s, op("write-source", "notes.create", "write", "thread-one", "project-one", "catalogue"))
+	if err := s.ApproveWithOptions(t.Context(), write.ID, "owner", ApprovalOptions{"read", "thread", "1h"}); err == nil {
+		t.Fatal("a write created read trust")
+	}
+	source := submitWithGrants(t, s, op("read-source", "notes.list", "read", "thread-one", "project-one", "catalogue"))
+	if err := s.ApproveWithOptions(t.Context(), source.ID, "owner", ApprovalOptions{"read", "thread", "never"}); err == nil {
+		t.Fatal("read trust accepted no expiry")
+	}
+	if got, _ := s.Get(t.Context(), source.ID); got.Status != "pending" {
+		t.Fatalf("rejected read trust changed the request: %s", got.Status)
+	}
+	if err := s.ApproveWithOptions(t.Context(), source.ID, "owner", ApprovalOptions{"read", "thread", "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	trusted := submitWithGrants(t, s, op("other-read", "notes.search", "read", "thread-one", "project-one", "catalogue"))
+	if trusted.Status != "ready" || trusted.ApprovalBreadth != "read" || trusted.ApprovalScope != "thread" {
+		t.Fatalf("read trust did not cover another reviewed read: %+v", trusted)
+	}
+	for name, o := range map[string]Operation{
+		"write":              op("write-after", "notes.create", "write", "thread-one", "project-one", "catalogue"),
+		"high-risk":          op("risk-after", "notes.export", "high_risk", "thread-one", "project-one", "catalogue"),
+		"unreviewed":         op("unreviewed-after", "notes.draft", "", "thread-one", "project-one", "catalogue"),
+		"another thread":     op("thread-two-read", "notes.search", "read", "thread-two", "project-one", "catalogue"),
+		"changed connection": op("changed-read", "notes.search", "read", "thread-one", "project-one", "changed-catalogue"),
+	} {
+		if got := submitWithGrants(t, s, o); got.Status != "pending" {
+			t.Fatalf("%s used thread read trust: %s", name, got.Status)
+		}
+	}
+	if err := s.ApproveWithOptions(t.Context(), "thread-two-read", "owner", ApprovalOptions{"read", "project", "24h"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := submitWithGrants(t, s, op("future-thread", "notes.list", "read", "thread-three", "project-one", "catalogue")); got.Status != "ready" || got.ApprovalScope != "project" {
+		t.Fatalf("project read trust did not cover a new owner thread: %+v", got)
+	}
+	if got := submitWithGrants(t, s, op("other-project", "notes.list", "read", "thread-four", "project-two", "catalogue")); got.Status != "pending" {
+		t.Fatalf("project read trust crossed projects: %s", got.Status)
+	}
+	// Revocation denies queued calls at claim, but not the directly approved source.
+	if err := s.RevokeApprovalGrant(t.Context(), trusted.ApprovalGrant, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	for range 10 {
+		s.Claim(t.Context())
+	}
+	for id, want := range map[string]string{"read-source": "running", "other-read": "denied"} {
+		if got, _ := s.Get(t.Context(), id); got.Status != want {
+			t.Fatalf("%s = %s, want %s", id, got.Status, want)
+		}
+	}
+}

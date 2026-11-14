@@ -20,22 +20,23 @@ func TestSuggest(t *testing.T) {
 		value     any
 		want      string
 		reason    string
+		class     string
 	}{
-		{"public read at threshold", "safe", 0.95, "allow", "Appears limited to public"},
-		{"below threshold", "safe", 0.949, "require_approval", "Uncertain whether"},
-		{"write at threshold", "writes", 0.05, "allow", "Appears limited to public"},
-		{"write above threshold", "writes", 0.051, "require_approval", "Cannot rule out the ability to modify stored data"},
-		{"deletion", "deletes", 0.9, "require_approval", "May delete stored data"},
-		{"communication", "communicates", 0.8, "require_approval", "May send messages or publish content"},
-		{"spending", "spends", 0.6, "require_approval", "May spend money"},
-		{"permissions", "permissions", 0.3, "require_approval", "Cannot rule out the ability to change permissions"},
-		{"credentials", "credentials", 0.8, "require_approval", "May access credentials or secrets"},
-		{"sensitive reads", "sensitive", 0.7, "require_approval", "May read private personal or business data"},
-		{"arbitrary execution", "execution", 0.9, "require_approval", "May execute caller-supplied code or queries"},
-		{"network requests", "requests", 0.9, "require_approval", "May make arbitrary network requests"},
-		{"null risk", "writes", nil, "require_approval", "unavailable"},
-		{"out of range", "safe", 2, "require_approval", "unavailable"},
-		{"wrong type", "safe", "yes", "require_approval", "unavailable"},
+		{"public read at threshold", "safe", 0.95, "allow", "Appears limited to public", "read"},
+		{"below threshold", "safe", 0.949, "require_approval", "Uncertain whether", "read"},
+		{"write at threshold", "writes", 0.05, "allow", "Appears limited to public", "read"},
+		{"write above threshold", "writes", 0.051, "require_approval", "Cannot rule out the ability to modify stored data", "write"},
+		{"deletion", "deletes", 0.9, "require_approval", "May delete stored data", "high_risk"},
+		{"communication", "communicates", 0.8, "require_approval", "May send messages or publish content", "high_risk"},
+		{"spending", "spends", 0.6, "require_approval", "May spend money", "high_risk"},
+		{"permissions", "permissions", 0.3, "require_approval", "Cannot rule out the ability to change permissions", "high_risk"},
+		{"credentials", "credentials", 0.8, "require_approval", "May access credentials or secrets", "high_risk"},
+		{"sensitive reads", "sensitive", 0.7, "require_approval", "May read private personal or business data", "read"},
+		{"arbitrary execution", "execution", 0.9, "require_approval", "May execute caller-supplied code or queries", "high_risk"},
+		{"network requests", "requests", 0.9, "require_approval", "May make arbitrary network requests", "high_risk"},
+		{"null risk", "writes", nil, "require_approval", "unavailable", ""},
+		{"out of range", "safe", 2, "require_approval", "unavailable", ""},
+		{"wrong type", "safe", "yes", "require_approval", "unavailable", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			answers := map[string]any{"safe": map[string]any{"type": "noul", "noul": 1}}
@@ -58,8 +59,8 @@ func TestSuggest(t *testing.T) {
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 			})}}
 			got := c.Suggest(context.Background(), Tool{Name: "lookup", InputSchema: map[string]any{"type": "object"}})
-			if got.Policy != tc.want {
-				t.Fatalf("got %s, want %s", got.Policy, tc.want)
+			if got.Policy != tc.want || got.Class != tc.class {
+				t.Fatalf("got %s/%q, want %s/%q", got.Policy, got.Class, tc.want, tc.class)
 			}
 			if !strings.Contains(got.Reason, tc.reason) {
 				t.Fatalf("reason %q does not explain %q", got.Reason, tc.reason)
@@ -118,5 +119,23 @@ func TestTransportFailureAndCancellation(t *testing.T) {
 		if got.Policy != "require_approval" || strings.Contains(got.Reason, "private") {
 			t.Fatalf("%+v", got)
 		}
+	}
+}
+
+func TestSuggestedClassTakesHighestCapability(t *testing.T) {
+	answers := map[string]any{"safe": map[string]any{"type": "noul", "noul": 0}}
+	for _, key := range []string{"writes", "deletes", "communicates", "spends", "permissions", "credentials", "sensitive", "execution", "requests"} {
+		answers[key] = map[string]any{"type": "noul", "noul": 0}
+	}
+	// A write that may also spend money is high-risk, whichever risk Jev lists first.
+	answers["writes"] = map[string]any{"type": "noul", "noul": 0.9}
+	answers["spends"] = map[string]any{"type": "noul", "noul": 0.2}
+	answers["sensitive"] = map[string]any{"type": "noul", "noul": 0.9}
+	body, _ := json.Marshal(map[string]any{"model": "jev-test", "answers": answers})
+	c := Client{Key: "key", HTTP: &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+	})}}
+	if got := c.Suggest(t.Context(), Tool{Name: "transfer"}); got.Class != "high_risk" {
+		t.Fatalf("class = %q, want high_risk", got.Class)
 	}
 }

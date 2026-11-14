@@ -24,8 +24,11 @@ type Client struct {
 }
 
 // Suggestion records the recommendation and the model used for human review.
+// Class is a suggested capability class (read, write or high_risk), empty when
+// Jev did not complete an assessment. It never authorizes anything until the
+// owner saves it.
 type Suggestion struct {
-	Policy, Model, Reason string
+	Policy, Model, Reason, Class string
 }
 
 // Suggest fails closed on incomplete evaluations. The caller selects eligible tools.
@@ -34,16 +37,18 @@ func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
 	if c.Key == "" {
 		return fallback
 	}
-	risks := []struct{ key, question, effect string }{
-		{"writes", "Can the tool create or modify stored data?", "modify stored data"},
-		{"deletes", "Can the tool delete stored data?", "delete stored data"},
-		{"communicates", "Can the tool send messages or publish content to other people?", "send messages or publish content"},
-		{"spends", "Can the tool spend money or initiate financial transactions?", "spend money"},
-		{"permissions", "Can the tool change permissions or account security settings?", "change permissions or account security"},
-		{"credentials", "Can the tool retrieve credentials, tokens, keys or other secrets?", "access credentials or secrets"},
-		{"sensitive", "Can the tool read private personal or business data?", "read private personal or business data"},
-		{"execution", "Can the tool execute caller-supplied code, SQL or shell commands?", "execute caller-supplied code or queries"},
-		{"requests", "Can the tool make network requests to arbitrary caller-supplied destinations?", "make arbitrary network requests"},
+	// class is the capability class a risk that cannot be ruled out implies.
+	// Private reads stay Read: read trust warns about private data instead.
+	risks := []struct{ key, question, effect, class string }{
+		{"writes", "Can the tool create or modify stored data?", "modify stored data", "write"},
+		{"deletes", "Can the tool delete stored data?", "delete stored data", "high_risk"},
+		{"communicates", "Can the tool send messages or publish content to other people?", "send messages or publish content", "high_risk"},
+		{"spends", "Can the tool spend money or initiate financial transactions?", "spend money", "high_risk"},
+		{"permissions", "Can the tool change permissions or account security settings?", "change permissions or account security", "high_risk"},
+		{"credentials", "Can the tool retrieve credentials, tokens, keys or other secrets?", "access credentials or secrets", "high_risk"},
+		{"sensitive", "Can the tool read private personal or business data?", "read private personal or business data", "read"},
+		{"execution", "Can the tool execute caller-supplied code, SQL or shell commands?", "execute caller-supplied code or queries", "high_risk"},
+		{"requests", "Can the tool make network requests to arbitrary caller-supplied destinations?", "make arbitrary network requests", "high_risk"},
 	}
 	questions := map[string]any{"safe": map[string]string{"type": "noul", "instructions": "Does the tool only read public, non-sensitive information?"}}
 	for _, risk := range risks {
@@ -96,9 +101,14 @@ func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
 	}
 	safe := *result.Answers["safe"].Probability
 	var reasons []string
+	class, rank := "read", map[string]int{"read": 0, "write": 1, "high_risk": 2}
 	for _, risk := range risks {
 		probability := *result.Answers[risk.key].Probability
 		if probability > 0.05 {
+			// A tool with mixed capabilities takes its highest class.
+			if rank[risk.class] > rank[class] {
+				class = risk.class
+			}
 			prefix := "Cannot rule out the ability to "
 			if probability >= 0.5 {
 				prefix = "May "
@@ -106,7 +116,7 @@ func (c Client) Suggest(ctx context.Context, tool Tool) Suggestion {
 			reasons = append(reasons, prefix+risk.effect+".")
 		}
 	}
-	suggestion := Suggestion{Policy: "require_approval", Model: result.Model}
+	suggestion := Suggestion{Policy: "require_approval", Model: result.Model, Class: class}
 	if len(reasons) == 0 && safe >= 0.95 {
 		suggestion.Policy = "allow"
 		suggestion.Reason = "Appears limited to public, non-sensitive reads with no identified side effects. Calls can run without approval."

@@ -16,6 +16,7 @@ type OperationSummary struct {
 	Connection          string `json:"connection"`
 	AmpUserID           string `json:"amp_user_id,omitempty"`
 	ApprovalScope       string `json:"approval_scope,omitempty"`
+	ApprovalBreadth     string `json:"approval_breadth,omitempty"`
 	ApprovalGrantSource string `json:"approval_grant_source,omitempty"`
 }
 

@@ -116,7 +116,7 @@ LEFT JOIN operation_summaries s ON s.id=o.id WHERE o.created>=?`
 		}
 		if op := out[i].Operation; op.ApprovalGrantSource != "" {
 			var e Event
-			err := tx.QueryRowContext(ctx, "SELECT sequence,operation,kind,actor,time FROM events WHERE operation=? AND kind=? ORDER BY sequence LIMIT 1", op.ApprovalGrantSource, "approval-"+op.ApprovalScope).Scan(&e.Sequence, &e.Operation, &e.Kind, &e.Actor, &e.Time)
+			err := tx.QueryRowContext(ctx, "SELECT sequence,operation,kind,actor,time FROM events WHERE operation=? AND kind=? ORDER BY sequence LIMIT 1", op.ApprovalGrantSource, grantEvent(op.ApprovalBreadth, op.ApprovalScope)).Scan(&e.Sequence, &e.Operation, &e.Kind, &e.Actor, &e.Time)
 			if err == nil {
 				out[i].StandingApproval = &e
 			} else if !errors.Is(err, sql.ErrNoRows) {
