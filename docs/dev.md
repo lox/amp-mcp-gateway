@@ -869,8 +869,8 @@ connection, the page offers **Approve & allow reads**. It approves that call and
 saves read trust for this thread (default) or this project (the owner's current
 and future threads in it) for one hour (default) or 24 hours. It never lasts
 until revoked. Read trust covers every saved Read tool on that connection with
-any schema-valid arguments, not just the current request; blocked, unreviewed,
-Write and High-risk tools still ask. **Approve once** stays available and saves
+any schema-valid arguments, not just the current request. Blocked, unreviewed,
+Write and High-risk tools are never covered and follow their own policies. **Approve once** stays available and saves
 nothing. Read requests offer read trust in place of **Remember this approval**.
 
 Read trust uses the standing-approval machinery: it binds the connection's full
