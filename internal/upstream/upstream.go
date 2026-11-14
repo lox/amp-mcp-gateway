@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"ampcode.com/lox/amp-mcp-gateway/internal/jsintegration"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/oauth2"
 )
@@ -27,12 +28,13 @@ const (
 
 // Connection describes one remote MCP endpoint and its authentication.
 type Connection struct {
-	ID       string
-	URL      string
-	Account  string
-	TokenEnv string
-	Browser  bool
-	OAuth    *OAuthConfig
+	ID         string
+	URL        string
+	Account    string
+	TokenEnv   string
+	Browser    bool
+	OAuth      *OAuthConfig
+	JavaScript *jsintegration.Definition `json:",omitempty"`
 	// Browser-managed configuration is encrypted at rest; never render these secrets.
 	BearerToken string `json:",omitempty"`
 	NoAuth      bool   `json:",omitempty"`
@@ -96,6 +98,29 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 			return nil, fmt.Errorf("duplicate connection ID %q", c.ID)
 		}
 		seen[c.ID] = true
+		if c.JavaScript != nil {
+			if c.Browser || c.URL != "" || c.TokenEnv == "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
+				return nil, errors.New("JavaScript connections require only JavaScript configuration and TokenEnv")
+			}
+			// Clone at the ownership boundary; no caller can mutate the installed artifact.
+			b, err := json.Marshal(c.JavaScript)
+			if err != nil {
+				return nil, err
+			}
+			var definition jsintegration.Definition
+			if err := json.Unmarshal(b, &definition); err != nil {
+				return nil, err
+			}
+			if err := definition.Validate(); err != nil {
+				return nil, err
+			}
+			if err := ValidatePublicURL(definition.Origin); err != nil {
+				return nil, err
+			}
+			c.JavaScript = &definition
+			m.conns[c.ID] = &managedConnection{config: c}
+			continue
+		}
 		if c.Browser {
 			if c.URL != "" || c.TokenEnv != "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
 				return nil, fmt.Errorf("browser connection %q cannot configure URL or authentication", c.ID)
@@ -176,6 +201,13 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 	if !ok {
 		return nil, errors.New("unknown connection")
 	}
+	if c.config.JavaScript != nil {
+		tools := make([]*mcp.Tool, 0, len(c.config.JavaScript.Tools))
+		for _, t := range c.config.JavaScript.Tools {
+			tools = append(tools, &mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema, OutputSchema: t.OutputSchema})
+		}
+		return tools, nil
+	}
 	c.mu.Lock()
 	grant := c.grant
 	c.mu.Unlock()
@@ -227,7 +259,10 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 }
 
 // Call initializes a fresh MCP session and invokes one tool exactly once.
-func (m *Manager) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *Manager) Call(ctx context.Context, connection, tool, expectedBinding string, args map[string]any) (*mcp.CallToolResult, error) {
+	if c, ok := m.connection(connection); ok && c.config.JavaScript != nil {
+		return m.callJavaScript(ctx, c, tool, expectedBinding, args)
+	}
 	var result *mcp.CallToolResult
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		var err error

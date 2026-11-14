@@ -1,0 +1,60 @@
+{
+  "ID": "github-issues",
+  "Account": "Disposable GitHub repository",
+  "TokenEnv": "GITHUB_ISSUES_TOKEN",
+  "JavaScript": {
+    "Origin": "https://api.github.com",
+    "SourceFile": "examples/github-issues.js",
+    "Tools": [
+      {
+        "Name": "listIssues",
+        "Handler": "listIssues",
+        "Description": "List up to 20 issues in the configured disposable repository",
+        "InputSchema": {
+          "type": "object",
+          "properties": { "state": { "type": "string", "enum": ["open", "closed", "all"] } },
+          "additionalProperties": false
+        },
+        "OutputSchema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": { "type": "integer" },
+              "title": { "type": "string" },
+              "url": { "type": "string" }
+            },
+            "required": ["number", "title", "url"],
+            "additionalProperties": false
+          }
+        },
+        "HTTP": [{ "Method": "GET", "Path": "/repos/OWNER/SANDBOX-REPO/issues" }]
+      },
+      {
+        "Name": "createIssue",
+        "Handler": "createIssue",
+        "Description": "Create an issue in the configured disposable repository",
+        "InputSchema": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "body": { "type": "string", "maxLength": 8192 }
+          },
+          "required": ["title"],
+          "additionalProperties": false
+        },
+        "OutputSchema": {
+          "type": "object",
+          "properties": {
+            "number": { "type": "integer" },
+            "title": { "type": "string" },
+            "url": { "type": "string" }
+          },
+          "required": ["number", "title", "url"],
+          "additionalProperties": false
+        },
+        "HTTP": [{ "Method": "POST", "Path": "/repos/OWNER/SANDBOX-REPO/issues" }]
+      }
+    ]
+  }
+}

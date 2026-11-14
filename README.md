@@ -51,6 +51,8 @@ it.
 
 - [Development guide](docs/dev.md): runnable examples, remote MCP setup, native
   integrations, Chrome sharing, deployment, identity, and security boundaries.
+- [JavaScript adapters](docs/javascript.md): isolated API tools, installation,
+  HTTP capabilities, resource limits and upgrade safety.
 - [Reviews](docs/reviews.md): GitHub Apps, execution credentials, review lifecycle
   and migration from amp-reviewbot.
 - [Feature matrix and TODOs](docs/todo.md): implemented capabilities, known gaps,

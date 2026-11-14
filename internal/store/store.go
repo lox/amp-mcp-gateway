@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payloa
 CREATE TABLE IF NOT EXISTS browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS secrets (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS http_attempts (operation TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 10), request BLOB NOT NULL, response BLOB, PRIMARY KEY(operation,sequence));
+CREATE TRIGGER IF NOT EXISTS operations_delete_http_attempts AFTER DELETE ON operations BEGIN DELETE FROM http_attempts WHERE operation=OLD.id; END;
 CREATE TABLE IF NOT EXISTS operation_summaries (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS approval_grants (id TEXT PRIMARY KEY, active INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS credential_leases (id TEXT PRIMARY KEY, expires INTEGER NOT NULL, payload BLOB NOT NULL);
@@ -141,6 +143,10 @@ COMMIT;`)
 	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'browser-pairing:'||id,payload FROM browser_pairings UNION ALL SELECT 'secret:'||id,payload FROM secrets UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
+		if err != nil {
+			// Journaled operations deliberately use AAD unknown to old binaries.
+			_, err = s.open("http-journal:"+id, payload)
+		}
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.Close()
@@ -321,7 +327,11 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, "UPDATE operations SET payload=? WHERE id=?", s.seal("operation:"+o.ID, payload), o.ID); err != nil {
+			encrypted, err := s.sealOperation(ctx, tx, o.ID, payload)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE operations SET payload=? WHERE id=?", encrypted, o.ID); err != nil {
 				return err
 			}
 		}
@@ -400,6 +410,9 @@ func (s *Store) decode(row scanner) (Operation, error) {
 		return o, err
 	}
 	raw, err := s.open("operation:"+id, b)
+	if err != nil {
+		raw, err = s.open("http-journal:operation:"+id, b)
+	}
 	if err != nil {
 		return o, err
 	}
@@ -613,7 +626,11 @@ func (s *Store) Finish(ctx context.Context, o Operation, status string, result j
 		return err
 	}
 	defer tx.Rollback()
-	r, err := tx.ExecContext(ctx, "UPDATE operations SET status=?,payload=? WHERE id=? AND status='running'", status, s.seal("operation:"+o.ID, b), o.ID)
+	encrypted, err := s.sealOperation(ctx, tx, o.ID, b)
+	if err != nil {
+		return err
+	}
+	r, err := tx.ExecContext(ctx, "UPDATE operations SET status=?,payload=? WHERE id=? AND status='running'", status, encrypted, o.ID)
 	if err != nil {
 		return err
 	}
