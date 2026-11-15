@@ -655,8 +655,11 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 
 func (g *Gateway) connectionSettings(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
 	id := r.PathValue("id")
+	g.mu.RLock()
+	remote := g.remoteConnection(id)
+	g.mu.RUnlock()
 	connection := g.connectionView(id)
-	if connection == nil {
+	if !remote || connection == nil {
 		http.NotFound(w, r)
 		return
 	}

@@ -483,6 +483,8 @@ func (g *Gateway) Run(ctx context.Context) error {
 			timer.Reset(0) // Continue draining after this operation, including denials.
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
+			// A binary without disabled connections can queue calls during a rollback.
+			ok = ok && !g.cfg.disabledConnection(t.Connection)
 			expectedBinding := ""
 			valid := false
 			integration, native := g.integration(t.Connection)

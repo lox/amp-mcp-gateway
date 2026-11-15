@@ -439,7 +439,8 @@ Both deny that connection's queued requests and revoke its standing approvals.
 Other connections keep theirs, because tool bindings cover only their own
 connection. Both are refused while any call is running. Audit history and past
 results remain. A binary rollback to a release without this setting re-enables
-disabled connections, with their standing approvals still revoked.
+disabled connections, with their standing approvals still revoked. After rolling
+forward, calls queued for them during the rollback are denied at execution.
 
 ## Reviews integration
 

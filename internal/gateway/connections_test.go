@@ -1021,6 +1021,16 @@ func TestDisableAndRemoveConnectionAffectOnlyThatConnection(t *testing.T) {
 	if err := LoadCatalogue(ctx, &restored, s); err != nil || !restored.disabledConnection("notes") || !slices.ContainsFunc(restored.Tools, func(t Tool) bool { return t.ID == "notes.write" }) {
 		t.Fatalf("disabled state not persisted with its tools: %+v %v", restored, err)
 	}
+	// A binary without this setting can queue calls during a rollback; the worker must still deny them.
+	tool := g.tools["notes.write"]
+	if _, err := s.Submit(ctx, store.Operation{ID: "notes-rollback", Tool: tool.ID, Connection: "notes", Arguments: map[string]any{"text": "hello"}, Binding: g.binding(tool), Status: "ready", Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	await(t, s, "notes-rollback", "denied")
+	if b.calls.Load() != 0 {
+		t.Fatal("worker dispatched a call for a disabled connection")
+	}
 	if w := formRequest(h, cookie, "GET", "/connections", nil); !strings.Contains(w.Body.String(), `<span class="chip">Disabled</span>`) {
 		t.Fatal("connection list does not show the disabled state")
 	}
@@ -1039,6 +1049,9 @@ func TestDisableAndRemoveConnectionAffectOnlyThatConnection(t *testing.T) {
 	}
 	if w := formRequest(h, cookie, "POST", "/connections/"+chromeConnectionID+"/remove", url.Values{"confirm": {"remove"}}); w.Code != 404 {
 		t.Fatalf("removed the native browser connection: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "GET", "/connections/"+chromeConnectionID+"/settings", nil); w.Code != 404 {
+		t.Fatalf("native browser connection shows remote connection controls: %d", w.Code)
 	}
 	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", url.Values{"confirm": {"remove"}}); w.Code != 303 {
 		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
