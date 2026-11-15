@@ -445,7 +445,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Trust once") || !strings.Contains(page.Body.String(), "Trust for this thread") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once</button>") || !strings.Contains(page.Body.String(), "Approve &amp; trust all notes tools for this thread</button>") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -485,13 +485,13 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
 				t.Fatal("incorrect refresh control")
 			}
-			if strings.Contains(body, "Trust once") != (status == "pending") {
+			if strings.Contains(body, "Approve once</button>") != (status == "pending") {
 				t.Fatal("incorrect approval control")
 			}
-			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Trust once") {
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once</button>") {
 				t.Fatal("arguments must precede approval")
 			}
-			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) || strings.Contains(body, `name="expiry"`) || strings.Contains(body, `name="arguments"`) {
+			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) {
 				t.Fatal("standing scope offered without verified Amp identity")
 			}
 			if len(o.Result) > 0 {
@@ -536,12 +536,12 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Trust once</button>", `value="thread">Trust for this thread</button>`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`, `<strong>test account</strong> <span class="receipt-unverified"`} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once</button>", `value="thread">Approve &amp; trust all notes tools for this thread</button>`, `value="thread-tool">Approve &amp; trust write for this thread</button>`, `<strong>test account</strong> <span class="receipt-unverified"`, `>Workspace …-one</span>`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, `value="project">Trust for this project</button>`) != tc.wantProject {
+		if strings.Contains(body, `value="project-tool">Approve &amp; trust write for this project</button>`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
 		}
 		if strings.Contains(body, "Other people can influence this thread") != tc.multiplayer {

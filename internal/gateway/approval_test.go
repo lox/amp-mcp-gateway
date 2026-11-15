@@ -49,15 +49,16 @@ func TestTrustApprovalForm(t *testing.T) {
 		status int
 		grant  string // breadth:scope:expiry of the saved grant, if any
 	}{
-		{"once ignores settings", url.Values{"trust": {"once"}, "expiry": {"never"}, "arguments": {"any"}}, 303, ""},
+		{"approve once", url.Values{"trust": {"once"}}, 303, ""},
 		{"no trust field approves once", nil, 303, ""},
-		{"thread exact for 24 hours", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "arguments": {"exact"}}, 303, "exact:thread:24h"},
-		{"project any forever", url.Values{"trust": {"project"}, "expiry": {"never"}, "arguments": {"any"}}, 303, "tool:project:never"},
-		{"missing expiry", url.Values{"trust": {"thread"}, "arguments": {"exact"}}, 400, ""},
-		{"missing arguments", url.Values{"trust": {"thread"}, "expiry": {"24h"}}, 400, ""},
-		{"unoffered expiry", url.Values{"trust": {"thread"}, "expiry": {"1h"}, "arguments": {"exact"}}, 400, ""},
-		{"unoffered arguments", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "arguments": {"connection"}}, 400, ""},
-		{"unknown trust", url.Values{"trust": {"connection"}, "expiry": {"24h"}, "arguments": {"any"}}, 400, ""},
+		{"thread trusts the connection forever", url.Values{"trust": {"thread"}}, 303, "connection:thread:never"},
+		{"project trusts the connection forever", url.Values{"trust": {"project"}}, 303, "connection:project:never"},
+		{"thread trusts the tool forever", url.Values{"trust": {"thread-tool"}}, 303, "tool:thread:never"},
+		{"project trusts the tool forever", url.Values{"trust": {"project-tool"}}, 303, "tool:project:never"},
+		{"a stale page's exact 24-hour choice is refused, not widened", url.Values{"trust": {"thread"}, "arguments": {"exact"}, "expiry": {"24h"}}, 400, ""},
+		{"a stale page's tool choice is refused", url.Values{"trust": {"project"}, "covers": {"tool"}}, 400, ""},
+		{"stale fields do not block approve once", url.Values{"trust": {"once"}, "arguments": {"exact"}, "expiry": {"24h"}}, 303, ""},
+		{"unknown trust", url.Values{"trust": {"connection"}}, 400, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g, s, _ := fixture(t)
@@ -77,7 +78,7 @@ func TestTrustApprovalForm(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := ""
-			if len(grants) == 1 && grants[0].Tool == o.Tool {
+			if len(grants) == 1 && grants[0].Connection == o.Connection && (grants[0].Breadth == "connection") == (grants[0].Tool == "") && (grants[0].Tool == "" || grants[0].Tool == o.Tool) {
 				got = grants[0].Breadth + ":" + grants[0].Scope + ":" + grants[0].Expiry
 			}
 			if got != tc.grant || len(grants) > 1 || (tc.grant == "" && len(grants) != 0) {

@@ -68,7 +68,7 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	oneOff := formRequest(h, cookie, "GET", "/operations/"+second.ID, nil).Body.String()
-	if !strings.Contains(oneOff, ">Trust once</button>") || !strings.Contains(oneOff, ">Deny</button>") || !strings.Contains(oneOff, ">Trust for this thread</button>") {
+	if !strings.Contains(oneOff, "Approve once</button>") || !strings.Contains(oneOff, ">Deny</button>") || !strings.Contains(oneOff, "Approve &amp; trust all notes tools for this thread</button>") {
 		t.Fatal("demo workload identity did not offer reusable approval controls")
 	}
 	if w := formRequest(h, cookie, "POST", "/operations/"+first.ID+"/deny", nil); w.Code != 303 {
@@ -95,7 +95,7 @@ func TestFocusedPages(t *testing.T) {
 	if !strings.Contains(rememberReview, `href="/approvals" aria-current="page"`) || !strings.Contains(rememberReview, `href="/approvals">← Approvals`) {
 		t.Fatal("pending request did not return to approvals")
 	}
-	for _, want := range []string{`name="trust" value="once"`, `name="trust" value="thread"`, `name="trust" value="project"`, `name="expiry"`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`, `<option value="any">Any</option>`} {
+	for _, want := range []string{`name="trust" value="once"`, `name="trust" value="thread"`, `name="trust" value="project"`, `name="trust" value="thread-tool"`, `name="trust" value="project-tool"`} {
 		if !strings.Contains(rememberReview, want) {
 			t.Fatalf("trust approval review missing %q", want)
 		}

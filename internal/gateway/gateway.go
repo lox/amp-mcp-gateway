@@ -586,18 +586,25 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			// Trust once approves only this request. Thread or project trust also
-			// saves a standing approval for this tool with the exact arguments or any.
+			// Approve covers only this request. Trusting the thread or project also
+			// saves a standing approval, until revoked, for every tool on the
+			// connection or (with the -tool variants) for this tool only.
+			trusts := map[string]store.ApprovalOptions{
+				"thread": {Breadth: "connection", Scope: "thread"}, "project": {Breadth: "connection", Scope: "project"},
+				"thread-tool": {Breadth: "tool", Scope: "thread"}, "project-tool": {Breadth: "tool", Scope: "project"},
+			}
 			switch trust := r.Form.Get("trust"); trust {
 			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
-			case "thread", "project":
-				breadth := map[string]string{"exact": "exact", "any": "tool"}[r.Form.Get("arguments")]
-				options := store.ApprovalOptions{Breadth: breadth, Scope: trust, Expiry: r.Form.Get("expiry")}
-				if breadth == "" || (options.Expiry != "24h" && options.Expiry != "never") {
-					http.Error(w, "Invalid approval.", http.StatusBadRequest)
+			case "thread", "project", "thread-tool", "project-tool":
+				// A review page opened before this layout still sends its old scope
+				// selectors; refuse it rather than save broader trust than it showed.
+				if r.Form.Has("arguments") || r.Form.Has("covers") || r.Form.Has("expiry") {
+					http.Error(w, "This approval page is out of date. Reload it and review again.", http.StatusBadRequest)
 					return
 				}
+				options := trusts[trust]
+				options.Expiry = "never"
 				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
 			default:
 				http.Error(w, "Invalid approval.", http.StatusBadRequest)
@@ -718,9 +725,11 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, [2]string{key, prettyJSON(value)})
 		}
 		data["ArgumentRows"] = rows
+		data["ToolName"] = strings.TrimPrefix(o.Tool, o.Connection+".")
 		data["Requested"] = time.Unix(o.Created, 0)
 		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
-		data["ThreadShort"] = "…" + o.AmpThreadID[max(0, len(o.AmpThreadID)-4):]
+		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }
+		data["ThreadShort"], data["WorkspaceShort"], data["ProjectShort"] = short(o.AmpThreadID), short(o.AmpWorkspaceID), short(o.AmpProjectID)
 	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")

@@ -282,14 +282,26 @@ document.getElementById('secret-form').addEventListener('submit', event => {
 {{if eq .Status "pending"}}<a href="/approvals">← Approvals</a>
 <article class="card receipt" aria-labelledby="receipt-title">
 <header class="receipt-head"><span class="receipt-icon" aria-hidden="true">&gt;_</span><div><h1 id="receipt-title">{{$.Title}}</h1><p class="sub">{{.Connection}}</p></div><span class="badge pending" role="status">Pending{{if gt $.ExpiresIn 0}} · {{$.ExpiresIn}} min left{{end}}</span></header>
-{{if .AmpThreadID}}<p class="receipt-context">{{if .AmpWorkspaceID}}<span title="Workspace {{.AmpWorkspaceID}}">{{or ($.AmpNames.Workspace .AmpWorkspaceID) .AmpWorkspaceID}}</span><span aria-hidden="true">›</span>{{end}}{{if .AmpProjectID}}<span title="Project {{.AmpProjectID}}">{{or ($.AmpNames.Project .AmpWorkspaceID .AmpProjectID) .AmpProjectID}}</span><span aria-hidden="true">›</span>{{end}}<a href="https://ampcode.com/threads/{{.AmpThreadID}}" title="{{.AmpThreadID}}">Thread {{$.ThreadShort}} ↗</a></p>{{end}}
+{{if .AmpThreadID}}<p class="receipt-context">{{if .AmpWorkspaceID}}<span title="Workspace {{.AmpWorkspaceID}}">{{or ($.AmpNames.Workspace .AmpWorkspaceID) (print "Workspace " $.WorkspaceShort)}}</span><span aria-hidden="true">›</span>{{end}}{{if .AmpProjectID}}<span title="Project {{.AmpProjectID}}">{{or ($.AmpNames.Project .AmpWorkspaceID .AmpProjectID) (print "Project " $.ProjectShort)}}</span><span aria-hidden="true">›</span>{{end}}<a href="https://ampcode.com/threads/{{.AmpThreadID}}" title="{{.AmpThreadID}}">Thread {{$.ThreadShort}} ↗</a></p>{{end}}
 {{if or .AmpThreadMultiplayer .AmpThreadNonOwnerCanInfluence}}<p class="receipt-warning">Other people can influence this thread.</p>{{end}}
 <dl class="receipt-rows">{{if .Account}}<dt>Account</dt><dd><strong>{{.Account}}</strong> <span class="receipt-unverified" title="Label set on the connection. Not checked with the provider.">Unverified</span></dd>{{end}}
 <dt>Arguments</dt><dd>{{range $.ArgumentRows}}<div class="receipt-arg"><code>{{index . 0}}</code><span aria-hidden="true">=</span><pre>{{index . 1}}</pre></div>{{else}}None{{end}}</dd>
 <dt>Requested</dt><dd><time datetime="{{iso .Created}}">{{ago $.Requested}}</time></dd></dl>
-<form class="receipt-actions" method="post" action="/operations/{{.ID}}/approve"><button class="primary" name="trust" value="once">Trust once</button>{{if and .AmpUserID .AmpThreadID}}<button name="trust" value="thread">Trust for this thread</button>{{if .AmpProjectID}}<button name="trust" value="project">Trust for this project</button>{{end}}{{end}}<button class="danger" formaction="/operations/{{.ID}}/deny">Deny</button>
-{{if and .AmpUserID .AmpThreadID}}<div class="receipt-settings"><label class="receipt-setting">Trust lasts <select name="expiry"><option value="24h" selected>24 hours</option><option value="never">Forever</option></select></label><label class="receipt-setting">Arguments <select name="arguments"><option value="exact" selected>Exact match</option><option value="any">Any</option></select></label></div>{{end}}</form>
+<form class="receipt-actions" method="post" action="/operations/{{.ID}}/approve"><button class="primary" name="trust" value="once"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2"/></svg>Approve once</button>{{if and .AmpUserID .AmpThreadID}}<div class="split-button"><button name="trust" value="thread"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Approve &amp; trust all {{.Connection}} tools for this thread</button><details class="split-menu"><summary aria-label="More trust options"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></summary><div class="split-options"><button name="trust" value="thread">Approve &amp; trust all {{.Connection}} tools for this thread</button><button name="trust" value="thread-tool">Approve &amp; trust {{$.ToolName}} for this thread</button>{{if .AmpProjectID}}<button name="trust" value="project">Approve &amp; trust all {{.Connection}} tools for this project</button><button name="trust" value="project-tool">Approve &amp; trust {{$.ToolName}} for this project</button>{{end}}</div></details></div>{{end}}<button class="danger" formaction="/operations/{{.ID}}/deny"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2"/></svg>Deny</button></form>
 </article>
+<script>
+(() => {
+ const menu = document.querySelector('.split-menu');
+ if (!menu) return;
+ const close = () => { if (menu.open) menu.open = false; };
+ document.addEventListener('click', event => { if (!menu.contains(event.target)) close(); });
+ document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !menu.open) return;
+  close();
+  menu.querySelector('summary').focus();
+ });
+})();
+</script>
 {{else}}<a href="/audit">← Audit</a><div class="heading"><h1>{{$.Title}}</h1></div>
 <p class="sub"><code>{{.Tool}}</code> · {{.Account}} <small>(configured account label)</small></p>
 {{if .AmpThreadID}}<p class="attribution"><a href="https://ampcode.com/threads/{{.AmpThreadID}}">Open Amp thread ↗</a> · Amp identity verified. Not human approval or model attestation.</p>{{end}}
