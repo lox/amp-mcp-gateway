@@ -496,9 +496,9 @@ encrypted and is never rendered again. The ID publishes one governed tool named
 ```
 
 With **Require approval**, the owner can trust one request or trust that secret's
-tool for the Amp thread or project. Exact-match trust also binds the purpose; trust
-for any arguments permits any schema-valid purpose for that one secret. Older
-connection-wide grants stay limited to that secret, because each secret is a
+tool for the Amp thread or project. Exact-call trust also binds the purpose; trust
+for any arguments permits any schema-valid purpose for that one secret.
+Connection-wide trust is also limited to that secret, because each secret is a
 separate native integration. The configured **Allow**
 policy skips human review for any authenticated owner thread, while **Block** hides
 and denies the tool.
@@ -785,17 +785,18 @@ before contacting the upstream, then records its outcome and audit event togethe
 
 - The review card offers **Trust once**, **Trust for this thread**, **Trust for this
   project** and **Deny**. Trust once approves only this request. Thread or project
-  trust also saves a standing approval for that tool, limited to the verified
-  owner's thread or project; project trust requires an Amp project claim. Two
-  selectors under the buttons set it: **Arguments** is **Exact match** by default
-  or **Any**, and **Trust lasts** is 24 hours by default or **Forever** (until
-  revoked). Exact matching ignores object key order and preserves JSON number
-  spellings and precision. The card warns when Amp reports a multiplayer thread or
-  one that non-owners can influence.
+  trust also saves a standing approval, limited to the verified owner's thread or
+  project; project trust requires an Amp project claim. Two selectors under the
+  buttons set it. **Covers** is **This exact call** by default, the same tool with
+  any arguments, or any tool on the connection. **Trust lasts** is 24 hours by
+  default or **Forever** (until revoked). Exact matching ignores object key order
+  and preserves JSON number spellings and precision. Connection-wide trust binds
+  the full current tool catalogue and its configuration; it never covers added or
+  blocked tools. The card warns when Amp reports a multiplayer thread or one that
+  non-owners can influence.
 - The pending operation expires ten minutes after submission, including time spent
-  queued. Restarting does not extend consent. Connection-wide grants saved before
-  this card remain valid and revocable; they bind the full tool catalogue, never
-  covering added or blocked tools. Existing one-hour grants keep their deadline.
+  queued. Restarting does not extend consent. Existing one-hour grants keep their
+  deadline.
 - A queued grant-authorized call is checked again in the atomic claim transaction.
   Expiry, revocation or replacement of its original consent denies the call with
   audit actor `approval-grant-unavailable`. New consent cannot revive old queued

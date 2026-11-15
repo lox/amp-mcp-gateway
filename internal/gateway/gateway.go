@@ -587,14 +587,13 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				return
 			}
 			// Trust once approves only this request. Thread or project trust also
-			// saves a standing approval for this tool with the exact arguments or any.
+			// saves a standing approval covering this exact call, this tool or the connection.
 			switch trust := r.Form.Get("trust"); trust {
 			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
 			case "thread", "project":
-				breadth := map[string]string{"exact": "exact", "any": "tool"}[r.Form.Get("arguments")]
-				options := store.ApprovalOptions{Breadth: breadth, Scope: trust, Expiry: r.Form.Get("expiry")}
-				if breadth == "" || (options.Expiry != "24h" && options.Expiry != "never") {
+				options := store.ApprovalOptions{Breadth: r.Form.Get("covers"), Scope: trust, Expiry: r.Form.Get("expiry")}
+				if !slices.Contains([]string{"exact", "tool", "connection"}, options.Breadth) || (options.Expiry != "24h" && options.Expiry != "never") {
 					http.Error(w, "Invalid approval.", http.StatusBadRequest)
 					return
 				}
@@ -720,7 +719,8 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		data["ArgumentRows"] = rows
 		data["Requested"] = time.Unix(o.Created, 0)
 		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
-		data["ThreadShort"] = "…" + o.AmpThreadID[max(0, len(o.AmpThreadID)-4):]
+		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }
+		data["ThreadShort"], data["WorkspaceShort"], data["ProjectShort"] = short(o.AmpThreadID), short(o.AmpWorkspaceID), short(o.AmpProjectID)
 	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")

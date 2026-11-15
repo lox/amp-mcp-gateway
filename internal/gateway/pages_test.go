@@ -95,7 +95,7 @@ func TestFocusedPages(t *testing.T) {
 	if !strings.Contains(rememberReview, `href="/approvals" aria-current="page"`) || !strings.Contains(rememberReview, `href="/approvals">← Approvals`) {
 		t.Fatal("pending request did not return to approvals")
 	}
-	for _, want := range []string{`name="trust" value="once"`, `name="trust" value="thread"`, `name="trust" value="project"`, `name="expiry"`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>Exact match</option>`, `<option value="any">Any</option>`} {
+	for _, want := range []string{`name="trust" value="once"`, `name="trust" value="thread"`, `name="trust" value="project"`, `name="expiry"`, `<option value="24h" selected>24 hours</option>`, `<option value="never">Forever</option>`, `<option value="exact" selected>This exact call</option>`, `<option value="tool">`, `<option value="connection">Any tool on `} {
 		if !strings.Contains(rememberReview, want) {
 			t.Fatalf("trust approval review missing %q", want)
 		}

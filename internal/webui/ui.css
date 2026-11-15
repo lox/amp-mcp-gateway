@@ -1385,11 +1385,14 @@
   :where(html.dashboard) .receipt-arg {
     @apply flex items-baseline gap-2 font-mono text-[13px];
   }
+  :where(html.dashboard) .receipt-arg code {
+    @apply flex-none;
+  }
   :where(html.dashboard) .receipt-arg + .receipt-arg {
     @apply mt-1;
   }
   :where(html.dashboard) .operation .receipt-arg pre {
-    @apply m-0 p-0 bg-transparent whitespace-pre-wrap text-[13px] leading-[1.5];
+    @apply m-0 p-0 min-w-0 flex-1 bg-transparent whitespace-pre-wrap text-[13px] leading-[1.5];
     overflow-wrap: anywhere;
   }
   :where(html.dashboard) .receipt-actions {
