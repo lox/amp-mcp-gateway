@@ -1402,24 +1402,28 @@
     @apply rounded-[4px];
   }
   :where(html.dashboard) .split-button {
-    @apply relative flex ml-auto;
+    @apply relative flex;
+  }
+  :where(html.dashboard) .split-button > button,
+  :where(html.dashboard) .split-menu summary {
+    background: #e4ebf7;
+    border: 1px solid #b4c3dd;
+  }
+  :where(html.dashboard) .split-button > button:hover,
+  :where(html.dashboard) .split-menu summary:hover,
+  :where(html.dashboard) .split-menu[open] summary {
+    background: #d3deef;
   }
   :where(html.dashboard) .split-button > button {
     @apply rounded-r-none;
   }
-  :where(html.dashboard) .split-button > button:only-child {
-    @apply rounded-[4px];
-  }
   :where(html.dashboard) .split-menu summary {
-    @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[4px];
-    border: 1px solid;
-    border-left: 0;
+    @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[4px] text-ink;
+    border-left-color: #9fb1d1;
+    margin-left: -1px;
   }
   :where(html.dashboard) .split-menu summary::-webkit-details-marker {
     @apply hidden;
-  }
-  :where(html.dashboard) .split-menu[open] summary {
-    @apply bg-inset;
   }
   :where(html.dashboard) .split-options {
     @apply absolute right-0 top-full mt-1 z-10 grid w-80 p-1 bg-white rounded-[6px];
@@ -1457,9 +1461,6 @@
     }
     :where(html.dashboard) .receipt-actions {
       @apply flex-col items-stretch p-[20px_20px_0];
-    }
-    :where(html.dashboard) .split-button {
-      @apply ml-0;
     }
     :where(html.dashboard) .split-button > button {
       @apply flex-1;
