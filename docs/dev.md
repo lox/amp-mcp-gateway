@@ -98,6 +98,55 @@ storage; do not commit it or paste it into a chat. The demo helper reads it dire
 The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
 the final MCP URL when overriding `-url`.
 
+## MCP usage skills
+
+The `/mcp` endpoint advertises the optional
+[`io.modelcontextprotocol/skills` extension (SEP-2640)](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/beta/skills.mdx)
+and Resources capability. It serves two gateway-authored skills:
+
+- `skill://using-gateway/SKILL.md` teaches catalogue search, single-operation calls,
+  approvals, status polling and ambiguous-outcome recovery.
+- `skill://using-shared-browser/SKILL.md` teaches local Chrome sharing, status,
+  snapshot-bound targeting and result verification. It is listed only when the
+  native browser connection and every tool it documents are discoverable in the
+  current caller's context. `require_approval` is discoverable; `deny` is not.
+  Blocking even one browser tool withholds the entire workflow rather than leaking
+  its details in a reference file. The underlying permitted tools remain usable.
+  Browser registration/sharing need not be active: the skill includes setup and
+  recovery guidance.
+
+`skills/list` returns the complete small catalogue in one page, with frontmatter
+and a manifest containing each file's URI, raw-byte SHA-256 digest and byte size.
+`skills/get` accepts the exact `SKILL.md` URI and returns the same entry. Files,
+including each skill's linked reference, load individually through `resources/read`
+only when the client asks. `resources/list` does not enumerate skill files; the
+skill manifests are authoritative, and the generic resource template reveals no
+account-specific names. No directory-read extension is advertised.
+
+An extension-aware Amp client can list these alongside its other skills, using
+its gateway connection label as the namespace. Clients without skills support
+continue using the same four tools; no new tool or alternate execution path is
+introduced. After upgrading the gateway, let the client's normal server catalogue
+sync run. If skills are absent, check the advertised capabilities and `skills/list`
+with the same connection and identity before assuming a client rollout problem.
+Hosted Amp ingestion of a deployed gateway is a separate acceptance check from
+this repository's HTTP protocol tests.
+
+The Markdown under `internal/gateway/skills/` is embedded at build time. Edit and
+review it with code, then rebuild; there is no live skill-management setting.
+Manifests derive from those exact embedded bytes, including YAML frontmatter, so
+an update changes the corresponding digests. Replies use `cacheScope: private`
+and `ttlMs: 0` because visibility can change with thread context or policy. Every
+list, get and file read rechecks current eligibility. Hosts must still isolate
+cached context appropriately; a server cannot retract bytes a client already read.
+
+Skills are untrusted instructions, not authority. These bundles contain no scripts,
+permission-grant frontmatter, credentials or account-specific schemas, and do not
+proxy upstream-authored skills. Digest verification proves consistency, not trust.
+Tool discovery and execution still enforce their existing private-thread,
+configuration, approval and idempotency rules. Follow the host's origin binding
+and approval rules for any local execution; a remote skill cannot grant it.
+
 ## Suggest approval policies with Jev
 
 Supply `TYPESAFE_API_KEY` to the gateway process to enable dashboard suggestions.
