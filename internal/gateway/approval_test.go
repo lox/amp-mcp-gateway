@@ -55,7 +55,9 @@ func TestTrustApprovalForm(t *testing.T) {
 		{"project trusts the connection forever", url.Values{"trust": {"project"}}, 303, "connection:project:never"},
 		{"thread trusts the tool forever", url.Values{"trust": {"thread-tool"}}, 303, "tool:thread:never"},
 		{"project trusts the tool forever", url.Values{"trust": {"project-tool"}}, 303, "tool:project:never"},
-		{"stale fields cannot narrow or shorten trust", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"exact"}}, 303, "connection:thread:never"},
+		{"a stale page's exact 24-hour choice is refused, not widened", url.Values{"trust": {"thread"}, "arguments": {"exact"}, "expiry": {"24h"}}, 400, ""},
+		{"a stale page's tool choice is refused", url.Values{"trust": {"project"}, "covers": {"tool"}}, 400, ""},
+		{"stale fields do not block approve once", url.Values{"trust": {"once"}, "arguments": {"exact"}, "expiry": {"24h"}}, 303, ""},
 		{"unknown trust", url.Values{"trust": {"connection"}}, 400, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
