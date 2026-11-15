@@ -445,7 +445,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), ">Approve</button>") || !strings.Contains(page.Body.String(), ">Trust this thread</button>") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), ">Approve</button>") || !strings.Contains(page.Body.String(), ">Trust all notes tools for this thread</button>") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -536,12 +536,12 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Approve</button>", `>Trust this thread</button>`, `title="Allow every tool on notes in this thread until revoked"`, `<strong>test account</strong> <span class="receipt-unverified"`, `>Workspace …-one</span>`} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, ">Approve</button>", `value="thread">Trust all notes tools for this thread</button>`, `value="thread-tool">Trust write for this thread</button>`, `<strong>test account</strong> <span class="receipt-unverified"`, `>Workspace …-one</span>`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, `value="project">Trust this project<small>`) != tc.wantProject {
+		if strings.Contains(body, `value="project-tool">Trust write for this project</button>`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
 		}
 		if strings.Contains(body, "Other people can influence this thread") != tc.multiplayer {

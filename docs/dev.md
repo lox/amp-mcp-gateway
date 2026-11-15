@@ -496,9 +496,9 @@ encrypted and is never rendered again. The ID publishes one governed tool named
 ```
 
 With **Require approval**, the owner can approve one request or trust that secret's
-connection for the Amp thread or project. Because each secret is a separate native
-integration, that trust is limited to the one secret and permits any schema-valid
-purpose. The configured **Allow**
+connection or tool for the Amp thread or project. Because each secret is a
+separate native integration, either kind of trust is limited to the one secret and
+permits any schema-valid purpose. The configured **Allow**
 policy skips human review for any authenticated owner thread, while **Block** hides
 and denies the tool.
 
@@ -782,11 +782,12 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- The review card offers **Approve**, **Deny** and a **Trust this thread** split
-  button whose menu also offers **Trust this project**. Approve covers only this
-  request. Trust also saves a standing approval for every tool on the request's
-  connection, until revoked, limited to the verified owner's thread or project;
-  project trust requires an Amp project claim. Connection-wide trust binds the full
+- The review card offers **Approve**, **Deny** and a **Trust all <connection> tools
+  for this thread** split button. Its menu also offers the same for the project,
+  and **Trust <tool> for this thread/project** for just the requested tool with any
+  arguments. Approve covers only this request. Trust saves a standing approval,
+  until revoked, limited to the verified owner's thread or project; project trust
+  requires an Amp project claim. Connection-wide trust binds the full
   current tool catalogue and its configuration; it never covers added or blocked
   tools. The card warns when Amp reports a multiplayer thread or one that
   non-owners can influence.

@@ -587,12 +587,19 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				return
 			}
 			// Approve covers only this request. Trusting the thread or project also
-			// saves a standing approval for every tool on the connection until revoked.
+			// saves a standing approval, until revoked, for every tool on the
+			// connection or (with the -tool variants) for this tool only.
+			trusts := map[string]store.ApprovalOptions{
+				"thread": {Breadth: "connection", Scope: "thread"}, "project": {Breadth: "connection", Scope: "project"},
+				"thread-tool": {Breadth: "tool", Scope: "thread"}, "project-tool": {Breadth: "tool", Scope: "project"},
+			}
 			switch trust := r.Form.Get("trust"); trust {
 			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
-			case "thread", "project":
-				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, store.ApprovalOptions{Breadth: "connection", Scope: trust, Expiry: "never"})
+			case "thread", "project", "thread-tool", "project-tool":
+				options := trusts[trust]
+				options.Expiry = "never"
+				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
 			default:
 				http.Error(w, "Invalid approval.", http.StatusBadRequest)
 				return
@@ -712,6 +719,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, [2]string{key, prettyJSON(value)})
 		}
 		data["ArgumentRows"] = rows
+		data["ToolName"] = strings.TrimPrefix(o.Tool, o.Connection+".")
 		data["Requested"] = time.Unix(o.Created, 0)
 		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
 		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }

@@ -53,6 +53,8 @@ func TestTrustApprovalForm(t *testing.T) {
 		{"no trust field approves once", nil, 303, ""},
 		{"thread trusts the connection forever", url.Values{"trust": {"thread"}}, 303, "connection:thread:never"},
 		{"project trusts the connection forever", url.Values{"trust": {"project"}}, 303, "connection:project:never"},
+		{"thread trusts the tool forever", url.Values{"trust": {"thread-tool"}}, 303, "tool:thread:never"},
+		{"project trusts the tool forever", url.Values{"trust": {"project-tool"}}, 303, "tool:project:never"},
 		{"stale fields cannot narrow or shorten trust", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"exact"}}, 303, "connection:thread:never"},
 		{"unknown trust", url.Values{"trust": {"connection"}}, 400, ""},
 	} {
