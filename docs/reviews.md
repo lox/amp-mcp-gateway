@@ -124,6 +124,14 @@ queue time and all attempts; running values update on refresh. Costs sum recorde
 usage across attempts, marking incomplete totals as partial rather than treating
 missing usage as zero. The separate provider estimate is not an additional charge.
 
+The 30-day overview includes all reviews created today (so far) and the preceding
+29 UTC days, not just the latest 100 history rows. Daily charts show review volume
+and recorded costs on a shared USD scale for Amp credits and provider estimates.
+All attempts are attributed to the review's creation day, including retries and
+later usage collection; this is not a billing-date ledger. Totals show usage
+coverage and mark missing attempts as partial. Expand the daily breakdown for
+exact values; a dash means no reported usage, not zero. Refresh to update.
+
 - Signed `opened`, `reopened`, `synchronize` and `ready_for_review` events enqueue
   non-draft PRs. `closed` and `converted_to_draft` are accepted; the live GitHub
   state check cancels closed/draft work, so delayed events cannot cancel a reopened

@@ -124,6 +124,39 @@ func TestReviewHistoryCostsAndUnknownAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestReviewUsageOverview(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		usage reviews.DailyUsage
+		want  []string
+	}{
+		{"empty", reviews.DailyUsage{}, []string{"No reviews requested in this period"}},
+		{"missing", reviews.DailyUsage{Reviews: 2, Threads: 3}, []string{"No recorded costs yet", "Usage recorded for 0 / 3 attempts", "<strong>—</strong>"}},
+		{"zero", reviews.DailyUsage{Reviews: 1, Threads: 1, Known: 1}, []string{"$0.0000", "Estimates for 0 / 1 attempts", "<strong>—</strong>"}},
+		{"partial", reviews.DailyUsage{Reviews: 3, Threads: 4, Known: 2, Estimates: 1, Credits: .375, ProviderEstimate: 1.5}, []string{"$0.3750 (partial)", "$1.5000 (partial)", "Usage recorded for 2 / 4 attempts", "<strong>3</strong>"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			days := make([]reviews.DailyUsage, 30)
+			days[4] = tc.usage
+			for i := range days {
+				days[i].Date = time.Date(2026, 10, 17+i, 0, 0, 0, 0, time.UTC)
+			}
+			var body strings.Builder
+			if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewUsage": days}); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range append(tc.want, "17 Oct 2026", "15 Nov 2026") {
+				if !strings.Contains(body.String(), want) {
+					t.Fatalf("missing %q", want)
+				}
+			}
+			if strings.Contains(body.String(), "NaN") || strings.Contains(body.String(), "ZgotmplZ") {
+				t.Fatal("invalid chart coordinates")
+			}
+		})
+	}
+}
+
 func TestReviewHistoryAtAGlance(t *testing.T) {
 	created := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {

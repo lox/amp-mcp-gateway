@@ -49,6 +49,32 @@
 <template id="review-credential-template"><div class="form-grid" data-review-credential><label>Credential name<input name="credential_name" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" placeholder="reviews-service-account"></label><label>API key<input name="credential_key" type="password" autocomplete="new-password" required placeholder="Amp service account API key"></label><button type="button" data-review-remove="credential">Remove new credential</button></div></template>
 <script src="/assets/reviews.js" defer></script>
 {{else}}
+{{with .ReviewUsage}}{{$usage := reviewUsage .}}
+<section class="card review-usage" aria-labelledby="review-usage-heading">
+<div class="heading"><div><h2 id="review-usage-heading">Last 30 days</h2><p class="sub">{{$usage.From}} – {{$usage.To}} · UTC · today so far</p></div></div>
+{{if $usage.Count}}
+<div class="review-totals">
+<div><span class="help">Reviews requested</span><strong>{{$usage.Count}}</strong></div>
+<div><span class="help">Amp credits · USD</span><strong>{{$usage.Credits}}</strong><span class="help">Usage recorded for {{$usage.Known}} / {{$usage.Threads}} attempts</span></div>
+<div><span class="help">Provider estimate · USD</span><strong>{{$usage.Estimate}}</strong><span class="help">Estimates for {{$usage.Estimates}} / {{$usage.Threads}} attempts · not an extra charge</span></div>
+</div>
+<div class="review-charts">
+<div><h3>Daily cost</h3><p class="help review-chart-key"><span>Amp credits</span><span>Provider estimate</span> · same USD scale</p>
+{{if $usage.Known}}<svg viewBox="0 0 600 150" role="img" aria-label="Daily recorded costs in USD; exact values in daily breakdown">
+<path class="review-gridline" d="M46 20H590 M46 120H590"/><text x="0" y="24">{{$usage.MaxCost}}</text><text x="0" y="124">$0</text>
+<g transform="translate(0 120) scale(1 -1)">{{range $usage.Days}}<g class="{{if .Partial}}review-day-partial{{end}}"><rect class="review-credit-bar" x="{{.X}}" y="0" width="6" height="{{.CreditHeight}}"/><rect class="review-estimate-bar" x="{{.EstimateX}}" y="0" width="6" height="{{.EstimateHeight}}"/></g>{{end}}</g>
+<text x="48" y="145">{{$usage.From}}</text><text x="590" y="145" text-anchor="end">Today so far</text></svg>{{else}}<p class="empty">No recorded costs yet. Missing usage is not zero.</p>{{end}}</div>
+<div><h3>Daily reviews</h3><p class="help">All outcomes, including re-runs</p>
+<svg viewBox="0 0 600 150" role="img" aria-label="Daily review requests; exact values in daily breakdown">
+<path class="review-gridline" d="M46 20H590 M46 120H590"/><text x="0" y="24">{{$usage.MaxCount}}</text><text x="0" y="124">0</text>
+<g transform="translate(0 120) scale(1 -1)">{{range $usage.Days}}<rect class="review-credit-bar {{if .Partial}}review-day-partial{{end}}" x="{{.X}}" y="0" width="14" height="{{.CountHeight}}"/>{{end}}</g>
+<text x="48" y="145">{{$usage.From}}</text><text x="590" y="145" text-anchor="end">Today so far</text></svg></div>
+</div>
+<p class="help">All reviews created in this period, beyond the history list's limit. Costs include every recorded attempt, grouped by the review's creation day. Missing usage is excluded; totals may increase after cleanup. Outlined bars are today so far.</p>
+<details class="review-usage-details"><summary>Daily breakdown</summary><div class="scroll"><table><caption>UTC creation date · recorded costs only · — means no reported usage</caption><thead><tr><th>Date</th><th>Reviews</th><th>Amp credits (USD)</th><th>Provider estimate (USD)</th></tr></thead><tbody>{{range $usage.Days}}<tr><td>{{.Date}}{{if .Partial}} · so far{{end}}</td><td>{{.Count}}</td><td>{{.Credits}}</td><td>{{.Estimate}}</td></tr>{{end}}</tbody></table></div></details>
+{{else}}<p class="empty">No reviews requested in this period. Usage will appear after reviews run.</p>{{end}}
+</section>
+{{end}}
 <div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
 <section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>
 {{range .ReviewJobs}}{{$stats := reviewStats .}}<details class="card review-job"><summary class="review-summary">

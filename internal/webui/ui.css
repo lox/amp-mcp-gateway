@@ -240,6 +240,38 @@
   :where(html.dashboard) .reviews code {
     overflow-wrap: anywhere;
   }
+  :where(html.dashboard) .review-totals {
+    @apply grid gap-6 mb-6;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  :where(html.dashboard) .review-totals > div { @apply grid content-start gap-2; }
+  :where(html.dashboard) .review-totals strong { @apply text-2xl; font-variant-numeric: tabular-nums; }
+  :where(html.dashboard) .review-usage .help { @apply text-xs; }
+  :where(html.dashboard) .review-totals .help { @apply m-0; }
+  :where(html.dashboard) .review-charts { @apply grid grid-cols-2 gap-6; }
+  :where(html.dashboard) .review-charts > div { @apply min-w-0; }
+  :where(html.dashboard) .review-charts h3 { @apply m-0 text-sm; }
+  :where(html.dashboard) .review-charts svg { @apply block w-full; overflow: visible; }
+  :where(html.dashboard) .review-charts text { fill: var(--color-muted); font-size: 13px; }
+  :where(html.dashboard) .review-gridline { fill: none; stroke: var(--color-divider); }
+  :where(html.dashboard) .review-credit-bar { fill: var(--color-link); stroke: var(--color-link); }
+  :where(html.dashboard) .review-estimate-bar { fill: var(--color-control); stroke: var(--color-control); }
+  :where(html.dashboard) .review-charts rect { stroke-width: 0; }
+  :where(html.dashboard) .review-charts :is(rect.review-day-partial, .review-day-partial rect) { fill: none; stroke-width: 1; }
+  :where(html.dashboard) .review-chart-key span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 4px; background: var(--color-link); }
+  :where(html.dashboard) .review-chart-key span + span { @apply ml-2; }
+  :where(html.dashboard) .review-chart-key span + span::before { background: var(--color-control); }
+  :where(html.dashboard) .review-usage-details { @apply mt-4 border-t border-divider pt-3; }
+  :where(html.dashboard) .review-usage-details caption { @apply text-left text-xs text-muted my-3; }
+  @media (max-width: 1100px) {
+    :where(html.dashboard) .review-charts { @apply grid-cols-1; }
+  }
+  @media (max-width: 800px) {
+    :where(html.dashboard) .review-totals { @apply grid-cols-1 gap-4; }
+  }
+  @media (max-width: 540px) {
+    :where(html.dashboard) .review-charts text { font-size: 20px; }
+  }
   :where(html.dashboard) .review-summary {
     display: grid;
     grid-template-columns: 14px minmax(200px, 2.5fr) minmax(125px, 1fr) minmax(110px, 1fr) minmax(70px, .6fr) minmax(130px, 1fr);

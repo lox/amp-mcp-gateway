@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ var reviewTemplateFuncs = template.FuncMap{
 	"reviewTime":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format(time.RFC3339) },
 	"reviewDate":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format("02 Jan · 15:04 UTC") },
 	"reviewStats": reviewStats,
+	"reviewUsage": reviewUsage,
 	"reviewEstimate": func(cost *float64) string {
 		if cost == nil {
 			return "not reported"
@@ -113,6 +115,59 @@ func reviewStats(j reviews.Job) any {
 	return v
 }
 
+func usageCost(value float64, known, threads int) string {
+	if known == 0 {
+		return "—"
+	}
+	text := fmt.Sprintf("$%.4f", value)
+	if known < threads {
+		text += " (partial)"
+	}
+	return text
+}
+
+func reviewUsage(days []reviews.DailyUsage) any {
+	type day struct {
+		Date, Credits, Estimate                   string
+		Count, X, EstimateX                       int
+		CreditHeight, EstimateHeight, CountHeight float64
+		Partial                                   bool
+	}
+	v := struct {
+		Days                                       []day
+		Count, Threads, Known, Estimates, MaxCount int
+		Credits, Estimate, From, To, MaxCost       string
+	}{MaxCount: 1}
+	credits, estimate, maxCost := 0.0, 0.0, 0.0
+	for _, d := range days {
+		v.Count += d.Reviews
+		v.Threads += d.Threads
+		v.Known += d.Known
+		v.Estimates += d.Estimates
+		credits += d.Credits
+		estimate += d.ProviderEstimate
+		maxCost = max(maxCost, d.Credits, d.ProviderEstimate)
+		v.MaxCount = max(v.MaxCount, d.Reviews)
+	}
+	// Both cost series use the same zero-based USD scale.
+	maxCost = max(.01, math.Ceil(maxCost*100)/100)
+	v.MaxCost = fmt.Sprintf("$%.2f", maxCost)
+	v.Credits = usageCost(credits, v.Known, v.Threads)
+	v.Estimate = usageCost(estimate, v.Estimates, v.Threads)
+	for i, d := range days {
+		v.Days = append(v.Days, day{
+			Date: d.Date.Format("02 Jan"), Credits: usageCost(d.Credits, d.Known, d.Threads), Estimate: usageCost(d.ProviderEstimate, d.Estimates, d.Threads),
+			Count: d.Reviews, X: 48 + i*18, EstimateX: 56 + i*18,
+			CreditHeight: 100 * d.Credits / maxCost, EstimateHeight: 100 * d.ProviderEstimate / maxCost, CountHeight: 100 * float64(d.Reviews) / float64(v.MaxCount),
+			Partial: i == len(days)-1,
+		})
+	}
+	if len(days) > 0 {
+		v.From, v.To = days[0].Date.Format("02 Jan 2006"), days[len(days)-1].Date.Format("02 Jan 2006")
+	}
+	return v
+}
+
 func (g *Gateway) registerReviews(mux *http.ServeMux) {
 	mux.HandleFunc("GET /integrations/reviews", g.reviewsPage)
 	mux.HandleFunc("POST /integrations/reviews", g.saveReviews)
@@ -197,6 +252,14 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		http.Error(w, "Review history unavailable", 503)
 		return
 	}
+	var usage []reviews.DailyUsage
+	if !editing {
+		usage, err = g.Reviews.UsageSummary(r.Context(), time.Now())
+		if err != nil {
+			http.Error(w, "Review usage unavailable", 503)
+			return
+		}
+	}
 	if message != "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
@@ -204,7 +267,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
 		"ReviewInstallations": installations, "ReviewCredentials": credentials,
 		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Prefix: "i.__i__", Index: "__r__"},
-		"ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+		"ReviewJobs": jobs, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
