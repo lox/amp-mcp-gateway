@@ -289,6 +289,19 @@ document.getElementById('secret-form').addEventListener('submit', event => {
 <dt>Requested</dt><dd><time datetime="{{iso .Created}}">{{ago $.Requested}}</time></dd></dl>
 <form class="receipt-actions" method="post" action="/operations/{{.ID}}/approve"><button class="primary" name="trust" value="once">Approve</button><button class="danger" formaction="/operations/{{.ID}}/deny">Deny</button>{{if and .AmpUserID .AmpThreadID}}<div class="split-button"><button name="trust" value="thread" title="Allow every tool on {{.Connection}} in this thread until revoked">Trust this thread</button>{{if .AmpProjectID}}<details class="split-menu"><summary aria-label="More trust options"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></summary><div class="split-options"><button name="trust" value="thread">Trust this thread<small>Every tool on {{.Connection}} · until revoked</small></button><button name="trust" value="project">Trust this project<small>Every tool on {{.Connection}}, current and future threads · until revoked</small></button></div></details>{{end}}</div>{{end}}</form>
 </article>
+<script>
+(() => {
+ const menu = document.querySelector('.split-menu');
+ if (!menu) return;
+ const close = () => { if (menu.open) menu.open = false; };
+ document.addEventListener('click', event => { if (!menu.contains(event.target)) close(); });
+ document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !menu.open) return;
+  close();
+  menu.querySelector('summary').focus();
+ });
+})();
+</script>
 {{else}}<a href="/audit">← Audit</a><div class="heading"><h1>{{$.Title}}</h1></div>
 <p class="sub"><code>{{.Tool}}</code> · {{.Account}} <small>(configured account label)</small></p>
 {{if .AmpThreadID}}<p class="attribution"><a href="https://ampcode.com/threads/{{.AmpThreadID}}">Open Amp thread ↗</a> · Amp identity verified. Not human approval or model attestation.</p>{{end}}
