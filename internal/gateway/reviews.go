@@ -95,7 +95,7 @@ func reviewStats(j reviews.Job) any {
 	if len(j.Threads) > 0 {
 		v.Credits, v.Estimate = "Unavailable", "Not reported"
 		if pending {
-			v.Credits = "Pending"
+			v.Credits, v.Estimate = "Pending", "Pending"
 		}
 		if known > 0 {
 			v.Credits = fmt.Sprintf("$%.4f", credits)

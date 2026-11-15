@@ -134,7 +134,7 @@ func TestReviewHistoryAtAGlance(t *testing.T) {
 		{"blocking, multiple attempts", reviews.Job{Status: "succeeded", Conclusion: "failure", Result: &reviews.Result{Findings: []reviews.Finding{{Severity: "high"}, {Severity: "medium"}, {Severity: "medium"}}}, Threads: []reviews.Thread{{Usage: &reviews.Usage{CostUSD: .125, ProviderEstimateUSD: new(1.5)}}, {Usage: &reviews.Usage{CostUSD: .375, ProviderEstimateUSD: new(2.25)}}}}, []string{"Blocking issues", "1 high", "2 medium", "$0.5000", "Est. $3.7500"}},
 		{"advisory, partial usage", reviews.Job{Status: "succeeded", Conclusion: "neutral", Result: &reviews.Result{Findings: []reviews.Finding{{Severity: "low"}}}, Threads: []reviews.Thread{{Usage: &reviews.Usage{CostUSD: .25, ProviderEstimateUSD: new(1.5)}}, {}}}, []string{"Advisory issues", "1 low", "$0.2500 (partial)", "Est. $1.5000 (partial)"}},
 		{"zero is known", reviews.Job{Status: "succeeded", Conclusion: "success", Result: &reviews.Result{}, Threads: []reviews.Thread{{Usage: &reviews.Usage{}}}}, []string{"Passed", "$0.0000", "Est. Not reported"}},
-		{"pending is not zero", reviews.Job{Status: "unknown", Threads: []reviews.Thread{{}}}, []string{"unknown", "Pending", "review-findings\">—"}},
+		{"pending is not zero", reviews.Job{Status: "unknown", Threads: []reviews.Thread{{}}}, []string{"unknown", "Pending", "Est. Pending", "review-findings\">—"}},
 		{"failed usage is not zero", reviews.Job{Status: "failed", Threads: []reviews.Thread{{UsageError: "unavailable"}}}, []string{"Review failed", "Unavailable"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
