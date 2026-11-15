@@ -27,6 +27,7 @@ revision INTEGER NOT NULL, created INTEGER NOT NULL, payload BLOB NOT NULL,
 cleanup INTEGER NOT NULL, maintenance_at INTEGER NOT NULL,
 UNIQUE(scope,delivery));
 CREATE INDEX IF NOT EXISTS reviews_queue ON reviews(status,created,id);
+CREATE INDEX IF NOT EXISTS reviews_created ON reviews(created);
 CREATE INDEX IF NOT EXISTS reviews_head ON reviews(scope,head);
 CREATE INDEX IF NOT EXISTS reviews_pull ON reviews(scope,pull);
 CREATE INDEX IF NOT EXISTS reviews_maintenance ON reviews(cleanup,maintenance_at);`)
