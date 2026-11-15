@@ -1411,23 +1411,38 @@
   :where(html.dashboard) .split-button {
     @apply relative flex;
   }
+  :where(html.dashboard) .receipt-actions > .primary {
+    background: #1f7a4a;
+    border-color: #1f7a4a;
+  }
+  :where(html.dashboard) .receipt-actions > .primary:hover {
+    background: #18653c;
+  }
+  :where(html.dashboard) .receipt-actions > .danger {
+    background: #b42f2f;
+    border-color: #b42f2f;
+    color: white;
+  }
+  :where(html.dashboard) .receipt-actions > .danger:hover {
+    background: #962626;
+  }
   :where(html.dashboard) .split-button > button,
   :where(html.dashboard) .split-menu summary {
-    background: #2f6fd6;
-    border: 1px solid #2f6fd6;
-    color: white;
+    background: #eceef1;
+    border: 1px solid #c3c9d2;
+    @apply text-ink;
   }
   :where(html.dashboard) .split-button > button:hover,
   :where(html.dashboard) .split-menu summary:hover,
   :where(html.dashboard) .split-menu[open] summary {
-    background: #245bb3;
+    background: #dfe3e8;
   }
   :where(html.dashboard) .split-button > button {
     @apply rounded-r-none;
   }
   :where(html.dashboard) .split-menu summary {
     @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[4px];
-    border-left-color: rgb(255 255 255 / 0.35);
+    border-left-color: #c3c9d2;
     margin-left: -1px;
   }
   :where(html.dashboard) .split-menu summary::-webkit-details-marker {
