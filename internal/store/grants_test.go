@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,6 +261,103 @@ func TestConfigurationAndOAuthChangesRevokeApprovalGrants(t *testing.T) {
 				t.Fatalf("grant survived %s change: %+v, %v", name, grants, err)
 			}
 		})
+	}
+}
+
+// oauthKeys returns current and earlier-configuration OAuth grant keys.
+func oauthKeys(connection string) []string {
+	return []string{connection + ":" + strings.Repeat("a", 64), connection + ":" + strings.Repeat("b", 64)}
+}
+
+func TestConnectionChangeRevokesOnlyThatConnection(t *testing.T) {
+	s, _, _ := testStore(t)
+	ctx := t.Context()
+	// "a_b" and "aXb" catch token prefix matching that treats '_' as a wildcard.
+	for _, c := range []string{"a_b", "aXb"} {
+		approved := ampOperation(c+"-approved", "thread-one", "project-one", c+"-binding")
+		approved.Connection = c
+		submitWithGrants(t, s, approved)
+		if err := s.Approve(ctx, approved.ID, "owner", "project"); err != nil {
+			t.Fatal(err)
+		}
+		waiting := ampOperation(c+"-waiting", "thread-two", "project-two", c+"-binding")
+		waiting.Connection = c
+		submitWithGrants(t, s, waiting)
+		for _, key := range oauthKeys(c) {
+			if err := s.SaveToken(ctx, key, []byte("token")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Other records share the tokens table; a connection name must never match them.
+	if err := s.SaveToken(ctx, "a_b:account-record", []byte("keep")); err != nil {
+		t.Fatal(err)
+	}
+	state := func(c string) (statuses string, grants int, tokens int) {
+		t.Helper()
+		for _, id := range []string{c + "-approved", c + "-waiting"} {
+			o, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statuses += o.Status + " "
+		}
+		active, err := s.ApprovalGrants(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, g := range active {
+			if g.Connection == c {
+				grants++
+			}
+		}
+		for _, key := range oauthKeys(c) {
+			if raw, err := s.LoadToken(ctx, key); err != nil {
+				t.Fatal(err)
+			} else if raw != nil {
+				tokens++
+			}
+		}
+		return strings.TrimSpace(statuses), grants, tokens
+	}
+	expect := func(step, c, statuses string, grants, tokens int) {
+		t.Helper()
+		if gotStatuses, gotGrants, gotTokens := state(c); gotStatuses != statuses || gotGrants != grants || gotTokens != tokens {
+			t.Fatalf("%s %s: statuses %q grants %d tokens %d", step, c, gotStatuses, gotGrants, gotTokens)
+		}
+	}
+	if err := s.SaveConnectionCatalogue(ctx, []byte(`{}`), "a_b", "connection-disabled", false); err != nil {
+		t.Fatal(err)
+	}
+	expect("disable", "a_b", "denied denied", 0, 2)
+	expect("disable", "aXb", "ready pending", 1, 2)
+	if err := s.SaveConnectionCatalogue(ctx, []byte(`{}`), "a_b", "connection-removed", true); err != nil {
+		t.Fatal(err)
+	}
+	expect("remove", "a_b", "denied denied", 0, 0)
+	expect("remove", "aXb", "ready pending", 1, 2)
+	if raw, err := s.LoadToken(ctx, "a_b:account-record"); err != nil || string(raw) != "keep" {
+		t.Fatalf("removal deleted a non-OAuth record: %q %v", raw, err)
+	}
+	if _, err := s.Claim(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveConnectionCatalogue(ctx, []byte(`{}`), "aXb", "connection-removed", true); err == nil {
+		t.Fatal("removed a connection while a call was running")
+	}
+	expect("refused", "aXb", "running pending", 1, 2)
+	events, err := s.Events(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denials := map[string]string{}
+	for _, e := range events {
+		if e.Kind == "denied" {
+			denials[e.Operation] = e.Actor
+		}
+	}
+	if len(denials) != 2 || denials["a_b-approved"] != "connection-disabled" || denials["a_b-waiting"] != "connection-disabled" {
+		t.Fatalf("denial audit: %v", denials)
 	}
 }
 

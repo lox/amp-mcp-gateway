@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -227,11 +226,7 @@ func (s *Store) RevokeApprovalGrant(ctx context.Context, id, actor string) error
 	return tx.Commit()
 }
 
-func (s *Store) revokeConnectionGrants(ctx context.Context, tx *sql.Tx, credentialKey string) error {
-	connection, _, ok := strings.Cut(credentialKey, ":")
-	if !ok {
-		return nil
-	}
+func (s *Store) revokeConnectionGrants(ctx context.Context, tx *sql.Tx, connection string) error {
 	rows, err := tx.QueryContext(ctx, "SELECT id,payload FROM approval_grants WHERE active=1")
 	if err != nil {
 		return err

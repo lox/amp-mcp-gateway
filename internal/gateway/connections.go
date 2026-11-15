@@ -29,17 +29,20 @@ type catalogue struct {
 	Tools              []Tool
 	ToolDefaults       map[string]string `json:",omitempty"`
 	PrivateConnections map[string]bool   `json:",omitempty"`
+	// DisabledConnections keeps credentials and policies while hiding tools from agents.
+	DisabledConnections map[string]bool `json:",omitempty"`
 }
 
 // persistedCatalogue reads records written by earlier versions of the secrets
 // branch so they can move to dedicated rollback-safe storage.
 type persistedCatalogue struct {
-	Connections        []upstream.Connection
-	Integrations       []Integration `json:",omitempty"`
-	Secrets            []Integration `json:",omitempty"`
-	Tools              []Tool
-	ToolDefaults       map[string]string `json:",omitempty"`
-	PrivateConnections map[string]bool   `json:",omitempty"`
+	Connections         []upstream.Connection
+	Integrations        []Integration `json:",omitempty"`
+	Secrets             []Integration `json:",omitempty"`
+	Tools               []Tool
+	ToolDefaults        map[string]string `json:",omitempty"`
+	PrivateConnections  map[string]bool   `json:",omitempty"`
+	DisabledConnections map[string]bool   `json:",omitempty"`
 }
 
 // LoadCatalogue restores saved connections and policies before startup validation.
@@ -65,6 +68,7 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		c = catalogue{
 			Connections: persisted.Connections, Integrations: append(persisted.Integrations, persisted.Secrets...),
 			Tools: persisted.Tools, ToolDefaults: persisted.ToolDefaults, PrivateConnections: persisted.PrivateConnections,
+			DisabledConnections: persisted.DisabledConnections,
 		}
 		hadEmbeddedSecrets = slices.ContainsFunc(c.Integrations, func(integration Integration) bool {
 			return integration.Provider == secretProvider
@@ -114,7 +118,7 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		}
 	}
 	cfg.Connections, cfg.Integrations, cfg.Tools = c.Connections, c.Integrations, c.Tools
-	cfg.ToolDefaults, cfg.PrivateConnections = c.ToolDefaults, c.PrivateConnections
+	cfg.ToolDefaults, cfg.PrivateConnections, cfg.DisabledConnections = c.ToolDefaults, c.PrivateConnections, c.DisabledConnections
 	return nil
 }
 
@@ -141,7 +145,7 @@ func (g *Gateway) catalogue() catalogue {
 		tools = slices.DeleteFunc(tools, func(t Tool) bool { return t.ID == generated.ID })
 		delete(defaults, integration.ID)
 	}
-	return catalogue{Connections: slices.Clone(g.cfg.Connections), Integrations: slices.Clone(g.cfg.Integrations), Tools: tools, ToolDefaults: defaults, PrivateConnections: maps.Clone(g.cfg.PrivateConnections)}
+	return catalogue{Connections: slices.Clone(g.cfg.Connections), Integrations: slices.Clone(g.cfg.Integrations), Tools: tools, ToolDefaults: defaults, PrivateConnections: maps.Clone(g.cfg.PrivateConnections), DisabledConnections: maps.Clone(g.cfg.DisabledConnections)}
 }
 
 func validPolicy(policy string) bool {
@@ -149,6 +153,8 @@ func validPolicy(policy string) bool {
 }
 
 func (cfg Config) privateConnection(id string) bool { return cfg.PrivateConnections[id] }
+
+func (cfg Config) disabledConnection(id string) bool { return cfg.DisabledConnections[id] }
 
 func (cfg Config) defaultPolicy(id string) string {
 	if policy := cfg.ToolDefaults[id]; policy != "" {
@@ -180,9 +186,22 @@ func encodeCatalogue(c catalogue) ([]byte, map[string][]byte, error) {
 
 // Caller holds g.mu. Validate before persistence; publish only after commit.
 func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, events ...store.Event) error {
+	return g.commitCatalogue(ctx, c, m, nil, events...)
+}
+
+// connectionChange marks a catalogue that differs from the current one only in
+// connection id. Other connections keep their queued requests and standing
+// approvals. Removal also deletes the connection's stored OAuth credentials.
+type connectionChange struct {
+	id, reason string
+	remove     bool
+}
+
+// Caller holds g.mu. A nil change revokes all queued and standing authority.
+func (g *Gateway) commitCatalogue(ctx context.Context, c catalogue, m *upstream.Manager, change *connectionChange, events ...store.Event) error {
 	next := g.cfg
 	next.Connections, next.Integrations, next.Tools = c.Connections, c.Integrations, c.Tools
-	next.ToolDefaults, next.PrivateConnections = c.ToolDefaults, c.PrivateConnections
+	next.ToolDefaults, next.PrivateConnections, next.DisabledConnections = c.ToolDefaults, c.PrivateConnections, c.DisabledConnections
 	manager, err := upstream.New(next.BaseURL, next.Connections, g.store)
 	if err != nil {
 		return errors.New("invalid connection configuration")
@@ -195,12 +214,27 @@ func (g *Gateway) saveCatalogue(ctx context.Context, c catalogue, m *upstream.Ma
 	if err != nil {
 		return err
 	}
-	if err := g.store.SaveCatalogueProtectingWithSecrets(ctx, raw, c.PrivateConnections, secrets, events...); err != nil {
+	switch {
+	case change == nil:
+		err = g.store.SaveCatalogueProtectingWithSecrets(ctx, raw, c.PrivateConnections, secrets, events...)
+		if err == nil {
+			m.Install(manager)
+		}
+	case change.remove:
+		err = m.Remove(change.id, manager, func() error {
+			return g.store.SaveConnectionCatalogue(ctx, raw, change.id, change.reason, true, events...)
+		})
+	default:
+		err = g.store.SaveConnectionCatalogue(ctx, raw, change.id, change.reason, false, events...)
+		if err == nil {
+			m.Install(manager)
+		}
+	}
+	if err != nil {
 		return errors.New("could not save; wait for running operations to finish and try again")
 	}
-	m.Install(manager)
 	g.cfg.Connections, g.cfg.Integrations, g.cfg.Tools = compiled.cfg.Connections, compiled.cfg.Integrations, compiled.cfg.Tools
-	g.cfg.ToolDefaults, g.cfg.PrivateConnections = compiled.cfg.ToolDefaults, compiled.cfg.PrivateConnections
+	g.cfg.ToolDefaults, g.cfg.PrivateConnections, g.cfg.DisabledConnections = compiled.cfg.ToolDefaults, compiled.cfg.PrivateConnections, compiled.cfg.DisabledConnections
 	g.tools, g.schemas, g.bindings = compiled.tools, compiled.schemas, compiled.bindings
 	clear(g.proposals) // A later identical catalogue must not resurrect old proposals.
 	return nil
@@ -282,6 +316,9 @@ func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/discover", func(w http.ResponseWriter, r *http.Request) { g.discoverTools(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.saveTools(w, r, m) })
+	mux.HandleFunc("POST /connections/{id}/disable", func(w http.ResponseWriter, r *http.Request) { g.setConnectionDisabled(w, r, m, true) })
+	mux.HandleFunc("POST /connections/{id}/enable", func(w http.ResponseWriter, r *http.Request) { g.setConnectionDisabled(w, r, m, false) })
+	mux.HandleFunc("POST /connections/{id}/remove", func(w http.ResponseWriter, r *http.Request) { g.removeConnection(w, r, m) })
 	mux.HandleFunc("POST /connections/{id}/test", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		g.mu.RLock()
@@ -420,6 +457,76 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 	http.Redirect(w, r, "/connections/"+c.ID+"/tools", http.StatusSeeOther)
 }
 
+// Caller holds g.mu. The native browser connection is managed under Integrations.
+func (g *Gateway) remoteConnection(id string) bool {
+	return slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && !c.Browser })
+}
+
+// setConnectionDisabled hides a remote connection's tools from agents without
+// forgetting its credentials or saved permissions. Disabling denies its queued
+// requests and revokes its standing approvals; other connections are unaffected.
+func (g *Gateway) setConnectionDisabled(w http.ResponseWriter, r *http.Request, m *upstream.Manager, disabled bool) {
+	id := r.PathValue("id")
+	g.mu.Lock()
+	if !g.remoteConnection(id) {
+		g.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	var err error
+	if g.cfg.disabledConnection(id) != disabled {
+		next := g.catalogue()
+		if next.DisabledConnections == nil {
+			next.DisabledConnections = map[string]bool{}
+		}
+		kind := "connection-enabled"
+		if disabled {
+			next.DisabledConnections[id] = true
+			kind = "connection-disabled"
+		} else {
+			delete(next.DisabledConnections, id)
+		}
+		err = g.commitCatalogue(r.Context(), next, m, &connectionChange{id: id, reason: kind}, store.Event{Kind: kind, Actor: browserActor(r)})
+	}
+	g.mu.Unlock()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	http.Redirect(w, r, "/connections/"+id+"/settings", http.StatusSeeOther)
+}
+
+// removeConnection deletes a remote connection, its saved tools and policies,
+// and every stored OAuth credential for it. Its queued requests are denied and
+// its standing approvals revoked; audit history and past results remain.
+func (g *Gateway) removeConnection(w http.ResponseWriter, r *http.Request, m *upstream.Manager) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if r.ParseForm() != nil || r.PostForm.Get("confirm") != "remove" {
+		http.Error(w, "Confirm removal to delete this connection.", http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	g.mu.Lock()
+	if !g.remoteConnection(id) {
+		g.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	next := g.catalogue()
+	next.Connections = slices.DeleteFunc(next.Connections, func(c upstream.Connection) bool { return c.ID == id })
+	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.Connection == id })
+	delete(next.ToolDefaults, id)
+	delete(next.PrivateConnections, id)
+	delete(next.DisabledConnections, id)
+	err := g.commitCatalogue(r.Context(), next, m, &connectionChange{id: id, reason: "connection-removed", remove: true}, store.Event{Kind: "connection-removed", Actor: browserActor(r)})
+	g.mu.Unlock()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	http.Redirect(w, r, "/connections", http.StatusSeeOther)
+}
+
 // Return only presentation-safe connection fields; credentials never reach templates.
 func (g *Gateway) connectionView(id string) map[string]any {
 	g.mu.RLock()
@@ -427,7 +534,7 @@ func (g *Gateway) connectionView(id string) map[string]any {
 	var connection map[string]any
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
-			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil}
+			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil, "Disabled": g.cfg.disabledConnection(c.ID)}
 			if c.OAuth != nil {
 				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
@@ -440,7 +547,7 @@ func (g *Gateway) connectionView(id string) map[string]any {
 // durable ledger; health checks are process-local observations.
 type connectionRow struct {
 	ID, Account, Auth, Fix, Policies string
-	Private, Attention               bool
+	Private, Disabled, Attention     bool
 	Health                           upstream.Health
 	Tools                            int
 	LastCall                         string
@@ -477,7 +584,7 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 		if c.Browser {
 			continue
 		}
-		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID)}
+		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID), Disabled: g.cfg.disabledConnection(c.ID)}
 		if c.OAuth != nil {
 			row.Auth = "OAuth"
 		} else if c.NoAuth {
@@ -521,6 +628,9 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 	for i := range rows {
 		row := &rows[i]
 		row.Health = m.Health(ctx, row.ID)
+		if row.Disabled {
+			continue // Agents cannot use it, so its health needs no action.
+		}
 		switch row.Health.Status {
 		case "Healthy", "Not tested", "Updating credentials", "Refresh delayed":
 		case "Not connected":

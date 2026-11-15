@@ -50,6 +50,7 @@ type Config struct {
 	Tools                     []Tool
 	ToolDefaults              map[string]string `json:",omitempty"`
 	PrivateConnections        map[string]bool   `json:",omitempty"`
+	DisabledConnections       map[string]bool   `json:",omitempty"`
 }
 
 // Backend is the upstream transport boundary.
@@ -324,7 +325,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" || !identity.allows(g.cfg.privateConnection(t.Connection)) {
+			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -389,6 +390,9 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	}
 	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
 		return store.Operation{}, errors.New("unknown tool")
+	}
+	if g.cfg.disabledConnection(t.Connection) {
+		return store.Operation{}, errors.New("tool unavailable: the owner disabled its connection")
 	}
 	if c.Arguments == nil {
 		c.Arguments = map[string]any{}

@@ -54,6 +54,10 @@ var auditTemplateFuncs = template.FuncMap{
 			return "Connection reauthorised"
 		case actor == "catalogue-changed":
 			return "Catalogue changed"
+		case actor == "connection-disabled":
+			return "Connection disabled"
+		case actor == "connection-removed":
+			return "Connection removed"
 		case actor == "approval-grant-unavailable":
 			return "Standing approval unavailable"
 		case names[actor] != "":
@@ -137,6 +141,12 @@ func auditEvent(request store.AuditRequest, i int) string {
 		}
 		if e.Actor == "catalogue-changed" {
 			return "Denied after catalogue change"
+		}
+		if e.Actor == "connection-disabled" {
+			return "Denied after connection was disabled"
+		}
+		if e.Actor == "connection-removed" {
+			return "Denied after connection was removed"
 		}
 		if e.Actor == "approval-grant-unavailable" {
 			return "Standing approval expired or revoked"

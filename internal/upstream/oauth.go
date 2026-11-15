@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -135,7 +136,10 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	raw, err := json.Marshal(&credentials{Token: *token, AuthStyle: observed.style})
 	if err == nil {
 		c.mu.Lock()
-		if replacement, ok := m.store.(reauthorizer); ok {
+		if current, ok := m.connection(c.config.ID); !ok || current != c {
+			// Removed or reconfigured during the exchange; never resurrect its grant.
+			err = errors.New("connection changed during authorization")
+		} else if replacement, ok := m.store.(reauthorizer); ok {
 			err = replacement.Reauthorize(ctx, tokenKey(c.config), raw)
 		} else {
 			err = m.store.SaveToken(ctx, tokenKey(c.config), raw)
