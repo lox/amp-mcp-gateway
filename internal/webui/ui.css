@@ -1412,19 +1412,19 @@
     @apply relative flex;
   }
   :where(html.dashboard) .receipt-actions > .primary {
-    background: #1f7a4a;
-    border-color: #1f7a4a;
+    background: #3c6e55;
+    border-color: #3c6e55;
   }
   :where(html.dashboard) .receipt-actions > .primary:hover {
-    background: #18653c;
+    background: #315b46;
   }
   :where(html.dashboard) .receipt-actions > .danger {
-    background: #b42f2f;
-    border-color: #b42f2f;
+    background: #8f4444;
+    border-color: #8f4444;
     color: white;
   }
   :where(html.dashboard) .receipt-actions > .danger:hover {
-    background: #962626;
+    background: #783838;
   }
   :where(html.dashboard) .split-button > button,
   :where(html.dashboard) .split-menu summary {
