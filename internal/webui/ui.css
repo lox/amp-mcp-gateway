@@ -1338,7 +1338,7 @@
     color: #586b62;
   }
   :where(html.dashboard) .receipt {
-    @apply p-0 pb-6 mt-4 rounded-[8px] overflow-hidden bg-white;
+    @apply p-0 pb-6 mt-4 rounded-[8px] bg-white;
   }
   :where(html.dashboard) .receipt-head {
     @apply flex items-start gap-4 p-[24px_28px_0];
@@ -1401,21 +1401,39 @@
   :where(html.dashboard) .receipt-actions button {
     @apply rounded-[4px];
   }
-  :where(html.dashboard) .receipt-actions .danger {
-    @apply ml-auto;
+  :where(html.dashboard) .split-button {
+    @apply relative flex ml-auto;
   }
-  :where(html.dashboard) .receipt-settings {
-    @apply basis-full flex flex-wrap gap-x-6 gap-y-1;
+  :where(html.dashboard) .split-button > button {
+    @apply rounded-r-none;
   }
-  :where(html.dashboard) .receipt-setting {
-    @apply flex items-center gap-1 text-muted text-[13px] font-normal m-0;
+  :where(html.dashboard) .split-button > button:only-child {
+    @apply rounded-[4px];
   }
-  :where(html.dashboard) .receipt-setting select {
-    @apply w-auto m-0 p-[2px_4px] text-[13px] text-ink bg-transparent rounded-[3px] cursor-pointer;
-    border: 1px solid transparent;
+  :where(html.dashboard) .split-menu summary {
+    @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[4px];
+    border: 1px solid;
+    border-left: 0;
   }
-  :where(html.dashboard) .receipt-setting select:hover {
-    border-color: var(--color-divider);
+  :where(html.dashboard) .split-menu summary::-webkit-details-marker {
+    @apply hidden;
+  }
+  :where(html.dashboard) .split-menu[open] summary {
+    @apply bg-inset;
+  }
+  :where(html.dashboard) .split-options {
+    @apply absolute right-0 top-full mt-1 z-10 grid w-80 p-1 bg-white rounded-[6px];
+    border: 1px solid var(--color-divider);
+    box-shadow: 0 6px 20px rgb(21 36 67 / 0.12);
+  }
+  :where(html.dashboard) .split-options button {
+    @apply block w-full text-left border-0 rounded-[4px] p-[8px_10px] font-semibold bg-transparent;
+  }
+  :where(html.dashboard) .split-options button:hover {
+    @apply bg-inset;
+  }
+  :where(html.dashboard) .split-options small {
+    @apply block font-normal text-[12px] text-muted mt-[2px];
   }
   :where(html.dashboard) .approval-grants button {
     @apply whitespace-nowrap;
@@ -1440,8 +1458,14 @@
     :where(html.dashboard) .receipt-actions {
       @apply flex-col items-stretch p-[20px_20px_0];
     }
-    :where(html.dashboard) .receipt-actions .danger {
+    :where(html.dashboard) .split-button {
       @apply ml-0;
+    }
+    :where(html.dashboard) .split-button > button {
+      @apply flex-1;
+    }
+    :where(html.dashboard) .split-options {
+      @apply w-full;
     }
   }
 

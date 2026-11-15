@@ -27,9 +27,8 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   model metadata nor account labels are authentication evidence. Only the disposable
   demo fixture uses bearer authentication.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
-- Trust the immutable stored request once, or trust the exact call, its tool with any
-  arguments, or any tool on its connection in its verified Amp thread or project
-  for 24 hours or until revoked. Keep
+- Approve the immutable stored request once, or trust every tool on its connection
+  in its verified Amp thread or project until revoked. Keep
   configuration bindings and check consent again at atomic claim.
   Never automatically retry an ambiguous dispatch.
 - Permit tools from private connections only when each fresh Amp token attests a
@@ -105,8 +104,8 @@ documentation/setup work.
 Amp tokens authenticate `/mcp` against a fixed issuer, shared gateway-origin audience,
 `token_use=mcp` and the linked account's user ID. The signed subject and thread ID plus
 optional workspace/project IDs are stored and shown during review. Pending requests
-offer Trust once, Trust for this thread or project, and Deny; trust covers the exact
-call, the tool or the connection, for 24 hours or forever. Standing approvals are encrypted, bound to identity and
+offer Approve, Deny, and Trust this thread or project, which covers every tool on
+the connection until revoked. Standing approvals are encrypted, bound to identity and
 configuration, listed for the owner, and revocable; existing one-hour grants retain
 their deadline. Expiry, revocation or replaced
 consent denies queued grant-authorized calls at atomic claim; directly approved

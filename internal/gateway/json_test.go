@@ -56,7 +56,7 @@ func TestDeepJSONPresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := html.UnescapeString(w.Body.String())
-		if len(body) > 100<<10 || !strings.Contains(body, nested) || !strings.Contains(body, "Trust once") {
+		if len(body) > 100<<10 || !strings.Contains(body, nested) || !strings.Contains(body, ">Approve</button>") {
 			t.Fatalf("operation presentation expanded or lost full content: %d bytes", len(body))
 		}
 		stored, err := s.Get(t.Context(), o.ID)

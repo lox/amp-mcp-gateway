@@ -49,16 +49,12 @@ func TestTrustApprovalForm(t *testing.T) {
 		status int
 		grant  string // breadth:scope:expiry of the saved grant, if any
 	}{
-		{"once ignores settings", url.Values{"trust": {"once"}, "expiry": {"never"}, "covers": {"connection"}}, 303, ""},
+		{"approve once", url.Values{"trust": {"once"}}, 303, ""},
 		{"no trust field approves once", nil, 303, ""},
-		{"thread exact for 24 hours", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"exact"}}, 303, "exact:thread:24h"},
-		{"project tool forever", url.Values{"trust": {"project"}, "expiry": {"never"}, "covers": {"tool"}}, 303, "tool:project:never"},
-		{"thread connection for 24 hours", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"connection"}}, 303, "connection:thread:24h"},
-		{"missing expiry", url.Values{"trust": {"thread"}, "covers": {"exact"}}, 400, ""},
-		{"missing covers", url.Values{"trust": {"thread"}, "expiry": {"24h"}}, 400, ""},
-		{"unoffered expiry", url.Values{"trust": {"thread"}, "expiry": {"1h"}, "covers": {"exact"}}, 400, ""},
-		{"unoffered covers", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"everything"}}, 400, ""},
-		{"unknown trust", url.Values{"trust": {"connection"}, "expiry": {"24h"}, "covers": {"tool"}}, 400, ""},
+		{"thread trusts the connection forever", url.Values{"trust": {"thread"}}, 303, "connection:thread:never"},
+		{"project trusts the connection forever", url.Values{"trust": {"project"}}, 303, "connection:project:never"},
+		{"stale fields cannot narrow or shorten trust", url.Values{"trust": {"thread"}, "expiry": {"24h"}, "covers": {"exact"}}, 303, "connection:thread:never"},
+		{"unknown trust", url.Values{"trust": {"connection"}}, 400, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g, s, _ := fixture(t)

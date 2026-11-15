@@ -586,18 +586,13 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			// Trust once approves only this request. Thread or project trust also
-			// saves a standing approval covering this exact call, this tool or the connection.
+			// Approve covers only this request. Trusting the thread or project also
+			// saves a standing approval for every tool on the connection until revoked.
 			switch trust := r.Form.Get("trust"); trust {
 			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
 			case "thread", "project":
-				options := store.ApprovalOptions{Breadth: r.Form.Get("covers"), Scope: trust, Expiry: r.Form.Get("expiry")}
-				if !slices.Contains([]string{"exact", "tool", "connection"}, options.Breadth) || (options.Expiry != "24h" && options.Expiry != "never") {
-					http.Error(w, "Invalid approval.", http.StatusBadRequest)
-					return
-				}
-				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
+				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, store.ApprovalOptions{Breadth: "connection", Scope: trust, Expiry: "never"})
 			default:
 				http.Error(w, "Invalid approval.", http.StatusBadRequest)
 				return
