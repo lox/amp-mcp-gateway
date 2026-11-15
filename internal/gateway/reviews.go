@@ -81,7 +81,7 @@ func reviewStats(j reviews.Job) any {
 		}
 	}
 	credits, estimate, known, estimates := 0.0, 0.0, 0, 0
-	pending := false
+	pending := j.Status == "queued" || j.Status == "running"
 	for _, t := range j.Threads {
 		if t.Usage == nil {
 			pending = pending || t.UsageError == ""
@@ -94,20 +94,20 @@ func reviewStats(j reviews.Job) any {
 			estimate += *t.Usage.ProviderEstimateUSD
 		}
 	}
-	if len(j.Threads) > 0 {
+	if len(j.Threads) > 0 || pending {
 		v.Credits, v.Estimate = "Unavailable", "Not reported"
 		if pending {
 			v.Credits, v.Estimate = "Pending", "Pending"
 		}
 		if known > 0 {
 			v.Credits = fmt.Sprintf("$%.4f", credits)
-			if known < len(j.Threads) {
+			if pending || known < len(j.Threads) {
 				v.Credits += " (partial)"
 			}
 		}
 		if estimates > 0 {
 			v.Estimate = fmt.Sprintf("$%.4f", estimate)
-			if estimates < len(j.Threads) {
+			if pending || estimates < len(j.Threads) {
 				v.Estimate += " (partial)"
 			}
 		}

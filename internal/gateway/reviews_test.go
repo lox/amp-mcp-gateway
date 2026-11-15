@@ -169,18 +169,26 @@ func TestReviewHistoryAtAGlance(t *testing.T) {
 		{"zero is known", reviews.Job{Status: "succeeded", Conclusion: "success", Result: &reviews.Result{}, Threads: []reviews.Thread{{Usage: &reviews.Usage{}}}}, []string{"Passed", "$0.0000", "Est. Not reported"}},
 		{"pending is not zero", reviews.Job{Status: "unknown", Threads: []reviews.Thread{{}}}, []string{"unknown", "Pending", "Est. Pending", "review-findings\">—"}},
 		{"failed usage is not zero", reviews.Job{Status: "failed", Threads: []reviews.Thread{{UsageError: "unavailable"}}}, []string{"Review failed", "Unavailable"}},
+		{"queued before thread creation", reviews.Job{Status: "queued"}, []string{"Pending", "Est. Pending"}},
+		{"running before thread creation", reviews.Job{Status: "running"}, []string{"Pending", "Est. Pending"}},
+		{"retry before next thread", reviews.Job{Status: "running", Threads: []reviews.Thread{{Usage: &reviews.Usage{CostUSD: .25, ProviderEstimateUSD: new(1.5)}}}}, []string{"$0.2500 (partial)", "Est. $1.5000 (partial)"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			j := tc.job
 			j.Repository, j.Number, j.Context.Title = "example/repo", 42, "Fix <unsafe> lifecycle"
 			j.Created, j.Completed = created.UnixNano(), created.Add(203*time.Second).Unix()
+			if j.Status == "queued" || j.Status == "running" {
+				j.Completed = 0
+			} else {
+				tc.want = append(tc.want, "3m23s")
+			}
 			var body strings.Builder
 			if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewJobs": []reviews.Job{j}}); err != nil {
 				t.Fatal(err)
 			}
 			_, summary, _ := strings.Cut(body.String(), `<summary class="review-summary">`)
 			summary, _, _ = strings.Cut(summary, "</summary>")
-			for _, want := range append(tc.want, "3m23s", "Fix &lt;unsafe&gt; lifecycle", "example/repo#42", "15 Nov · 08:00 UTC") {
+			for _, want := range append(tc.want, "Fix &lt;unsafe&gt; lifecycle", "example/repo#42", "15 Nov · 08:00 UTC") {
 				if !strings.Contains(summary, want) {
 					t.Fatalf("collapsed row missing %q: %s", want, summary)
 				}
