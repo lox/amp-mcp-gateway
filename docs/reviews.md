@@ -117,6 +117,13 @@ single-review footprint. Check memory headroom before adding concurrent accounts
 
 ## Lifecycle and operational limits
 
+The history list shows each PR's title, frozen head, outcome, findings by severity,
+elapsed time and Amp credits without expanding the row. A completed review with
+blocking findings is distinct from a failed review execution. Elapsed time includes
+queue time and all attempts; running values update on refresh. Costs sum recorded
+usage across attempts, marking incomplete totals as partial rather than treating
+missing usage as zero. The separate provider estimate is not an additional charge.
+
 - Signed `opened`, `reopened`, `synchronize` and `ready_for_review` events enqueue
   non-draft PRs. `closed` and `converted_to_draft` are accepted; the live GitHub
   state check cancels closed/draft work, so delayed events cannot cancel a reopened

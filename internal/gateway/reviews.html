@@ -51,7 +51,14 @@
 {{else}}
 <div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
 <section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>
-{{range .ReviewJobs}}<details class="card"><summary><span class="badge {{.Status}}">{{.Status}}</span> <strong>{{.Repository}}#{{.Number}}</strong> · {{.App}}{{if .Conclusion}} · {{.Conclusion}}{{end}}</summary>
+{{range .ReviewJobs}}{{$stats := reviewStats .}}<details class="card review-job"><summary class="review-summary">
+<span class="review-identity"><strong>{{if .Context.Title}}{{.Context.Title}}{{else}}{{.Repository}}#{{.Number}}{{end}}</strong><span class="help">{{.Repository}}#{{.Number}}{{if ge (len .HeadSHA) 7}} · <code>{{slice .HeadSHA 0 7}}</code>{{end}}</span><time class="help" datetime="{{reviewTime .Created}}">{{reviewDate .Created}}</time></span>
+<span class="review-outcome"><span class="badge {{$stats.Class}}">{{$stats.Outcome}}</span><span class="help">{{.App}}</span></span>
+<span class="review-stat"><span class="help">Findings</span><span class="review-findings">{{if .Result}}{{range $stats.Findings}}<span class="review-severity {{.Severity}}">{{.Count}} {{.Severity}}</span>{{else}}0{{end}}{{else}}—{{end}}</span></span>
+<span class="review-stat"><span class="help">Elapsed</span><strong>{{$stats.Elapsed}}</strong></span>
+<span class="review-stat"><span class="help">Amp credits</span><strong>{{$stats.Credits}}</strong><span class="help">Est. {{$stats.Estimate}}</span></span>
+</summary>
+<p class="help">Elapsed includes queue time and all attempts; updates on refresh. Credits sum recorded usage across attempts. Est. is provider list-price cost, not an additional charge.</p>
 <p class="help">Created <time datetime="{{reviewTime .Created}}">{{reviewTime .Created}}</time>{{if gt .Completed 0}} · Completed <time datetime="{{iso .Completed}}">{{iso .Completed}}</time>{{end}}</p>
 <p><a href="https://github.com/{{.Repository}}/pull/{{.Number}}">Open pull request ↗</a>{{if .CheckID}} · <a href="https://github.com/{{.Repository}}/runs/{{.CheckID}}">GitHub check ↗</a>{{end}}</p>
 <p class="help">Base <code>{{.BaseSHA}}</code><br>Head <code>{{.HeadSHA}}</code><br>Project {{.Project}} · {{.Phase}} · {{.PromptVersion}}</p>
