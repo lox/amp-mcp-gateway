@@ -68,7 +68,7 @@ func TestFocusedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	oneOff := formRequest(h, cookie, "GET", "/operations/"+second.ID, nil).Body.String()
-	if !strings.Contains(oneOff, ">Approve</button>") || !strings.Contains(oneOff, ">Deny</button>") || !strings.Contains(oneOff, ">Trust all notes tools for this thread</button>") {
+	if !strings.Contains(oneOff, "Approve once</button>") || !strings.Contains(oneOff, ">Deny</button>") || !strings.Contains(oneOff, "Approve &amp; trust all notes tools for this thread</button>") {
 		t.Fatal("demo workload identity did not offer reusable approval controls")
 	}
 	if w := formRequest(h, cookie, "POST", "/operations/"+first.ID+"/deny", nil); w.Code != 303 {

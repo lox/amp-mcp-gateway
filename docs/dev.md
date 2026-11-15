@@ -782,10 +782,12 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- The review card offers **Approve**, **Deny** and a **Trust all <connection> tools
-  for this thread** split button. Its menu also offers the same for the project,
-  and **Trust <tool> for this thread/project** for just the requested tool with any
-  arguments. Approve covers only this request. Trust saves a standing approval,
+- The review card offers **Approve once**, an **Approve & trust all <connection>
+  tools for this thread** split button, and **Deny**. The split button's menu also
+  offers the same for the project, and **Approve & trust <tool> for this
+  thread/project** for just the requested tool with any arguments. Every trust
+  option also approves the current request. Approve once covers only this request.
+  Trust saves a standing approval,
   until revoked, limited to the verified owner's thread or project; project trust
   requires an Amp project claim. Connection-wide trust binds the full
   current tool catalogue and its configuration; it never covers added or blocked
