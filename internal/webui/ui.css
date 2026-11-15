@@ -34,38 +34,41 @@
   }
   :where(html.dashboard) .topbar .user-menu-trigger {
     anchor-name: --user-menu-trigger;
-    @apply flex items-center gap-2 min-h-10 p-[5px_8px];
+  }
+  /* Quiet icon buttons: no box until hovered, focused or open. */
+  :where(html.dashboard) .topbar :is(.user-menu-trigger, .notification-trigger) {
+    @apply grid place-items-center size-10 min-h-10 p-0 rounded-full text-muted flex-none;
+    border: 0;
+  }
+  :where(html.dashboard) .topbar :is(.user-menu-trigger, .notification-trigger):is(:hover, :has(+ :popover-open)) {
+    @apply text-ink;
+    background: #efeee9;
   }
   :where(html.dashboard) .user-avatar {
     @apply relative grid place-items-center size-7 rounded-full overflow-hidden flex-none;
-    background: #edf1f8;
   }
   :where(html.dashboard) .user-avatar img {
     @apply absolute inset-0 size-full object-cover;
-  }
-  :where(html.dashboard) .user-name {
-    @apply max-w-[180px] truncate;
   }
   :where(html.dashboard) .user-identity {
     @apply m-0 p-[10px_12px] text-[13px] font-semibold;
     overflow-wrap: anywhere;
   }
   :where(html.dashboard) .user-menu-trigger svg {
-    @apply size-5;
+    @apply size-[22px];
   }
   :where(html.dashboard) .user-panel {
     position: fixed;
-    inset: 76px 16px auto auto;
-    @apply m-0 w-[180px] max-w-[calc(100vw-32px)] p-2 rounded-[4px] bg-surface text-ink;
-    border: 1px solid #dcdde1;
+    inset: 70px 16px auto auto;
+    @apply m-0 w-[180px] max-w-[calc(100vw-32px)] p-2 rounded-[10px] bg-surface text-ink;
+    border: 1px solid var(--color-divider);
     box-shadow: 0 6px 20px #15244320;
   }
   :where(html.dashboard) .user-panel a,
   :where(html.dashboard) .topbar .user-panel button {
-    @apply block box-border w-full min-h-10 p-[10px_12px] text-left text-ink no-underline rounded-[3px];
+    @apply block box-border w-full min-h-10 p-[10px_12px] text-left text-ink no-underline rounded-[6px] font-medium;
     border: 0;
     background: transparent;
-    font: 13px ui-monospace, monospace;
   }
   :where(html.dashboard) .user-panel a:hover,
   :where(html.dashboard) .topbar .user-panel button:hover {
@@ -85,16 +88,16 @@
   /* dashboard */
   :where(html.dashboard) .topbar .notification-trigger {
     anchor-name: --notification-trigger;
-    @apply grid place-items-center size-10 p-[9px] flex-none ml-auto;
+    @apply ml-auto;
   }
   :where(html.dashboard) .notification-trigger svg {
-    @apply size-5;
+    @apply size-[22px];
   }
   :where(html.dashboard) .notification-panel {
     position: fixed;
-    inset: 76px 16px auto auto;
-    @apply m-0 w-[288px] max-w-[calc(100vw-32px)] p-5 rounded-[4px] bg-surface text-ink;
-    border: 1px solid #dcdde1;
+    inset: 70px 16px auto auto;
+    @apply m-0 w-[288px] max-w-[calc(100vw-32px)] p-5 rounded-[10px] bg-surface text-ink;
+    border: 1px solid var(--color-divider);
     box-shadow: 0 6px 20px #15244320;
   }
   :where(html.dashboard) .notification-panel h2 {
@@ -147,12 +150,8 @@
     @apply m-0;
   }
   :where(html.dashboard) .badge {
-    font:
-      12px ui-monospace,
-      monospace;
-    @apply p-[5px_8px];
+    @apply inline-block p-[4px_10px] text-[12px] font-semibold leading-[1.4];
     background: #eaf0e8;
-    @apply inline-block;
   }
   :where(html.dashboard) .unknown,
   :where(html.dashboard) .denied,
@@ -574,7 +573,7 @@
     @apply relative inline-block align-top ml-1 text-left;
   }
   :where(html.dashboard) .refresh-options > summary {
-    @apply flex items-center justify-center w-8 h-10 list-none rounded-[3px] border border-control cursor-pointer;
+    @apply flex items-center justify-center w-8 h-10 list-none rounded-[6px] border border-[#c3c9d2] cursor-pointer;
   }
   :where(html.dashboard) .remove-exception {
     @apply p-[6px];
@@ -816,11 +815,8 @@
     @apply relative z-1;
   }
   :where(html.dashboard) .chip {
-    font:
-      11px ui-monospace,
-      monospace;
-    @apply p-[1px_6px] rounded-[3px] text-muted whitespace-nowrap;
-    border: 1px solid #d5d7dc;
+    @apply p-[1px_7px] rounded-[5px] text-[11px] font-medium text-muted whitespace-nowrap;
+    border: 1px solid var(--color-divider);
   }
   :where(html.dashboard) .badge.neutral {
     @apply bg-inset text-muted;
@@ -993,12 +989,13 @@
   }
   :where(html.dashboard) button,
   :where(html.dashboard) .button {
-    @apply min-h-10 rounded-[3px] text-ink border-control font-semibold;
+    @apply min-h-10 rounded-[6px] text-ink font-semibold;
+    border-color: #c3c9d2;
     background: transparent;
   }
   :where(html.dashboard) button:hover,
   :where(html.dashboard) .button:hover {
-    background: #edf1f8;
+    background: #efeee9;
   }
   :where(html.dashboard) .primary {
     @apply bg-ink border-ink;
@@ -1028,65 +1025,75 @@
     @apply top-[12px];
   }
   :where(html.dashboard) .topbar {
-    @apply min-h-19;
-    border-bottom: 1px solid #dedfe3;
-    @apply flex items-center justify-start gap-6 p-[16px_28px];
+    @apply min-h-16;
+    border-bottom: 1px solid var(--color-divider);
+    @apply flex items-center justify-start gap-2 p-[12px_24px];
     background: transparent;
     @apply text-ink;
   }
   :where(html.dashboard) .topbar .brand {
-    @apply flex items-center gap-3 no-underline text-ink text-[26px] font-extrabold tracking-[-1px];
+    @apply flex items-center gap-[10px] mr-4 no-underline text-ink text-[21px] font-bold tracking-[-.3px] whitespace-nowrap;
+  }
+  /* Line icons are masks over currentColor, so templates carry no SVG and links
+   * recolour them with their text. Each sidebar link picks its icon by href. */
+  :where(html.dashboard) :is(.brand-mark, .nav-symbol) {
+    @apply flex-none;
+    background: currentColor;
+    mask: var(--icon) center / contain no-repeat;
   }
   :where(html.dashboard) .brand-mark {
-    @apply relative w-6 h-6 bg-ink mr-[5px];
-    flex: none;
-  }
-  :where(html.dashboard) .brand-mark:after {
-    content: "";
-    @apply absolute w-[17px] h-[17px];
-    background: #ffcf4c;
-    @apply rounded-full right-[-7px] bottom-[-5px];
-  }
-  :where(html.dashboard) .topbar button {
-    font:
-      12px ui-monospace,
-      monospace;
+    @apply size-7;
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>');
   }
   :where(html.dashboard) .shell {
-    @apply grid grid-cols-[190px_minmax(0,1fr)] min-h-[calc(100vh_-_76px)];
+    @apply grid grid-cols-[216px_minmax(0,1fr)] min-h-[calc(100vh_-_64px)];
   }
   :where(html.dashboard) .sidebar {
-    border-right: 1px solid #dedfe3;
-    @apply p-[30px_14px];
+    border-right: 1px solid var(--color-divider);
+    @apply p-[24px_12px];
   }
   :where(html.dashboard) .sidebar nav {
-    @apply grid gap-2;
+    @apply grid gap-1;
   }
   :where(html.dashboard) .sidebar a {
-    @apply flex items-center gap-3 min-h-11 p-[10px_12px] text-ink no-underline;
-    font:
-      13px ui-monospace,
-      monospace;
-    @apply rounded-[3px];
+    @apply flex items-center gap-3 min-h-10 p-[8px_12px] text-[14px] font-medium no-underline rounded-[8px];
+    color: #3a4760;
   }
   :where(html.dashboard) .sidebar a:hover {
+    @apply text-ink;
     background: #f0eee7;
   }
   :where(html.dashboard) .sidebar a[aria-current] {
-    @apply bg-selected;
+    @apply text-ink font-semibold;
+    background: #fdf1c9;
   }
   :where(html.dashboard) .nav-symbol {
-    @apply w-[18px] text-center text-muted;
+    @apply size-5;
+  }
+  :where(html.dashboard) .sidebar a[href="/approvals"] {
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z"/></svg>');
+  }
+  :where(html.dashboard) .sidebar a[href="/connections"] {
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M9 3v4.5M15 3v4.5M6.5 7.5h11V11a5.5 5.5 0 0 1-11 0zM12 16.5V21"/></svg>');
+  }
+  :where(html.dashboard) .sidebar a[href="/secrets"] {
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><circle cx="8" cy="16" r="4.5"/><path d="M11.2 12.8 20 4M16.5 7.5l2.5 2.5M18.5 5.5l2 2"/></svg>');
+  }
+  :where(html.dashboard) .sidebar a[href="/integrations"] {
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>');
+  }
+  :where(html.dashboard) .sidebar a[href="/audit"] {
+    --icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5M9.5 12.5h6M9.5 16.5h6"/></svg>');
   }
   :where(html.dashboard) main {
     @apply min-w-0 w-full max-w-330 m-[0_auto] p-[38px_40px_28px];
   }
   :where(html.dashboard) h1 {
-    @apply text-[32px] leading-[1.2] tracking-[-1.1px] m-[0_0_10px];
+    @apply text-[28px] font-bold leading-[1.25] tracking-[-.5px] m-[0_0_8px];
     overflow-wrap: anywhere;
   }
   :where(html.dashboard) h2 {
-    @apply text-[19px] tracking-[-.4px];
+    @apply text-[18px] font-semibold tracking-[-.2px];
   }
   :where(html.dashboard) .sub,
   :where(html.dashboard) .help,
@@ -1099,9 +1106,8 @@
   }
   :where(html.dashboard) .card,
   :where(html.dashboard) .connection-list {
-    @apply bg-surface;
-    border-color: #dcdde1;
-    @apply rounded-[4px];
+    @apply bg-surface rounded-[10px];
+    border-color: var(--color-divider);
   }
   :where(html.dashboard) .card {
     @apply p-6;
@@ -1113,32 +1119,26 @@
     @apply mb-0;
   }
   :where(html.dashboard) .tabs {
-    @apply flex flex-wrap gap-2 m-[26px_0_24px];
-    border-bottom: 1px solid #dedfe3;
+    @apply flex flex-wrap gap-2 m-[24px_0];
+    border-bottom: 1px solid var(--color-divider);
   }
   :where(html.dashboard) .tabs a {
-    @apply p-[12px_16px] text-muted;
-    font:
-      13px ui-monospace,
-      monospace;
-    @apply no-underline;
-    border-bottom: 3px solid transparent;
+    @apply p-[10px_12px] mb-[-1px] text-muted text-[14px] font-medium no-underline;
+    border-bottom: 2px solid transparent;
   }
   :where(html.dashboard) .tabs a[aria-current] {
-    @apply text-ink;
-    border-bottom-color: #152443;
-    @apply bg-selected;
+    @apply text-ink font-semibold;
+    border-bottom-color: var(--color-ink);
   }
   :where(html.dashboard) .tabs a:hover {
     @apply text-ink;
-    background: #f0eee7;
   }
   :where(html.dashboard) input,
   :where(html.dashboard) select {
-    @apply rounded-[3px] border-control text-ink bg-surface;
+    @apply rounded-[6px] border-control text-ink bg-surface;
   }
   :where(html.dashboard) .default-options {
-    @apply rounded-[3px] border-control;
+    @apply rounded-[6px] border-control;
   }
   :where(html.dashboard) .default-options input:checked + span {
     @apply bg-ink;
@@ -1153,7 +1153,7 @@
     @apply bg-inset text-muted;
   }
   :where(html.dashboard) .badge {
-    @apply rounded-[3px];
+    @apply rounded-[6px];
   }
   :where(html.dashboard) .pending {
     @apply bg-selected;
@@ -1164,7 +1164,7 @@
     border-color: #e9ba42;
   }
   :where(html.dashboard) pre {
-    @apply bg-inset rounded-[3px];
+    @apply bg-inset rounded-[6px];
   }
   :where(html.dashboard) .permissions,
   :where(html.dashboard) .setup {
@@ -1198,21 +1198,18 @@
       @apply grid-cols-[1fr] min-h-0;
     }
     :where(html.dashboard) .sidebar {
-      @apply p-[12px_20px];
+      @apply p-[8px_16px];
       border-right: 0;
-      border-bottom: 1px solid #dedfe3;
+      border-bottom: 1px solid var(--color-divider);
     }
     :where(html.dashboard) .sidebar nav {
       @apply flex flex-wrap;
-    }
-    :where(html.dashboard) .sidebar a {
-      @apply min-h-10;
     }
     :where(html.dashboard) main {
       @apply p-[28px_20px];
     }
     :where(html.dashboard) .topbar {
-      @apply gap-4 p-[16px_20px];
+      @apply p-[12px_16px];
     }
   }
   :where(html.dashboard) table {
@@ -1254,24 +1251,31 @@
       @apply inline-block p-[8px_0];
     }
   }
-  @media (max-width: 480px) {
-    :where(html.dashboard) .topbar {
-      @apply flex-wrap gap-3;
-    }
-    :where(html.dashboard) .user-name {
-      display: none;
-    }
-    :where(html.dashboard) .topbar form {
-      @apply ml-auto;
-    }
+  /* Below this width the labels no longer fit on one row beside their icons,
+   * so the sidebar becomes a single row of icon-over-label items. */
+  @media (max-width: 640px) {
     :where(html.dashboard) .sidebar {
-      @apply p-[10px];
-    }
-    :where(html.dashboard) .sidebar a {
-      @apply gap-[6px] p-[10px] text-[12px];
+      @apply p-[6px_8px];
     }
     :where(html.dashboard) .sidebar nav {
-      @apply grid grid-cols-2;
+      @apply grid grid-flow-col auto-cols-auto gap-0;
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply flex-col justify-center gap-1 min-w-0 p-[8px_2px] text-[12px] text-center;
+    }
+  }
+  @media (max-width: 480px) {
+    :where(html.dashboard) .topbar {
+      @apply gap-1 p-[10px_12px_10px_16px];
+    }
+    :where(html.dashboard) .topbar .brand {
+      @apply text-[18px] gap-2 mr-2;
+    }
+    :where(html.dashboard) .brand-mark {
+      @apply size-6;
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply text-[11px];
     }
     :where(html.dashboard) .tool-navigation .help {
       @apply basis-full;
@@ -1295,7 +1299,25 @@
       @apply flex items-center justify-center text-center p-[12px_8px] text-[12px];
     }
     :where(html.dashboard) h1 {
-      @apply text-[28px];
+      @apply text-[24px];
+    }
+  }
+  /* Narrow phones: the one-row top bar and nav only fit with tighter spacing. */
+  @media (max-width: 360px) {
+    :where(html.dashboard) .topbar {
+      @apply gap-0 p-[10px_6px_10px_12px];
+    }
+    :where(html.dashboard) .topbar .brand {
+      @apply text-[16px] gap-[6px] mr-auto;
+    }
+    :where(html.dashboard) .topbar :is(.user-menu-trigger, .notification-trigger) {
+      @apply size-9 min-h-9;
+    }
+    :where(html.dashboard) .sidebar {
+      @apply px-0;
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply px-0 text-[10px] rounded-[6px];
     }
   }
   :where(html.dashboard) .operation {
@@ -1338,7 +1360,7 @@
     color: #586b62;
   }
   :where(html.dashboard) .receipt {
-    @apply p-0 pb-6 mt-4 rounded-[8px] bg-white;
+    @apply p-0 pb-6 mt-4 bg-white;
   }
   :where(html.dashboard) .receipt-head {
     @apply flex items-start gap-4 p-[24px_28px_0];
@@ -1354,7 +1376,7 @@
     overflow-wrap: normal;
   }
   :where(html.dashboard) .receipt-head .badge {
-    @apply ml-auto font-sans font-semibold rounded-[4px] whitespace-nowrap;
+    @apply ml-auto whitespace-nowrap;
   }
   :where(html.dashboard) .receipt-icon {
     @apply grid place-items-center size-11 rounded-[6px] font-mono text-[14px] font-semibold flex-none bg-inset;
@@ -1398,9 +1420,6 @@
   :where(html.dashboard) .receipt-actions {
     @apply flex flex-wrap items-center gap-3 p-[20px_28px_0];
   }
-  :where(html.dashboard) .receipt-actions button {
-    @apply rounded-[4px];
-  }
   :where(html.dashboard) .receipt-actions > button,
   :where(html.dashboard) .split-button > button {
     @apply inline-flex items-center justify-center gap-2;
@@ -1441,7 +1460,7 @@
     @apply rounded-r-none;
   }
   :where(html.dashboard) .split-menu summary {
-    @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[4px];
+    @apply flex items-center h-full px-3 cursor-pointer list-none rounded-r-[6px];
     border-left-color: #c3c9d2;
     margin-left: -1px;
   }
@@ -1580,10 +1599,10 @@
   .audit .pagination { @apply flex items-center justify-between gap-4 flex-wrap; }
   .audit .filter-footer { @apply mt-4 mb-6; }
   .audit .chips { @apply flex gap-2 flex-wrap; }
-  .audit .chips button { @apply min-h-9 py-2 px-3 text-[13px]; }
+  .audit .chips button { @apply min-h-9 py-2 px-3 text-[13px] rounded-full; }
   .audit .chips [aria-pressed=true] { @apply bg-selected; border-color: #d6b44a; }
   .audit .list-meta { @apply mb-3 text-[12px] text-muted; }
-  .audit .requests { @apply rounded bg-surface overflow-hidden; border: 1px solid var(--color-divider); }
+  .audit .requests { @apply rounded-[10px] bg-surface overflow-hidden; border: 1px solid var(--color-divider); }
   .audit .columns,
   .audit-entry > summary {
     @apply grid gap-4 items-center p-4;
