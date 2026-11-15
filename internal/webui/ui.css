@@ -1258,7 +1258,7 @@
       @apply p-[6px_8px];
     }
     :where(html.dashboard) .sidebar nav {
-      @apply grid grid-flow-col auto-cols-[minmax(0,1fr)] gap-0;
+      @apply grid grid-flow-col auto-cols-auto gap-0;
     }
     :where(html.dashboard) .sidebar a {
       @apply flex-col justify-center gap-1 min-w-0 p-[8px_2px] text-[12px] text-center;
@@ -1300,6 +1300,24 @@
     }
     :where(html.dashboard) h1 {
       @apply text-[24px];
+    }
+  }
+  /* Narrow phones: the one-row top bar and nav only fit with tighter spacing. */
+  @media (max-width: 360px) {
+    :where(html.dashboard) .topbar {
+      @apply gap-0 p-[10px_6px_10px_12px];
+    }
+    :where(html.dashboard) .topbar .brand {
+      @apply text-[16px] gap-[6px] mr-auto;
+    }
+    :where(html.dashboard) .topbar :is(.user-menu-trigger, .notification-trigger) {
+      @apply size-9 min-h-9;
+    }
+    :where(html.dashboard) .sidebar {
+      @apply px-0;
+    }
+    :where(html.dashboard) .sidebar a {
+      @apply px-0 text-[10px] rounded-[6px];
     }
   }
   :where(html.dashboard) .operation {
