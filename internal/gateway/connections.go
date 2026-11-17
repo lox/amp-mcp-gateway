@@ -516,6 +516,12 @@ func (g *Gateway) removeConnection(w http.ResponseWriter, r *http.Request, m *up
 		http.NotFound(w, r)
 		return
 	}
+	// Startup configuration reinstalls JavaScript connections, so removal here would not last.
+	if slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && c.JavaScript != nil }) {
+		g.mu.Unlock()
+		http.Error(w, "JavaScript connections are installed by the operator. Disable it here, or uninstall it from the gateway configuration.", http.StatusConflict)
+		return
+	}
 	next := g.catalogue()
 	next.Connections = slices.DeleteFunc(next.Connections, func(c upstream.Connection) bool { return c.ID == id })
 	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.Connection == id })

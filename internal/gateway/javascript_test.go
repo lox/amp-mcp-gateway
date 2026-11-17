@@ -171,3 +171,32 @@ func TestJavaScriptInstallTransitionsNeverRestoreConsent(t *testing.T) {
 		t.Fatal("remove-readd restored generation")
 	}
 }
+
+func TestJavaScriptConnectionCanBeDisabledButNotRemoved(t *testing.T) {
+	t.Setenv("JS_REVIEW_TOKEN", "fake-token")
+	g, s, b := fixture(t)
+	definition := &jsintegration.Definition{Origin: "https://api.example.com", Source: `export function write(a) {return a}`, Tools: []jsintegration.Tool{{Name: "write", Handler: "write", Description: "Write", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"type": "object"}}}}
+	g.cfg.Connections = []upstream.Connection{{ID: "notes", TokenEnv: "JS_REVIEW_TOKEN", JavaScript: definition}}
+	g.cfg.Tools = []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Description: "Write", InputSchema: definition.Tools[0].InputSchema, Policy: "allow", Artifact: definition.Binding("fake-token")}}
+	g, err := New(g.cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	if w := formRequest(h, cookie, "GET", "/connections/notes/settings", nil); w.Code != 200 || strings.Contains(w.Body.String(), `action="/connections/notes/remove"`) || !strings.Contains(w.Body.String(), `action="/connections/notes/disable"`) {
+		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", url.Values{"confirm": {"remove"}}); w.Code != 409 || !g.remoteConnection("notes") {
+		t.Fatalf("removed operator-installed connection: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/disable", nil); w.Code != 303 {
+		t.Fatalf("disable: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := g.submit(t.Context(), input("disabled-js-call", "test")); err == nil {
+		t.Fatal("disabled JavaScript connection was callable")
+	}
+}
