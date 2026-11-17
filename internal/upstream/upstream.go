@@ -75,7 +75,9 @@ type managedConnection struct {
 }
 
 type pendingState struct {
-	connection string
+	// The exact connection instance that started the flow. A removed, replaced
+	// or re-added connection with the same ID never accepts this state.
+	connection *managedConnection
 	verifier   string
 	expires    time.Time
 }
@@ -173,7 +175,7 @@ func (m *Manager) Remove(id string, next *Manager, commit func() error) error {
 	m.Install(next)
 	m.stateMu.Lock()
 	for key, pending := range m.states {
-		if pending.connection == id {
+		if pending.connection.config.ID == id {
 			delete(m.states, key)
 		}
 	}

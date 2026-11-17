@@ -68,7 +68,7 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 			delete(m.states, key)
 		}
 	}
-	m.states[state] = pendingState{connection: c.config.ID, verifier: verifier, expires: now.Add(stateLifetime)}
+	m.states[state] = pendingState{connection: c, verifier: verifier, expires: now.Add(stateLifetime)}
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/connections/" + c.config.ID + "/callback", HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: int(stateLifetime.Seconds())})
 	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
@@ -109,7 +109,7 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	delete(m.states, cookie.Value)
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Path: "/connections/" + c.config.ID + "/callback", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode})
-	if r.URL.Query().Get("state") != cookie.Value || !found || pending.connection != c.config.ID || time.Now().After(pending.expires) {
+	if r.URL.Query().Get("state") != cookie.Value || !found || pending.connection != c || time.Now().After(pending.expires) {
 		http.Error(w, "invalid authorization state", http.StatusBadRequest)
 		return
 	}
