@@ -16,6 +16,7 @@ separate copies of this matrix in each document.
 | Agent policy proposals | Implemented | Immutable multi-provider batches; before/after browser review, owner-only apply/discard, ten-minute expiry and catalogue binding. No agent self-approval. |
 | Jev policy suggestions | Implemented | Dashboard discovery automatically suggests policies for new tools, with inline explanations before the owner saves. Missing key or classification failure requires approval; saved choices and blocked defaults are preserved. |
 | Tool discovery | Partial | Keyword search returns pinned schemas and policies; no semantic/Jev ranking. |
+| MCP usage skills | Implemented | Native Skills extension serves gateway and eligible shared-browser workflows with lazy, digest-bound files; see the [contract and client acceptance check](dev.md#mcp-usage-skills). No upstream skill ingestion. |
 | Exact execution routing | Implemented | Explicit tool ID and schema validation before dispatch to a configured upstream. |
 | Batch calls | Planned | Exactly one operation per `call_tools` request today. |
 | Central upstream credentials | Implemented | Environment or encrypted pasted bearer tokens; encrypted OAuth grants with proactive refresh, persisted rotation/uncertain outcomes and bounded safe retries. Provider grant lifetimes still apply. |

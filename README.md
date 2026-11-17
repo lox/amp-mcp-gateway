@@ -12,6 +12,9 @@ The gateway exposes four tools to agents:
 - `get_operation` returns the persisted status and result.
 - `propose_policy_changes` prepares permission changes for human review.
 
+Extension-aware clients also discover [MCP usage skills](docs/dev.md#mcp-usage-skills)
+for the gateway and shared Chrome tab, with instructions loaded only when needed.
+
 It is self-hosted and supports isolated owner accounts on one shared host. Each
 account has separate connections, credentials, approvals, and history. Remote
 MCP connections can use OAuth or bearer tokens; governed native tools and the

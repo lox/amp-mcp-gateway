@@ -309,7 +309,10 @@ func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, ope
 }
 
 func (g *Gateway) mcpHandler() http.Handler {
-	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
+	capabilities := &mcp.ServerCapabilities{Resources: &mcp.ResourceCapabilities{}}
+	capabilities.AddExtension(skillsExtension, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, &mcp.ServerOptions{Capabilities: capabilities})
+	g.registerSkills(s)
 	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of provider privacy, default policy, and tool exception changes for human browser review. Providers include remote MCP connections and native integrations. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict a remote connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
