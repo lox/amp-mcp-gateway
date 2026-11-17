@@ -71,7 +71,7 @@ test("typing replaces existing text, clears it and submits only when requested",
   vm.runInNewContext("currentConfig = {shareID: 'typing-share', tabId: 43}", context);
   context.chrome.debugger.sendCommand = async (_target, method, params) => {
     if (method === "Page.getFrameTree") return {frameTree: {frame: {loaderId: "typing-document"}}};
-    if (method === "Accessibility.getPartialAXTree") {
+    if (method === "Accessibility.getFullAXTree") {
       return {nodes: [{backendDOMNodeId: 7, role: {value: "textbox"}, name: {value: "Reference"}}]};
     }
     // Model Chrome's native editing defaults, not the event's descriptive key/code labels.
