@@ -75,7 +75,9 @@ type managedConnection struct {
 }
 
 type pendingState struct {
-	connection string
+	// The exact connection instance that started the flow. A removed, replaced
+	// or re-added connection with the same ID never accepts this state.
+	connection *managedConnection
 	verifier   string
 	expires    time.Time
 }
@@ -156,6 +158,29 @@ func (m *Manager) Install(next *Manager) {
 		}
 	}
 	m.conns = next.conns
+}
+
+// Remove installs next, which must omit connection id, after commit durably
+// deletes the connection's credentials. Holding the credential lock throughout
+// means a concurrent refresh or OAuth callback either saves before commit
+// deletes its token, or afterwards finds the connection gone and saves nothing.
+func (m *Manager) Remove(id string, next *Manager, commit func() error) error {
+	if c, ok := m.connection(id); ok {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+	}
+	if err := commit(); err != nil {
+		return err
+	}
+	m.Install(next)
+	m.stateMu.Lock()
+	for key, pending := range m.states {
+		if pending.connection.config.ID == id {
+			delete(m.states, key)
+		}
+	}
+	m.stateMu.Unlock()
+	return nil
 }
 
 func (m *Manager) connection(id string) (*managedConnection, bool) {

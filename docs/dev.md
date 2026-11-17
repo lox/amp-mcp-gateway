@@ -468,8 +468,28 @@ Edits expire after ten minutes and reject stale saves. Reopening saved permissio
 replaces any earlier saved-permissions edit for that connection, including in
 another tab; fetched-tool reviews remain independent. There is no background
 refresh or drift detection; upstream behavior can still change between calls.
-Editing endpoints, rotating pasted tokens, and removing connections in the UI
-are follow-up work.
+Editing endpoints and rotating pasted tokens in the UI are follow-up work.
+
+### Disabling and removing connections
+
+A remote connection's **Settings** tab can disable, enable or remove it. The native
+browser connection is managed under **Integrations → Chrome** instead.
+
+- **Disable connection** hides its tools from `find_tools` and rejects new calls,
+  keeping its credentials, OAuth refresh and saved permissions. You can still test,
+  reconnect or edit permissions. **Enable connection** restores tool access but not
+  revoked standing approvals.
+- **Remove connection**, after confirmation, deletes the connection, its saved tools
+  and permissions, and every stored OAuth grant for it, including grants under
+  earlier configurations. An OAuth callback that finishes after removal saves
+  nothing. To use the server again, add it and connect again.
+
+Both deny that connection's queued requests and revoke its standing approvals.
+Other connections keep theirs, because tool bindings cover only their own
+connection. Both are refused while any call is running. Audit history and past
+results remain. A binary rollback to a release without this setting re-enables
+disabled connections, with their standing approvals still revoked. After rolling
+forward, calls queued for them during the rollback are denied at execution.
 
 ## Reviews integration
 
@@ -861,7 +881,8 @@ before contacting the upstream, then records its outcome and audit event togethe
   credential invalidate queued requests when checked at execution.
 - Reconnecting OAuth denies **all** pending/ready requests conservatively and
   revokes standing approvals for that connection. Catalogue changes revoke all
-  standing approvals. Reconfiguration is refused while any request is running.
+  standing approvals, except disabling or removing one remote connection, which
+  revokes only its own. Reconfiguration is refused while any request is running.
 - OAuth grants are bound to the connection configuration; changed endpoints require
   reconnecting rather than receiving an existing credential.
 - Timeouts and transport errors become `unknown`; a restart also marks previously

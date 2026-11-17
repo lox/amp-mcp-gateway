@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -67,7 +68,7 @@ func (m *Manager) connectHandler(w http.ResponseWriter, r *http.Request) {
 			delete(m.states, key)
 		}
 	}
-	m.states[state] = pendingState{connection: c.config.ID, verifier: verifier, expires: now.Add(stateLifetime)}
+	m.states[state] = pendingState{connection: c, verifier: verifier, expires: now.Add(stateLifetime)}
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/connections/" + c.config.ID + "/callback", HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: int(stateLifetime.Seconds())})
 	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
@@ -108,7 +109,7 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	delete(m.states, cookie.Value)
 	m.stateMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Path: "/connections/" + c.config.ID + "/callback", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(m.baseURL, "https://"), SameSite: http.SameSiteLaxMode})
-	if r.URL.Query().Get("state") != cookie.Value || !found || pending.connection != c.config.ID || time.Now().After(pending.expires) {
+	if r.URL.Query().Get("state") != cookie.Value || !found || pending.connection != c || time.Now().After(pending.expires) {
 		http.Error(w, "invalid authorization state", http.StatusBadRequest)
 		return
 	}
@@ -135,7 +136,10 @@ func (m *Manager) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	raw, err := json.Marshal(&credentials{Token: *token, AuthStyle: observed.style})
 	if err == nil {
 		c.mu.Lock()
-		if replacement, ok := m.store.(reauthorizer); ok {
+		if current, ok := m.connection(c.config.ID); !ok || current != c {
+			// Removed or reconfigured during the exchange; never resurrect its grant.
+			err = errors.New("connection changed during authorization")
+		} else if replacement, ok := m.store.(reauthorizer); ok {
 			err = replacement.Reauthorize(ctx, tokenKey(c.config), raw)
 		} else {
 			err = m.store.SaveToken(ctx, tokenKey(c.config), raw)

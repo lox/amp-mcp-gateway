@@ -81,8 +81,8 @@ redemption, a shell-capable workload can reveal or reuse the value.
 
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
-behavior before adding more onboarding features. Endpoint/credential editing,
-connection removal, and automatic drift detection remain follow-ups.
+behavior before adding more onboarding features. Endpoint/credential editing
+and automatic drift detection remain follow-ups.
 
 Acceptance:
 
