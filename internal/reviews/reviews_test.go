@@ -234,6 +234,41 @@ func fixtureService(t *testing.T, owner string, amp *fakeAmp, gh *GitHub, slots 
 	return s, st, path, key
 }
 
+func TestUsageSummaryWindowAttemptsAndOwner(t *testing.T) {
+	s, st, _, _ := fixtureService(t, "owner", &fakeAmp{}, &GitHub{}, semaphore.NewWeighted(1))
+	now := time.Date(2026, 11, 15, 1, 0, 0, 0, time.FixedZone("east", 10*60*60))
+	start := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	insert := func(id string, created time.Time, owner string, threads []Thread) {
+		t.Helper()
+		j := Job{ID: id, App: "app", Delivery: id, OwnerID: owner, Status: "failed", Created: created.UnixNano(), Threads: threads}
+		if err := st.InsertReview(t.Context(), j.record(), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Same timestamp, more than a history page; no timestamp cursor may drop ties.
+	for i := range 105 {
+		insert(fmt.Sprint(i), start, "owner", []Thread{{Usage: &Usage{CostUSD: .25, ProviderEstimateUSD: new(1.5)}}, {Usage: &Usage{CostUSD: .5}}, {UsageError: "unavailable"}})
+	}
+	insert("before", start.Add(-time.Nanosecond), "owner", nil)
+	insert("at-end", now, "owner", nil)
+	insert("future", now.Add(time.Second), "owner", nil)
+	insert("last-day", now.Add(-time.Second), "owner", []Thread{{Usage: &Usage{CostUSD: 0, ProviderEstimateUSD: new(0.0)}}})
+	days, err := s.UsageSummary(t.Context(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 30 || !days[0].Date.Equal(start) || days[0].Reviews != 105 || days[0].Threads != 315 || days[0].Known != 210 || days[0].Estimates != 105 || days[0].Credits != 78.75 || days[0].ProviderEstimate != 157.5 {
+		t.Fatalf("incorrect first day: %+v", days)
+	}
+	if days[1].Reviews != 0 || days[29].Reviews != 1 || days[29].Known != 1 || days[29].Estimates != 1 || days[29].Credits != 0 {
+		t.Fatalf("incorrect empty / zero-usage days: %+v", days)
+	}
+	insert("foreign", start, "another-owner", nil)
+	if _, err := s.UsageSummary(t.Context(), now); err == nil {
+		t.Fatal("accepted a foreign owner's usage")
+	}
+}
+
 func deliver(t *testing.T, s *Service, a App, p pull, delivery, event, action string, mutate func(map[string]any)) int {
 	t.Helper()
 	payload := map[string]any{"action": action, "number": p.Number, "installation": map[string]int64{"id": a.InstallationID}, "repository": map[string]any{"id": p.Base.Repo.ID, "full_name": p.Base.Repo.FullName}, "pull_request": p}
