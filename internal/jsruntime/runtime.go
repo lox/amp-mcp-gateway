@@ -2,11 +2,15 @@
 package jsruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"regexp"
+	"strconv"
 	"time"
 
 	quickjs "github.com/aperturerobotics/go-quickjs-wasi-reactor"
@@ -56,6 +60,9 @@ type Exchange func(context.Context, json.RawMessage) (json.RawMessage, error)
 func (e *Engine) Run(ctx context.Context, source, handler string, args json.RawMessage, exchange Exchange) (json.RawMessage, error) {
 	if len(source) > MaxSource || len(args) > MaxInput || !json.Valid(args) || !identifier.MatchString(handler) {
 		return nil, errors.New("invalid JavaScript invocation")
+	}
+	if err := exactNumbers(args); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -159,6 +166,9 @@ func (e *Engine) Run(ctx context.Context, source, handler string, args json.RawM
 			if len(response) > 2<<20 || !json.Valid(response) {
 				return nil, errors.New("invalid host response")
 			}
+			if err := exactNumbers(response); err != nil {
+				return nil, err
+			}
 			encodedResponse, _ := json.Marshal(string(response))
 			err = g.turn(ctx, func(ctx context.Context) error {
 				_, err := g.eval(ctx, "__resume(JSON.parse("+string(encodedResponse)+"))", 0)
@@ -169,6 +179,29 @@ func (e *Engine) Run(ctx context.Context, source, handler string, args json.RawM
 			}
 		default:
 			return nil, errors.New("JavaScript handler failed or did not settle")
+		}
+	}
+}
+
+// exactNumbers rejects integers that JSON.parse would round to another value, so the
+// guest acts on the exact arguments that were approved and the responses that were
+// journaled. Identifiers beyond Number.MAX_SAFE_INTEGER must be JSON strings.
+func exactNumbers(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	for {
+		token, err := dec.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if n, ok := token.(json.Number); ok {
+			f, err := strconv.ParseFloat(string(n), 64)
+			if err != nil || (f == math.Trunc(f) && math.Abs(f) > 1<<53-1) {
+				return fmt.Errorf("JSON number %.40s is not exactly representable in JavaScript; send it as a string", n)
+			}
 		}
 	}
 }

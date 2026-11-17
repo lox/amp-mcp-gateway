@@ -74,3 +74,37 @@ func TestSequentialHTTP(t *testing.T) {
 		t.Fatalf("cross invocation state: %s %v", got, err)
 	}
 }
+
+func TestUnsafeIntegersNeverReachTheGuest(t *testing.T) {
+	e, err := New(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close(context.Background())
+	echo := `export async function run(a,ctx) { return a.response ? (await ctx.http.request({path:'/'})).id : a.id; }`
+	for _, tt := range []struct {
+		name, args, response, want string
+	}{
+		{"largest safe argument", `{"id":9007199254740991}`, "", "9007199254740991"},
+		{"string identifier", `{"id":"9007199254740993"}`, "", `"9007199254740993"`},
+		{"fraction", `{"id":-1.5e3}`, "", "-1500"},
+		{"unsafe argument", `{"id":9007199254740993}`, "", ""},
+		{"unsafe negative argument", `{"id":-9007199254740992}`, "", ""},
+		{"unsafe exponent argument", `{"id":9.007199254740993e15}`, "", ""},
+		{"safe response", `{"response":true}`, `{"id":9007199254740991}`, "9007199254740991"},
+		{"unsafe response", `{"response":true}`, `{"id":9007199254740993}`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := e.Run(t.Context(), echo, "run", json.RawMessage(tt.args), func(context.Context, json.RawMessage) (json.RawMessage, error) {
+				return json.RawMessage(tt.response), nil
+			})
+			if tt.want == "" {
+				if err == nil {
+					t.Fatalf("accepted %s as %s", tt.args+tt.response, got)
+				}
+			} else if err != nil || string(got) != tt.want {
+				t.Fatalf("got %s, %v; want %s", got, err, tt.want)
+			}
+		})
+	}
+}
