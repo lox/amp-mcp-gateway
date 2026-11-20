@@ -286,7 +286,7 @@ document.getElementById('secret-form').addEventListener('submit', event => {
 <section class="operation">
 {{if eq .Status "pending"}}<a href="/approvals">← Approvals</a>
 <article class="card receipt" aria-labelledby="receipt-title">
-<header class="receipt-head"><span class="receipt-icon" aria-hidden="true">&gt;_</span><div><h1 id="receipt-title">{{$.Title}}</h1><p class="sub">{{.Connection}}</p></div><span class="badge pending" role="status">Pending{{if gt $.ExpiresIn 0}} · {{$.ExpiresIn}} min left{{end}}</span></header>
+<header class="receipt-head"><span class="receipt-icon" aria-hidden="true">&gt;_</span><div><h1 id="receipt-title">{{$.Title}}</h1><p class="sub">{{.Connection}}</p></div><span class="badge pending" role="status">Pending{{with $.ExpiresIn}} · {{.}} left{{end}}</span></header>
 {{if .AmpThreadID}}<p class="receipt-context">{{if .AmpWorkspaceID}}<span title="Workspace {{.AmpWorkspaceID}}">{{or ($.AmpNames.Workspace .AmpWorkspaceID) (print "Workspace " $.WorkspaceShort)}}</span><span aria-hidden="true">›</span>{{end}}{{if .AmpProjectID}}<span title="Project {{.AmpProjectID}}">{{or ($.AmpNames.Project .AmpWorkspaceID .AmpProjectID) (print "Project " $.ProjectShort)}}</span><span aria-hidden="true">›</span>{{end}}<a href="https://ampcode.com/threads/{{.AmpThreadID}}" title="{{.AmpThreadID}}">Thread {{$.ThreadShort}} ↗</a></p>{{end}}
 {{if or .AmpThreadMultiplayer .AmpThreadNonOwnerCanInfluence}}<p class="receipt-warning">Other people can influence this thread.</p>{{end}}
 <dl class="receipt-rows">{{if .Account}}<dt>Account</dt><dd><strong>{{.Account}}</strong> <span class="receipt-unverified" title="Label set on the connection. Not checked with the provider.">Unverified</span></dd>{{end}}

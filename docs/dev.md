@@ -91,6 +91,12 @@ After approval, poll the same ID until it reaches `succeeded`, `failed`, `denied
 `"fixture": true`. `ready` and `running` are intermediate states. If you repeat
 these examples, use new IDs only for deliberately new operations.
 
+A submitted operation must be approved and dispatched within 24 hours, or it
+becomes `expired` and never runs. Set `PendingApprovalMinutes` in `gateway.json`
+(1 to 10080) to change this for every account. Operations on the shared Chrome tab
+are capped at 30 minutes so an approval cannot act hours later on an unattended
+tab. Bindings, revocation and browser target checks still run at dispatch.
+
 For another MCP client, configure a Streamable HTTP connection to `/mcp` with an
 `Authorization: Bearer <gateway-token>` header. In demo mode the token is the
 `GatewayToken` field in the private local secrets file. Use your client's secret

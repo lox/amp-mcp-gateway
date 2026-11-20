@@ -51,6 +51,29 @@ type Config struct {
 	ToolDefaults              map[string]string `json:",omitempty"`
 	PrivateConnections        map[string]bool   `json:",omitempty"`
 	DisabledConnections       map[string]bool   `json:",omitempty"`
+	// PendingApprovalMinutes is how long a submitted operation may wait for
+	// approval and dispatch; zero means 24 hours. Browser operations are capped
+	// at 30 minutes.
+	PendingApprovalMinutes int `json:",omitempty"`
+}
+
+const (
+	defaultApprovalLifetime = 24 * time.Hour
+	maxApprovalLifetime     = 7 * 24 * time.Hour
+	browserApprovalLifetime = 30 * time.Minute
+)
+
+// approvalLifetime keeps browser actions to a short window: hours later the
+// shared tab is likely unattended and its page may no longer match the request.
+func (cfg Config) approvalLifetime(connection string) time.Duration {
+	lifetime := defaultApprovalLifetime
+	if cfg.PendingApprovalMinutes > 0 {
+		lifetime = time.Duration(cfg.PendingApprovalMinutes) * time.Minute
+	}
+	if slices.ContainsFunc(cfg.Connections, func(c upstream.Connection) bool { return c.ID == connection && c.Browser }) {
+		lifetime = min(lifetime, browserApprovalLifetime)
+	}
+	return lifetime
 }
 
 // Backend is the upstream transport boundary.
@@ -81,6 +104,9 @@ type Gateway struct {
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	if cfg.AmpUserID == "" {
 		return nil, errors.New("AmpUserID is required")
+	}
+	if cfg.PendingApprovalMinutes < 0 || time.Duration(cfg.PendingApprovalMinutes)*time.Minute > maxApprovalLifetime {
+		return nil, errors.New("PendingApprovalMinutes must be between 0 (24 hours) and 10080 (7 days)")
 	}
 	cfg.Integrations = slices.Clone(cfg.Integrations)
 	cfg.Tools = slices.Clone(cfg.Tools)
@@ -422,7 +448,8 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	dynamicBinding := g.dynamicBinding(t)
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	now := time.Now()
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: now.Unix(), Expires: now.Add(g.cfg.approvalLifetime(t.Connection)).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -736,7 +763,7 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		data["ArgumentRows"] = rows
 		data["ToolName"] = strings.TrimPrefix(o.Tool, o.Connection+".")
 		data["Requested"] = time.Unix(o.Created, 0)
-		data["ExpiresIn"] = int(math.Ceil(time.Until(time.Unix(o.Expires, 0)).Minutes()))
+		data["ExpiresIn"] = remaining(time.Until(time.Unix(o.Expires, 0)))
 		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }
 		data["ThreadShort"], data["WorkspaceShort"], data["ProjectShort"] = short(o.AmpThreadID), short(o.AmpWorkspaceID), short(o.AmpProjectID)
 	}
@@ -751,6 +778,19 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.render(w, r, data)
+}
+
+// remaining rounds up to whole minutes within the last hour and whole hours
+// before it; an expired request shows nothing.
+func remaining(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d <= time.Hour:
+		return fmt.Sprintf("%d min", int(math.Ceil(d.Minutes())))
+	default:
+		return fmt.Sprintf("%d h", int(math.Ceil(d.Hours())))
+	}
 }
 
 func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {

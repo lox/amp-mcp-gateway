@@ -262,7 +262,7 @@ func (r *accountRegistry) userConfig(id string) (accountConfig, error) {
 	if err != nil {
 		return accountConfig{}, err
 	}
-	return accountConfig{Config: gateway.Config{BaseURL: c.BaseURL, AmpUserID: id, Database: filepath.Join(c.Database+".accounts", hex.EncodeToString(hash[:])+".db"), AccountPage: true}, Secrets: demo.Secrets{EncryptionKey: key, SessionKey: r.config.Secrets.SessionKey}, auth: r.config.auth, verifier: r.config.verifier}, nil
+	return accountConfig{Config: gateway.Config{BaseURL: c.BaseURL, AmpUserID: id, Database: filepath.Join(c.Database+".accounts", hex.EncodeToString(hash[:])+".db"), AccountPage: true, PendingApprovalMinutes: c.PendingApprovalMinutes}, Secrets: demo.Secrets{EncryptionKey: key, SessionKey: r.config.Secrets.SessionKey}, auth: r.config.auth, verifier: r.config.verifier}, nil
 }
 
 // The primary is closed by main, after serving and workers stop.
