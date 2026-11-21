@@ -75,8 +75,11 @@ credentials are retained even when no installation currently selects them.
    named Amp execution credential, then installation sections with their owner,
    installation ID and chosen credential. Use fake credentials only in demo mode;
    demo saves unverified paused drafts and never calls GitHub or Amp.
-3. Add individual `owner/repo` → Amp `namespace/project` rows, then explicitly
-   enable the desired rows. New rows start disabled. The mapped project must contain that repository, grant the execution
+3. Add `owner/repo` rows to the single **Repositories** list; the Amp
+   `namespace/project` defaults to the same name. Each row belongs to the
+   installation whose owner matches its prefix, and a row with no matching
+   installation is rejected on save. Explicitly enable the desired rows; new rows
+   start disabled. The mapped project must contain that repository, grant the execution
    account access and allow fetching the exact PR commits, including fork heads.
 4. Install [pinned-models.js](reviews/pinned-models.js) in the execution account's
    **User or Workspace Plugins repository** (once, not additionally in each

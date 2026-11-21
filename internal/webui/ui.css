@@ -318,15 +318,126 @@
   :where(html.dashboard) .review-setup > details {
     @apply my-4;
   }
-  :where(html.dashboard) .review-setup [data-review-installation],
-  :where(html.dashboard) .review-setup [data-review-repository] {
-    @apply p-4;
+  :where(html.dashboard) .review-setup .review-installation {
+    @apply items-end pb-4 mb-4 border-b border-divider;
   }
-  :where(html.dashboard) .review-setup [data-review-installation] label {
+  :where(html.dashboard) .review-setup .review-installation label {
     @apply my-2;
   }
-  :where(html.dashboard) .review-setup [data-review-installation] .heading {
-    @apply mb-2;
+  :where(html.dashboard) .review-setup .review-installation .help {
+    @apply m-0 self-center;
+  }
+  :where(html.dashboard) .review-setup .review-installation button {
+    @apply justify-self-start;
+  }
+  :where(html.dashboard) .review-repositories {
+    @apply mt-4;
+  }
+  :where(html.dashboard) .review-repository-tools {
+    @apply flex flex-wrap items-center gap-3 mb-3;
+  }
+  :where(html.dashboard) .review-repository-tools .help {
+    @apply m-0 flex-1;
+  }
+  :where(html.dashboard) .review-repository-tools input[type="search"] {
+    @apply w-56 p-[7px_10px];
+  }
+  :where(html.dashboard) .review-repository-tools [data-review-count] {
+    @apply flex-none whitespace-nowrap;
+  }
+  :where(html.dashboard) .review-repository-table td,
+  :where(html.dashboard) .review-repository-table th {
+    @apply p-[6px_10px] align-middle;
+  }
+  :where(html.dashboard) .review-repository-table th:first-child,
+  :where(html.dashboard) .review-repository-table td:first-child {
+    @apply w-18;
+  }
+  :where(html.dashboard) .review-repository-table th:nth-child(4) {
+    @apply w-40;
+  }
+  :where(html.dashboard) .review-repository-table th:last-child {
+    @apply w-10;
+  }
+  :where(html.dashboard) .review-repository-table td input:not([type="checkbox"]) {
+    @apply p-[6px_8px] border-transparent bg-transparent;
+  }
+  :where(html.dashboard) .review-repository-table td input:not([type="checkbox"]):hover,
+  :where(html.dashboard) .review-repository-table td input:not([type="checkbox"]):focus {
+    border-color: #bccdc0;
+    @apply bg-surface;
+  }
+  :where(html.dashboard) .review-repository-table .badge {
+    @apply ml-1 p-[1px_8px] text-[11px] bg-selected;
+  }
+  :where(html.dashboard) .reviews .review-switch {
+    @apply relative inline-block w-9 h-5 m-0 align-middle;
+  }
+  :where(html.dashboard) .reviews .review-switch input {
+    @apply absolute opacity-0 w-full h-full m-0 cursor-pointer;
+  }
+  :where(html.dashboard) .review-switch span {
+    @apply absolute inset-0 rounded-full pointer-events-none;
+    background: #c3c9d4;
+    transition: background .15s;
+  }
+  :where(html.dashboard) .review-switch span::before {
+    content: "";
+    @apply absolute w-4 h-4 left-0.5 top-0.5 rounded-full bg-white;
+    transition: transform .15s;
+  }
+  :where(html.dashboard) .review-switch input:checked + span {
+    @apply bg-positive-ink;
+  }
+  :where(html.dashboard) .review-switch input:checked + span::before {
+    transform: translateX(16px);
+  }
+  :where(html.dashboard) .review-switch input:focus-visible + span {
+    outline: 2px solid var(--color-link);
+    outline-offset: 2px;
+  }
+  :where(html.dashboard) .review-override-chip,
+  :where(html.dashboard) .review-remove {
+    @apply p-[3px_10px] text-[12px] font-semibold border-transparent rounded-full bg-inset;
+  }
+  :where(html.dashboard) .review-override-chip.review-overridden {
+    @apply bg-selected;
+  }
+  :where(html.dashboard) .review-remove {
+    @apply bg-transparent text-muted;
+  }
+  :where(html.dashboard) .review-override-chip:hover,
+  :where(html.dashboard) .review-remove:hover {
+    border-color: #bccdc0;
+  }
+  :where(html.dashboard) .review-overrides {
+    @apply w-80 p-5 m-auto;
+  }
+  :where(html.dashboard) .review-overrides h3 {
+    @apply mt-0;
+  }
+  :where(html.dashboard) .review-overrides label {
+    @apply my-3;
+  }
+  :where(html.dashboard) .review-repository-add {
+    @apply grid gap-2 items-center mt-3;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  :where(html.dashboard) .review-repository-add input {
+    @apply p-[8px_10px];
+  }
+  @media (max-width: 600px) {
+    :where(html.dashboard) .review-repository-add { grid-template-columns: 1fr; }
+  }
+  :where(html.dashboard) .review-save-bar {
+    @apply sticky bottom-0 z-10 items-center mt-4 -mx-4 p-[12px_16px] bg-surface border-t border-divider;
+    box-shadow: 0 -6px 16px rgb(21 36 67 / 0.06);
+  }
+  :where(html.dashboard) .review-save-bar .help {
+    @apply m-0 font-semibold;
+  }
+  :where(html.dashboard) .review-dirty .review-save-bar {
+    @apply bg-selected;
   }
   :where(html.dashboard) .field small,
   :where(html.dashboard) .help {
