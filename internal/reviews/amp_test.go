@@ -157,15 +157,15 @@ func TestFindingValidationAndChangedLines(t *testing.T) {
 	if len(lines) != 3 || !lines[3] || !lines[4] || !lines[22] {
 		t.Fatalf("lines: %+v", lines)
 	}
-	_, conclusion, _ := finalize(result, map[string]map[int]bool{"a.go": lines}, "critical")
+	_, conclusion, _ := Finalize(result, map[string]map[int]bool{"a.go": lines}, "critical")
 	if conclusion != "neutral" {
 		t.Fatal(conclusion)
 	}
-	_, conclusion, _ = finalize(result, map[string]map[int]bool{"a.go": lines}, "high")
+	_, conclusion, _ = Finalize(result, map[string]map[int]bool{"a.go": lines}, "high")
 	if conclusion != "failure" {
 		t.Fatal(conclusion)
 	}
-	_, conclusion, omitted := finalize(result, map[string]map[int]bool{"a.go": {4: true}}, "high")
+	_, conclusion, omitted := Finalize(result, map[string]map[int]bool{"a.go": {4: true}}, "high")
 	if conclusion != "success" || omitted != 1 {
 		t.Fatal("unchanged finding affected conclusion")
 	}

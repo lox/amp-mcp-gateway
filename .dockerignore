@@ -7,3 +7,4 @@
 !cmd/**
 !internal/
 !internal/**
+!docs/reviews/pinned-models.js

@@ -304,3 +304,5 @@ there is no reverse importer. Do not restore an old database snapshot over newer
 gateway operations. Old numeric check reruns can use the old service; checks created
 by this gateway need its history/runner. Retain both backups until that distinction
 no longer matters.
+
+For benchmarking the same reviewer outside GitHub, see [ReviewBench submission](reviewbench.md).

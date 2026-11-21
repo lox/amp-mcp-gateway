@@ -250,7 +250,7 @@ func (s *Service) review(ctx context.Context, a App, j *Job) (persistErr error) 
 		status, message = "cancelled", "PR is closed, draft, transferred or superseded."
 		return
 	}
-	result, j.Conclusion, j.Omitted = finalize(result, changed, j.FailOn)
+	result, j.Conclusion, j.Omitted = Finalize(result, changed, j.FailOn)
 	j.Result = &result
 	if err := s.checkpoint(ctx, j, "publishing"); err != nil {
 		return
