@@ -764,8 +764,6 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		data["ToolName"] = strings.TrimPrefix(o.Tool, o.Connection+".")
 		data["Requested"] = time.Unix(o.Created, 0)
 		data["ExpiresIn"] = remaining(time.Until(time.Unix(o.Expires, 0)))
-		short := func(id string) string { return "…" + id[max(0, len(id)-4):] }
-		data["ThreadShort"], data["WorkspaceShort"], data["ProjectShort"] = short(o.AmpThreadID), short(o.AmpWorkspaceID), short(o.AmpProjectID)
 	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")

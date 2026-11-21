@@ -585,13 +585,17 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once</button>", `value="thread">Approve &amp; trust all notes tools for this thread</button>`, `value="thread-tool">Approve &amp; trust write for this thread</button>`, `<strong>test account</strong> <span class="receipt-unverified"`, `>Workspace …-one</span>`} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once</button>", `value="thread">Approve &amp; trust all notes tools for this thread</button>`, `value="thread-tool">Approve &amp; trust write for this thread</button>`, `<strong>test account</strong> <span class="receipt-unverified"`, "Open thread ↗</a>"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
 		if strings.Contains(body, `value="project-tool">Approve &amp; trust write for this project</button>`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
+		}
+		// Unresolved IDs stay out of the context line; full IDs remain in Identity & audit.
+		if strings.Contains(body, "Workspace …") || strings.Contains(body, "Project …") || strings.Contains(body, `<span title="Project `) {
+			t.Errorf("%s: context line shows an unresolved ID", tc.id)
 		}
 		if strings.Contains(body, "Other people can influence this thread") != tc.multiplayer {
 			t.Errorf("%s: multiplayer warning mismatch", tc.id)
