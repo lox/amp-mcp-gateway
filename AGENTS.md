@@ -25,7 +25,7 @@ Keep dependencies deliberate; use the official MCP SDK rather than handwritten J
 - One process/SQLite volume only. Do not remove the file lock or add replicas.
 - Accounts share the production hostname and Amp browser authentication,
   but have identity-bound databases and derived keys. Never share a catalogue,
-  credential manager, browser pairing manager or worker between accounts.
+  credential manager or worker between accounts.
 - Login requires a user actor in the configured Amp workspace. Resolve existing
   Amp IDs through the registry before provisioning. Amp user IDs are the canonical
   account identity; never infer identity from email.

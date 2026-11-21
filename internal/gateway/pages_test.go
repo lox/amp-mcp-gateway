@@ -10,7 +10,6 @@ import (
 func TestFocusedPages(t *testing.T) {
 	g, s, _ := fixture(t)
 	g.cfg.AccountPage = true
-	g.cfg.Connections = append(g.cfg.Connections, upstream.Connection{ID: "browser", Account: "Selected Chrome tab", Browser: true})
 	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +20,7 @@ func TestFocusedPages(t *testing.T) {
 		{"/integrations", "Fly.io", "Nothing needs your approval"},
 		{"/integrations/fly", "Connect Fly.io", "Nothing needs your approval"},
 		{"/connections", "Add MCP", "Nothing needs your approval"},
-		{"/integrations", "Set up Chrome", "Add MCP"},
+		{"/integrations", "Reviews", "Chrome"},
 		{"/connections/notes/settings", "Connection settings", "Default permission for tools"},
 		{"/connections/notes/tools", "Default permission for tools", "Connection settings"},
 		{"/audit", "No matching requests", "Add MCP"},
@@ -54,9 +53,6 @@ func TestFocusedPages(t *testing.T) {
 	}
 	if w := formRequest(h, cookie, "GET", "/connections/missing/settings", nil); w.Code != 404 {
 		t.Fatal("missing connection did not return 404")
-	}
-	if body := formRequest(h, cookie, "GET", "/connections", nil).Body.String(); strings.Contains(body, "Selected Chrome tab") {
-		t.Fatal("native browser integration appeared in remote MCP connections")
 	}
 
 	first, err := g.submit(t.Context(), input("first-request", "first-private-argument"))

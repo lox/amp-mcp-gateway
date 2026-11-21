@@ -13,13 +13,13 @@ its dependencies are locked in `package-lock.json`. Commit the generated
 `mise run dev`, `build`, `check`, the orb demo and the Docker build regenerate it.
 Plain `go build` uses the committed CSS and needs no Node installation.
 
-The stylesheet explicitly scans the dashboard, sign-in and Chrome Go templates
+The stylesheet explicitly scans the dashboard and sign-in Go templates
 and the Audit HTML template.
 Shared colour tokens and a four-pixel spacing scale live in `@theme` (for example,
 `p-6` is 24px on both the 14px dashboard and 16px sign-in page). Prefer these
 spacing utilities when adjusting layouts. Component rules use `@apply` and preserve
 the existing selectors, breakpoints and browser defaults (Preflight is omitted).
-Document scopes keep sign-in and Chrome styling independent. Status classes such
+Document scopes keep sign-in and dashboard styling independent. Status classes such
 as `pending`, `succeeded`, `failed`, `denied` and `unknown` have explicit component
 rules, so dynamic Go status values cannot cause Tailwind to omit their styling.
 New utility variants must be written as complete class names, not concatenated.
@@ -93,9 +93,8 @@ these examples, use new IDs only for deliberately new operations.
 
 A submitted operation must be approved and dispatched within 24 hours, or it
 becomes `expired` and never runs. Set `PendingApprovalMinutes` in `gateway.json`
-(1 to 10080) to change this for every account. Operations on the shared Chrome tab
-are capped at 30 minutes so an approval cannot act hours later on an unattended
-tab. Bindings, revocation and browser target checks still run at dispatch.
+(1 to 10080) to change this for every account. Bindings and revocation still run
+at dispatch.
 
 For another MCP client, configure a Streamable HTTP connection to `/mcp` with an
 `Authorization: Bearer <gateway-token>` header. In demo mode the token is the
@@ -108,18 +107,9 @@ the final MCP URL when overriding `-url`.
 
 The `/mcp` endpoint advertises the optional
 [`io.modelcontextprotocol/skills` extension (SEP-2640)](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/beta/skills.mdx)
-and Resources capability. It serves two gateway-authored skills:
-
-- `skill://using-gateway/SKILL.md` teaches catalogue search, single-operation calls,
-  approvals, status polling and ambiguous-outcome recovery.
-- `skill://using-shared-browser/SKILL.md` teaches local Chrome sharing, status,
-  snapshot-bound targeting and result verification. It is listed only when the
-  native browser connection and every tool it documents are discoverable in the
-  current caller's context. `require_approval` is discoverable; `deny` is not.
-  Blocking even one browser tool withholds the entire workflow rather than leaking
-  its details in a reference file. The underlying permitted tools remain usable.
-  Browser registration/sharing need not be active: the skill includes setup and
-  recovery guidance.
+and Resources capability. It serves one gateway-authored skill,
+`skill://using-gateway/SKILL.md`, which teaches catalogue search, single-operation
+calls, approvals, status polling and ambiguous-outcome recovery.
 
 `skills/list` returns the complete small catalogue in one page, with frontmatter
 and a manifest containing each file's URI, raw-byte SHA-256 digest and byte size.
@@ -142,12 +132,11 @@ The Markdown under `internal/gateway/skills/` is embedded at build time. Edit an
 review it with code, then rebuild; there is no live skill-management setting.
 Manifests derive from those exact embedded bytes, including YAML frontmatter, so
 an update changes the corresponding digests. Replies use `cacheScope: private`
-and `ttlMs: 0` because visibility can change with thread context or policy. Every
-list, get and file read rechecks current eligibility. Hosts must still isolate
-cached context appropriately; a server cannot retract bytes a client already read.
+and `ttlMs: 0`. Hosts must still isolate cached context appropriately; a server
+cannot retract bytes a client already read.
 
-Skills are untrusted instructions, not authority. These bundles contain no scripts,
-permission-grant frontmatter, credentials or account-specific schemas, and do not
+Skills are untrusted instructions, not authority. This bundle contains no scripts,
+permission-grant frontmatter, credentials or account-specific schemas, and does not
 proxy upstream-authored skills. Digest verification proves consistency, not trust.
 Tool discovery and execution still enforce their existing private-thread,
 configuration, approval and idempotency rules. Follow the host's origin binding
@@ -191,91 +180,6 @@ Suggestions live only in the existing ten-minute, catalogue-bound review draft.
 Nothing becomes executable until the owner saves. Concurrent configuration changes
 invalidate the review; saving uses the existing atomic catalogue update and queued
 operation invalidation. Jev is never called during tool execution.
-
-## Share a Chrome tab
-
-The gateway automatically includes a reverse-connected `browser` connection and
-its governed tools while preserving saved policies. It lets an orb inspect and
-control one explicitly selected tab in a normal Chrome profile without exposing a
-listener on your machine. An existing remote connection named `browser` or remote
-tool using a native Chrome tool ID remains unchanged; rename it and restart to
-enable Chrome.
-
-1. In Chrome 116 or newer, open `chrome://extensions`, enable **Developer mode**,
-   choose **Load unpacked**, and select this checkout's `extension` directory. After
-   updating an existing checkout, click **Reload** on the extension card.
-2. Open the extension's **Settings** and save the gateway origin once, for example
-   `https://gateway.example.com`. The setting persists in this Chrome profile.
-3. Sign in to the gateway dashboard, open **Integrations → Chrome**, name this
-   browser (for example “Work Chrome on MacBook”), and choose **Add browser**.
-   Paste the code into the extension and choose **Register browser**. Registration
-   remembers this Chrome profile; it does not grant access to a tab.
-4. Open the authenticated site in your local Chrome, open the extension, and choose
-   **Share this tab**. Use **Share this tab instead** to switch tabs. **Stop sharing**
-   ends access without forgetting registration. **Forget browser** in the dashboard
-   revokes the browser credential; **Replace registration** generates a new code
-   directly, without a separate disconnect step. In the extension, expand
-   **Enter replacement code** to use it, even when the old browser is still
-   registered locally. One registered browser and one active shared tab per account
-   are supported today.
-5. Find tools through MCP with query `browser` (search requires every term to match).
-   Call `browser.status` before browser work; it reports registration/sharing and
-   local-browser guidance even when no tab is connected or sharing changes while
-   the call is queued. The extension refreshes the shared tab's title and URL after
-   navigation or title changes; this metadata does not change tab authority or
-   approval bindings. MCP status exposes tab titles and URLs only while sharing,
-   including for legacy registrations. Its configured policy still applies.
-   For login-dependent tasks, prefer sharing the user's already-authenticated local
-   tab instead of asking them to sign in again in an orb. `browser.snapshot` returns
-   a `document_id` and accessibility-tree nodes. Pass the document and node IDs plus
-   the snapshot's URL, role, and accessible name to `browser.click` and `browser.type`;
-   the extension rejects mutations if any target descriptor changed after the snapshot.
-
-The available tools are `browser.status`, `browser.snapshot`, `browser.screenshot`,
-`browser.scroll`, `browser.click`, `browser.type`, and `browser.navigate`. The default
-policies allow status, viewing and scrolling directly while requiring approval for
-click, type, and navigate. The extension uses Chrome's debugger API only for the selected HTTP(S)
-tab; Chrome pages, the Web Store, browser dialogs, files outside browser-mediated
-uploads, and the desktop remain inaccessible.
-Approved typing brings the shared tab to the foreground and replaces the field's
-entire contents; empty text clears it. `submit: true` additionally presses Enter,
-which follows the page's normal behavior (for example, submitting a single-line form).
-Completed screenshot operations return standard MCP image content. Amp promotes
-that content to a private thread attachment when the caller forwards the tool
-result content.
-
-The extension opens an authenticated WebSocket to `/browser/connect`; orbs still
-connect to `/mcp`. A one-time registration code expires after ten minutes and is
-exchanged for a browser credential bound to the extension install. The gateway
-stores its hash encrypted at rest; the extension keeps the credential in local
-(not synced) Chrome storage, restricted to trusted extension contexts. Treat the
-Chrome profile as credential-bearing; site login cookies stay in that profile.
-Only the active tab share is kept in session storage. Network interruptions and
-gateway deploys reconnect that share automatically without replaying commands.
-Chrome restart or extension reload ends sharing but preserves registration; click
-**Share this tab** explicitly afterward. Tab closure or debugger cancellation also
-stops sharing. Every new share gets a fresh generation bound to its tab, so old
-pending approvals cannot execute on a replacement tab. Replacing or forgetting a
-browser invalidates its authority. Changing the configured gateway stops sharing
-and clears the local registration; revoke the old registration from its dashboard.
-
-Upgrade the gateway before installing extension 0.3.0. Older tab-bound extensions
-continue to work against the upgraded gateway, but after updating the extension,
-register once using **Replace registration** to establish durable browser trust.
-For a rollback, revoke registrations and pair again with the matching older
-extension; older gateways do not support durable browser registration.
-
-A mutation the extension rejects before sending any input, such as a changed tab
-URL, document or target element, is recorded as `failed` with the extension's
-message. Once input may have reached the page, a disconnect or extension-reported
-error marks the outcome `unknown`, stores the bounded extension message as
-`detail`, and is never replayed automatically. Extensions older than 0.2.1 do not
-report the pre-input distinction, so their rejections remain `unknown`.
-Before input, the extension rechecks the target against the same full accessibility
-tree used by `browser.snapshot`; a mismatch reports the expected and found role and
-name, each truncated to 200 characters.
-Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
-orbs before using the extension outside the local demo.
 
 ## Connect a remote MCP
 
@@ -478,8 +382,7 @@ Editing endpoints and rotating pasted tokens in the UI are follow-up work.
 
 ### Disabling and removing connections
 
-A remote connection's **Settings** tab can disable, enable or remove it. The native
-browser connection is managed under **Integrations → Chrome** instead.
+A remote connection's **Settings** tab can disable, enable or remove it.
 
 - **Disable connection** hides its tools from `find_tools` and rejects new calls,
   keeping its credentials, OAuth refresh and saved permissions. You can still test,
@@ -496,6 +399,15 @@ connection. Both are refused while any call is running. Audit history and past
 results remain. A binary rollback to a release without this setting re-enables
 disabled connections, with their standing approvals still revoked. After rolling
 forward, calls queued for them during the rollback are denied at execution.
+
+The gateway no longer includes a native Chrome integration; use
+[Amp Browser Bridge](https://github.com/lox/amp-browser-bridge) instead. On
+upgrade, each account drops the old `browser` connection, its `browser.*` tools
+and the extension's reconnect credentials, then removes that connection the same
+way: queued browser requests are denied by `browser-integration-removed` and
+browser standing approvals are revoked. Browser requests stay in the audit
+history with their results. This is skipped when a remote connection or secret
+now uses the ID `browser`.
 
 ## Reviews integration
 
@@ -1035,9 +947,8 @@ for the migration window, then resume it after the configuration switch.
 3. Inspect `/data/amp-only/gateway.json`, `gateway.db`, and
    `gateway.db.accounts/`. The generated config uses bare `AmpUserID` identity and
    ID-derived child database paths and keys. It retains each account's catalogue,
-   provider credentials, Amp OAuth credentials and browser reconnect credentials.
-   Browser routing uses the stored credential hash, not an account identity prefix.
-   It converts the old rollback-only
+   provider credentials and Amp OAuth credentials; it drops reconnect credentials
+   for the removed native Chrome integration. It converts the old rollback-only
    private-policy encoding and generated Fly tool policies without changing permissions. Preserved provider credentials
    keep their stored OAuth authentication method; do not assume migration changes it.
 4. Test startup, browser login, account routing, connection access and tool discovery
@@ -1094,7 +1005,7 @@ including in live updates. Unknown actors and system events are not attributed
 to the signed-in user; no workspace-member directory access is requested.
 
 Accounts share process, disk, hostname and the session-cookie boundary, not
-catalogues, credentials, workers, Chrome pairing, approvals or history. Workload
+catalogues, credentials, workers, approvals or history. Workload
 discovery/JWKS are shared but exact user authorization remains account-specific.
 Removing Amp workspace membership prevents future browser logins; existing
 gateway sessions last up to 12 hours and workload access is not automatically

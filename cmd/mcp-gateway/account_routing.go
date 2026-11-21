@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 )
 
@@ -63,17 +62,6 @@ func (r *accountRegistry) workload(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	account.handler.ServeHTTP(w, req)
-}
-
-func (r *accountRegistry) browserManager(code string) *browserbridge.Manager {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, account := range r.users {
-		if account.browser.MatchesPairing(code) {
-			return account.browser
-		}
-	}
-	return nil
 }
 
 func accountHost(origin string) (string, error) {

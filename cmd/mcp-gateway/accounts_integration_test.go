@@ -108,12 +108,11 @@ func TestRegistryWorkloadRoutingStillVerifiesSignedAccountClaims(t *testing.T) {
 		r.workload(w, req)
 		return w
 	}
-	findBrowser := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find_tools","arguments":{"query":"browser"}}}`
-	if got := request(mint("amp-alice", base.Config.BaseURL), findBrowser); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "browser.snapshot") {
-		t.Fatalf("valid primary token did not expose startup Chrome tools: %d %s", got.Code, got.Body.String())
-	}
-	if got := request(mint("amp-bob", base.Config.BaseURL), findBrowser); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "browser.snapshot") {
-		t.Fatalf("valid linked token did not expose startup Chrome tools: %d %s", got.Code, got.Body.String())
+	findTools := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find_tools","arguments":{"query":""}}}`
+	for _, user := range []string{"amp-alice", "amp-bob"} {
+		if got := request(mint(user, base.Config.BaseURL), findTools); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"result"`) || strings.Contains(got.Body.String(), `"isError":true`) {
+			t.Fatalf("valid %s token could not search tools: %d %s", user, got.Code, got.Body.String())
+		}
 	}
 	if discoveries.Load() != 1 || keyFetches.Load() != 1 {
 		t.Fatalf("accounts did not share discovery/JWKS: %d/%d", discoveries.Load(), keyFetches.Load())

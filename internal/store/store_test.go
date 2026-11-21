@@ -364,3 +364,20 @@ func TestReauthorizationInvalidatesQueueButCannotChangeRunningGrant(t *testing.T
 		t.Fatalf("reauthorization audit events: %d", denials)
 	}
 }
+
+func TestOpenDropsBrowserReconnectCredentials(t *testing.T) {
+	s, path, key := testStore(t)
+	if _, err := s.db.Exec("CREATE TABLE browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL); INSERT INTO browser_pairings VALUES ('browser', x'00')"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var tables int
+	if err := s.db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='browser_pairings'").Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("browser reconnect credentials survived upgrade: tables=%d, %v", tables, err)
+	}
+}
