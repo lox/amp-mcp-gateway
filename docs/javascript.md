@@ -36,14 +36,15 @@ installation flow. OAuth and anonymous adapters are not supported yet.
 
 Export named `function handler(args, ctx)` functions, optionally `async`. Arguments
 and return values must be JSON and satisfy the manifest's input/output schemas.
-Schemas may reference only their own document. Functions, cyclic values and `undefined` are not valid final results. Bundle dependencies ahead of time:
+Integers beyond ±(2^53−1) would round in JavaScript, so arguments containing them
+fail before dispatch; declare large identifiers as strings. Schemas may reference only their own document. Functions, cyclic values and `undefined` are not valid final results. Bundle dependencies ahead of time:
 module imports, `require`, Node globals and standard-library modules are unavailable.
 
 The only host capability is `await ctx.http.request({method, path, query?, headers?,
 body?})`, returning `{status, body}`. `body` is parsed JSON (or null for an empty
 response). Requests must be sequential, with at most one outstanding request.
 An HTTP error status is data: the adapter must check it. Non-JSON, oversized or
-lost responses abort the operation. Only `Accept` and `Content-Type` headers are
+lost responses, and responses with integers beyond ±(2^53−1), abort the operation. Only `Accept` and `Content-Type` headers are
 accepted; JSON bodies default to `application/json`.
 
 The broker supplies the fixed HTTPS origin and bearer credential. JavaScript

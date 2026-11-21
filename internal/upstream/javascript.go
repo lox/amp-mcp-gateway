@@ -197,7 +197,10 @@ func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name,
 		}
 		var body any
 		if len(b) > 0 {
-			if err := json.Unmarshal(b, &body); err != nil {
+			// Keep numbers exact in the journal; the runtime rejects ones the guest would round.
+			dec := json.NewDecoder(bytes.NewReader(b))
+			dec.UseNumber()
+			if err := dec.Decode(&body); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 				return nil, errors.New("HTTP response is not JSON")
 			}
 		}
