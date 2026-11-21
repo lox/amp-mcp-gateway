@@ -96,6 +96,30 @@ func TestUsageDistinguishesCreditsAndProviderEstimate(t *testing.T) {
 	}
 }
 
+func TestStoppedRequiresIdleExecutor(t *testing.T) {
+	// Shapes taken from `amp threads export` output.
+	export := func(state, last string) string {
+		return `{"id":"T-1","meta":{"lastKnownAgentState":{"state":"` + state + `","messageID":"M-1"}},"messages":[{"role":"user","content":[]}` + last + `]}`
+	}
+	for _, tc := range []struct {
+		name, export string
+		want         bool
+	}{
+		{"finished", export("idle", `,{"role":"assistant","state":{"type":"complete","stopReason":"end_turn"}}`), true},
+		{"orb-booting-after-detach", export("working", ""), false},
+		{"running-tools", export("running_tools", `,{"role":"assistant","state":{"type":"complete","stopReason":"tool_use"}}`), false},
+		{"no-agent-state", `{"meta":{},"messages":[]}`, false},
+	} {
+		got, err := parseStopped([]byte(tc.export))
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %v, %v", tc.name, got, err)
+		}
+	}
+	if _, err := parseStopped([]byte("Error: thread not found")); err == nil {
+		t.Error("unreadable export treated as a state")
+	}
+}
+
 func TestCLIRejectsDuplicateInitAndWrongContinuation(t *testing.T) {
 	init := `{"type":"system","subtype":"init","agent_mode":"reviewbot-v1","session_id":"` + testThread + `"}`
 	result := `{"type":"result","session_id":"` + testThread + `","result":"incorrect success"}`

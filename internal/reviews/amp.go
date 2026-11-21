@@ -23,6 +23,9 @@ type Executor interface {
 	Execute(context.Context, string, Job, func(string) error) (string, error)
 	Archive(context.Context, string, string) error
 	Usage(context.Context, string, string) (*Usage, error)
+	// Stopped reports whether Amp shows the thread's executor idle. Errors
+	// and any other state mean the thread may still be spending credits.
+	Stopped(context.Context, string, string) (bool, error)
 }
 
 // CLI uses the same stream protocol as @ampcode/sdk, without a JS service.
@@ -256,6 +259,40 @@ func (c CLI) Usage(ctx context.Context, key, id string) (*Usage, error) {
 		return nil, errors.New("Amp usage unavailable")
 	}
 	return parseUsage(output.String())
+}
+
+func (c CLI) Stopped(ctx context.Context, key, id string) (bool, error) {
+	if !threadPattern.MatchString(id) {
+		return false, errors.New("invalid thread ID")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd, cleanup, err := c.command(ctx, key, "threads", "export", id, "--log-file", "/dev/null")
+	if err != nil {
+		return false, err
+	}
+	defer cleanup()
+	output := &boundedBuffer{limit: 32 << 20}
+	cmd.Stdout = output
+	if cmd.Run() != nil {
+		return false, errors.New("Amp thread state unavailable")
+	}
+	return parseStopped(output.Bytes())
+}
+
+// Amp reports a thread "working" from the moment its message is posted,
+// including while its orb boots, and "idle" once its executor stops. A CLI
+// detached by SIGTERM leaves the thread working remotely until it finishes.
+func parseStopped(export []byte) (bool, error) {
+	var thread struct {
+		Meta struct {
+			LastKnownAgentState struct{ State string } `json:"lastKnownAgentState"`
+		}
+	}
+	if err := json.Unmarshal(export, &thread); err != nil {
+		return false, errors.New("Amp thread export unreadable")
+	}
+	return thread.Meta.LastKnownAgentState.State == "idle", nil
 }
 
 func parseUsage(text string) (*Usage, error) {

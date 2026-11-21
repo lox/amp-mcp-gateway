@@ -37,6 +37,7 @@ const testThread = "T-00000000-0000-0000-0000-000000000123"
 type fakeAmp struct {
 	execute func(context.Context, string, Job, func(string) error) (string, error)
 	keys    []string
+	stopped bool
 }
 
 func (f *fakeAmp) Execute(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
@@ -56,6 +57,7 @@ func (f *fakeAmp) Usage(_ context.Context, key, id string) (*Usage, error) {
 	f.keys = append(f.keys, key+":"+id)
 	return &Usage{CostUSD: 0.23, InputTokens: 120, OutputTokens: 9, Requests: 2}, nil
 }
+func (f *fakeAmp) Stopped(context.Context, string, string) (bool, error) { return f.stopped, nil }
 
 type fakeGitHub struct {
 	mu                          sync.Mutex
@@ -988,6 +990,93 @@ func TestAccountsShareCapacityWithoutMonopolizingExecution(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMergedDuringReviewResolvesOnceThreadStopped(t *testing.T) {
+	for _, reject := range []int{0, 403} {
+		t.Run(fmt.Sprint("reject-", reject), func(t *testing.T) { testMergedDuringReview(t, reject) })
+	}
+}
+
+func testMergedDuringReview(t *testing.T, reject int) {
+	f, gh := newGitHub(t)
+	setState := func(state string) {
+		f.mu.Lock()
+		p := f.pulls["lox/repo"]
+		p.State = state
+		f.pulls["lox/repo"] = p
+		f.mu.Unlock()
+	}
+	calls := 0
+	amp := &fakeAmp{}
+	amp.execute = func(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
+		calls++
+		if calls > 1 {
+			return (&fakeAmp{}).Execute(ctx, key, j, onThread)
+		}
+		// The PR merges mid-review and the CLI exits without a terminal result.
+		if err := onThread(testThread); err != nil {
+			return "", err
+		}
+		setState("closed")
+		return "", errAmbiguous
+	}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "first", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	maintain := func(want string) Job {
+		t.Helper()
+		if err := s.Maintain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		j := history(t, s)[len(history(t, s))-1]
+		if j.Status != want {
+			t.Fatalf("status %s, want %s", j.Status, want)
+		}
+		return j
+	}
+	maintain("unknown") // Amp has not confirmed the thread stopped.
+	amp.stopped = true
+	setState("open")
+	maintain("unknown") // An open PR still needs the owner's decision.
+	if f.finished != 0 {
+		t.Fatal("check closed before the review was safely resolved")
+	}
+	setState("closed")
+	f.rejectPublish = reject
+	want, closed := "cancelled", 1
+	if reject != 0 {
+		// A definite rejection leaves the check open; history must not claim it closed.
+		want, closed = "failed", 0
+	}
+	j := maintain(want)
+	if check := f.checks[j.CheckID]; f.finished != closed || closed == 1 && (check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil) {
+		t.Fatalf("check not closed as cancelled without findings: %v", check)
+	}
+	f.rejectPublish = 0
+	maintain(want)
+	if f.finished != closed {
+		t.Fatal("cancellation resent")
+	}
+
+	next := fixturePull("lox/repo", 44)
+	next.Number = 8
+	f.mu.Lock()
+	f.pulls["lox/repo"] = next
+	f.mu.Unlock()
+	deliver(t, s, a, next, "second", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := history(t, s)[0]; got.Number != 8 || got.Status != "succeeded" {
+		t.Fatalf("account did not resume: #%d %s", got.Number, got.Status)
 	}
 }
 
