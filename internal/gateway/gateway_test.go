@@ -296,6 +296,55 @@ func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
 	}
 }
 
+func TestPendingApprovalLifetime(t *testing.T) {
+	schema := map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}
+	for _, tc := range []struct {
+		name    string
+		minutes int
+		tool    string
+		want    time.Duration
+	}{
+		{"default", 0, "notes.write", 24 * time.Hour},
+		{"configured", 120, "notes.write", 2 * time.Hour},
+		{"browser capped", 0, "browser.click", 30 * time.Minute},
+		{"browser shorter configured", 10, "browser.click", 10 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { s.Close() })
+			cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", PendingApprovalMinutes: tc.minutes,
+				Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}, {ID: "browser", Account: "selected tab", Browser: true}},
+				Tools:       []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: schema}, {ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: schema}}}
+			g, err := New(cfg, s, &bindingBackend{binding: "tab"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := input("lifetime-check", "text")
+			in.Calls[0].ToolID = tc.tool
+			o, err := g.submit(t.Context(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := time.Duration(o.Expires-o.Created) * time.Second; got != tc.want {
+				t.Fatalf("lifetime %s, want %s", got, tc.want)
+			}
+		})
+	}
+	for _, minutes := range []int{-1, 7*24*60 + 1} {
+		if _, err := New(Config{AmpUserID: "owner", PendingApprovalMinutes: minutes}, nil, nil); err == nil {
+			t.Fatalf("PendingApprovalMinutes %d accepted", minutes)
+		}
+	}
+	for d, want := range map[time.Duration]string{0: "", 30 * time.Second: "1 min", time.Hour: "60 min", time.Hour + time.Second: "2 h", 24 * time.Hour: "24 h"} {
+		if got := remaining(d); got != want {
+			t.Errorf("remaining(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
 func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
