@@ -994,6 +994,12 @@ func TestAccountsShareCapacityWithoutMonopolizingExecution(t *testing.T) {
 }
 
 func TestMergedDuringReviewResolvesOnceThreadStopped(t *testing.T) {
+	for _, reject := range []int{0, 403} {
+		t.Run(fmt.Sprint("reject-", reject), func(t *testing.T) { testMergedDuringReview(t, reject) })
+	}
+}
+
+func testMergedDuringReview(t *testing.T, reject int) {
 	f, gh := newGitHub(t)
 	setState := func(state string) {
 		f.mu.Lock()
@@ -1044,12 +1050,19 @@ func TestMergedDuringReviewResolvesOnceThreadStopped(t *testing.T) {
 		t.Fatal("check closed before the review was safely resolved")
 	}
 	setState("closed")
-	j := maintain("cancelled")
-	if check := f.checks[j.CheckID]; f.finished != 1 || check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil {
+	f.rejectPublish = reject
+	want, closed := "cancelled", 1
+	if reject != 0 {
+		// A definite rejection leaves the check open; history must not claim it closed.
+		want, closed = "failed", 0
+	}
+	j := maintain(want)
+	if check := f.checks[j.CheckID]; f.finished != closed || closed == 1 && (check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil) {
 		t.Fatalf("check not closed as cancelled without findings: %v", check)
 	}
-	maintain("cancelled")
-	if f.finished != 1 {
+	f.rejectPublish = 0
+	maintain(want)
+	if f.finished != closed {
 		t.Fatal("cancellation resent")
 	}
 

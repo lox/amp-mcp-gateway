@@ -93,13 +93,17 @@ func (s *Service) recover(ctx context.Context, a App, key string, j *Job) error 
 		if err := s.update(ctx, j); err != nil {
 			return err
 		}
-		message := "PR closed, draft or superseded during review; Amp thread confirmed stopped."
+		status, message := "cancelled", "PR closed, draft or superseded during review; Amp thread confirmed stopped."
 		closing := *j
 		closing.Result = nil
-		if err := gh.finish(ctx, closing, "cancelled", message); err != nil && !errors.Is(err, errGitHubRejected) {
-			return nil
+		if err := gh.finish(ctx, closing, "cancelled", message); err != nil {
+			if !errors.Is(err, errGitHubRejected) {
+				return nil
+			}
+			// Definite rejection: the check stays open, so record a failure.
+			status, message = "failed", err.Error()
 		}
-		j.Status, j.Error, j.Completed = "cancelled", message, time.Now().Unix()
+		j.Status, j.Error, j.Completed = status, message, time.Now().Unix()
 		return s.update(ctx, j)
 	}
 	if (j.Phase == "publishing" || j.Phase == "completed") && j.Result != nil && check.Conclusion == j.Conclusion {
