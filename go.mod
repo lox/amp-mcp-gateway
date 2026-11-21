@@ -5,7 +5,6 @@ go 1.26.8
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-jose/go-jose/v4 v4.1.4
-	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/superfly/macaroon v0.3.2

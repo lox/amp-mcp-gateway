@@ -31,8 +31,10 @@ type Connection struct {
 	URL      string
 	Account  string
 	TokenEnv string
-	Browser  bool
-	OAuth    *OAuthConfig
+	// Browser marked the removed native Chrome connection in saved catalogues.
+	// It stays because every tool's approval binding digest serializes it.
+	Browser bool
+	OAuth   *OAuthConfig
 	// Browser-managed configuration is encrypted at rest; never render these secrets.
 	BearerToken string `json:",omitempty"`
 	NoAuth      bool   `json:",omitempty"`
@@ -99,10 +101,7 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 		}
 		seen[c.ID] = true
 		if c.Browser {
-			if c.URL != "" || c.TokenEnv != "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
-				return nil, fmt.Errorf("browser connection %q cannot configure URL or authentication", c.ID)
-			}
-			continue
+			return nil, fmt.Errorf("connection %q uses the removed native browser integration", c.ID)
 		}
 		if _, err := validatedURL(c.URL); err != nil {
 			return nil, fmt.Errorf("connection %q URL: %w", c.ID, err)
@@ -190,9 +189,6 @@ func (m *Manager) connection(id string) (*managedConnection, bool) {
 	return c, ok
 }
 
-// Binding returns no dynamic authority for regular HTTP upstreams.
-func (m *Manager) Binding(string) string { return "" }
-
 // ListTools initializes a fresh MCP session and returns all pages of tools.
 func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
@@ -252,7 +248,7 @@ func (m *Manager) ListTools(ctx context.Context, connection string) ([]*mcp.Tool
 }
 
 // Call initializes a fresh MCP session and invokes one tool exactly once.
-func (m *Manager) Call(ctx context.Context, connection, tool, _ string, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *Manager) Call(ctx context.Context, connection, tool string, args map[string]any) (*mcp.CallToolResult, error) {
 	var result *mcp.CallToolResult
 	err := m.withSession(ctx, connection, func(session *mcp.ClientSession) error {
 		var err error

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -60,7 +59,7 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 	r, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) {
 		opened = append(opened, c)
 		child, err := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
-		return &accountRuntime{store: child, browser: &browserbridge.Manager{}}, err
+		return &accountRuntime{store: child}, err
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +89,7 @@ func TestRegistryDerivesIsolatedStableAccountState(t *testing.T) {
 	restarted, err := newRegistry(t.Context(), primary, base, func(c accountConfig) (*accountRuntime, error) {
 		opened = append(opened, c)
 		child, openErr := store.Open(c.Config.Database, c.Secrets.EncryptionKey)
-		return &accountRuntime{store: child, browser: &browserbridge.Manager{}}, openErr
+		return &accountRuntime{store: child}, openErr
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -221,24 +220,75 @@ func TestBoundPrimaryDatabaseRejectsIdentityReassignment(t *testing.T) {
 	}
 }
 
-func TestAccountStartsWithConflictingRemoteBrowserNamespace(t *testing.T) {
-	cfg := gateway.Config{
-		BaseURL:     "https://gateway.example",
-		Database:    filepath.Join(t.TempDir(), "gateway.db"),
-		AmpUserID:   "owner",
-		Demo:        true,
-		Connections: []upstream.Connection{{ID: "browser", URL: "https://example.com/mcp", NoAuth: true}},
-		Tools: []gateway.Tool{{
-			ID: "browser.snapshot", Connection: "browser", Name: "snapshot", Policy: "allow",
-			InputSchema: map[string]any{"type": "object", "additionalProperties": false},
-		}},
-	}
-	account, err := newAccount(t.Context(), accountConfig{Config: cfg, Secrets: accountSecrets()}, browserauth.Config{Demo: true, DemoPassword: "fixture-password"}, nil)
-	if err != nil {
-		t.Fatalf("existing remote browser namespace prevented startup: %v", err)
-	}
-	defer account.store.Close()
-	if statuses := account.browser.Statuses(); len(statuses) != 0 {
-		t.Fatalf("native Chrome replaced conflicting remote connection: %#v", statuses)
+func TestAccountRetiresNativeBrowserIntegration(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remote string // What owns the browser ID after the upgrade, if anything.
+	}{{"native browser from a saved catalogue", ""}, {"remote connection named browser", "connection"}, {"secret named browser", "secret"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := gateway.Config{BaseURL: "https://gateway.example", Database: filepath.Join(t.TempDir(), "gateway.db"), AmpUserID: "owner", Demo: true}
+			secrets := accountSecrets()
+			s, err := store.Open(cfg.Database, secrets.EncryptionKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch tc.remote {
+			case "connection":
+				cfg.Connections = []upstream.Connection{{ID: "browser", URL: "https://example.com/mcp", NoAuth: true}}
+				cfg.Tools = []gateway.Tool{{ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: map[string]any{"type": "object"}}}
+			case "secret":
+				cfg.Integrations = []gateway.Integration{{ID: "browser", Provider: "secret", Account: "Browser API key", Credential: "fixture-secret", Policy: "require_approval"}}
+			default:
+				// The shape the previous release saved after any catalogue change.
+				saved := `{"Connections":[{"ID":"browser","URL":"","Account":"Local Chrome browser","TokenEnv":"","Browser":true,"OAuth":null}],"Tools":[{"ID":"browser.click","Connection":"browser","Name":"click","Description":"","Policy":"require_approval","InputSchema":{"type":"object"}}],"PrivateConnections":{"browser":true}}`
+				if err := s.SaveCatalogue(t.Context(), []byte(saved)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			now := time.Now()
+			submit := func(id, connection string) {
+				o := store.Operation{ID: id, Tool: connection + ".click", Connection: connection, Binding: "binding", AmpUserID: "owner", AmpThreadID: "thread", Status: "pending", Digest: id, Created: now.Unix(), Expires: now.Add(time.Hour).Unix()}
+				if _, err := s.Submit(t.Context(), o); err != nil {
+					t.Fatal(err)
+				}
+			}
+			submit("browser-granted", "browser")
+			if err := s.ApproveWithOptions(t.Context(), "browser-granted", "amp:owner", store.ApprovalOptions{Breadth: "tool", Scope: "thread", Expiry: "never"}); err != nil {
+				t.Fatal(err)
+			}
+			submit("browser-pending", "browser")
+			submit("notes-pending", "notes")
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			account, err := newAccount(t.Context(), accountConfig{Config: cfg, Secrets: secrets}, browserauth.Config{Demo: true, DemoPassword: "fixture-password"}, nil)
+			if err != nil {
+				t.Fatalf("startup failed: %v", err)
+			}
+			defer account.store.Close()
+			want := map[string]string{"browser-granted": "denied", "browser-pending": "denied", "notes-pending": "pending"}
+			if tc.remote != "" {
+				want["browser-granted"], want["browser-pending"] = "ready", "ready" // the second matched the standing approval
+			}
+			for id, status := range want {
+				o, err := account.store.Get(t.Context(), id)
+				if err != nil || o.Status != status {
+					t.Fatalf("%s = %q, %v; want %q", id, o.Status, err, status)
+				}
+				events, err := account.store.OperationEvents(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				last := events[0] // newest first
+				if retired := last.Kind == "denied" && last.Actor == "browser-integration-removed"; retired != (status == "denied") {
+					t.Fatalf("%s audit history = %+v", id, events)
+				}
+			}
+			grants, err := account.store.ApprovalGrants(t.Context())
+			if err != nil || len(grants) != map[bool]int{false: 0, true: 1}[tc.remote != ""] {
+				t.Fatalf("standing approvals = %+v, %v", grants, err)
+			}
+		})
 	}
 }

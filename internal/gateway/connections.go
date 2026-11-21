@@ -74,6 +74,17 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 			return integration.Provider == secretProvider
 		})
 	}
+	// Catalogues saved before the native Chrome integration was removed still
+	// hold its connection and tools. The next save persists the removal.
+	c.Connections = slices.DeleteFunc(c.Connections, func(connection upstream.Connection) bool {
+		if connection.Browser {
+			c.Tools = slices.DeleteFunc(c.Tools, func(tool Tool) bool { return tool.Connection == connection.ID })
+			delete(c.ToolDefaults, connection.ID)
+			delete(c.PrivateConnections, connection.ID)
+			delete(c.DisabledConnections, connection.ID)
+		}
+		return connection.Browser
+	})
 	secretIDs := slices.Sorted(maps.Keys(storedSecrets))
 	for _, id := range secretIDs {
 		encoded := storedSecrets[id]
@@ -457,9 +468,9 @@ func (g *Gateway) addConnection(w http.ResponseWriter, r *http.Request, m *upstr
 	http.Redirect(w, r, "/connections/"+c.ID+"/tools", http.StatusSeeOther)
 }
 
-// Caller holds g.mu. The native browser connection is managed under Integrations.
+// Caller holds g.mu.
 func (g *Gateway) remoteConnection(id string) bool {
-	return slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && !c.Browser })
+	return slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id })
 }
 
 // setConnectionDisabled hides a remote connection's tools from agents without
@@ -572,7 +583,7 @@ func summarizeConnections(rows []connectionRow) connectionSummary {
 	return summary
 }
 
-// connectionRows lists non-browser connections, with those needing owner action first.
+// connectionRows lists connections, with those needing owner action first.
 func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]connectionRow, error) {
 	calls, err := g.store.RecentCalls(ctx)
 	if err != nil {
@@ -581,9 +592,6 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 	g.mu.RLock()
 	rows := []connectionRow{}
 	for _, c := range g.cfg.Connections {
-		if c.Browser {
-			continue
-		}
 		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID), Disabled: g.cfg.disabledConnection(c.ID)}
 		if c.OAuth != nil {
 			row.Auth = "OAuth"

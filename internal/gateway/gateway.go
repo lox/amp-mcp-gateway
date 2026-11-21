@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/fly"
 	"ampcode.com/lox/amp-mcp-gateway/internal/policy"
 	"ampcode.com/lox/amp-mcp-gateway/internal/reviews"
@@ -52,34 +51,25 @@ type Config struct {
 	PrivateConnections        map[string]bool   `json:",omitempty"`
 	DisabledConnections       map[string]bool   `json:",omitempty"`
 	// PendingApprovalMinutes is how long a submitted operation may wait for
-	// approval and dispatch; zero means 24 hours. Browser operations are capped
-	// at 30 minutes.
+	// approval and dispatch; zero means 24 hours.
 	PendingApprovalMinutes int `json:",omitempty"`
 }
 
 const (
 	defaultApprovalLifetime = 24 * time.Hour
 	maxApprovalLifetime     = 7 * 24 * time.Hour
-	browserApprovalLifetime = 30 * time.Minute
 )
 
-// approvalLifetime keeps browser actions to a short window: hours later the
-// shared tab is likely unattended and its page may no longer match the request.
-func (cfg Config) approvalLifetime(connection string) time.Duration {
-	lifetime := defaultApprovalLifetime
+func (cfg Config) approvalLifetime() time.Duration {
 	if cfg.PendingApprovalMinutes > 0 {
-		lifetime = time.Duration(cfg.PendingApprovalMinutes) * time.Minute
+		return time.Duration(cfg.PendingApprovalMinutes) * time.Minute
 	}
-	if slices.ContainsFunc(cfg.Connections, func(c upstream.Connection) bool { return c.ID == connection && c.Browser }) {
-		lifetime = min(lifetime, browserApprovalLifetime)
-	}
-	return lifetime
+	return defaultApprovalLifetime
 }
 
 // Backend is the upstream transport boundary.
 type Backend interface {
-	Call(context.Context, string, string, string, map[string]any) (*mcp.CallToolResult, error)
-	Binding(string) string
+	Call(context.Context, string, string, map[string]any) (*mcp.CallToolResult, error)
 }
 
 // Gateway owns validated tools and execution policy.
@@ -224,30 +214,9 @@ func digest(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (g *Gateway) binding(tool Tool) string {
-	return g.bindingWith(tool, g.dynamicBinding(tool))
-}
+func (g *Gateway) binding(tool Tool) string { return g.bindings[tool.ID] }
 
-func (g *Gateway) dynamicBinding(tool Tool) string {
-	if tool.ID == "browser.status" && tool.Name == "status" {
-		for _, connection := range g.cfg.Connections {
-			if connection.ID == tool.Connection && connection.Browser {
-				// Status observes current sharing; it does not act on a captured tab.
-				return ""
-			}
-		}
-	}
-	return g.backend.Binding(tool.Connection)
-}
-
-func (g *Gateway) bindingWith(tool Tool, binding string) string {
-	if binding == "" {
-		return g.bindings[tool.ID]
-	}
-	return g.bindings[tool.ID] + ":" + binding
-}
-
-func (g *Gateway) connectionBindingWith(connection, binding string) string {
+func (g *Gateway) connectionBinding(connection string) string {
 	// Reuse the tool bindings, which already cover schema, policy, account,
 	// credentials and owner configuration. Adding or changing a tool changes
 	// the connection-wide authority, including across a restart.
@@ -257,7 +226,9 @@ func (g *Gateway) connectionBindingWith(connection, binding string) string {
 			bindings[id] = g.bindings[id]
 		}
 	}
-	return digest([]any{bindings, binding})
+	// The empty element held a shared browser tab's binding before the native
+	// Chrome integration was removed. Keeping it keeps saved approvals valid.
+	return digest([]any{bindings, ""})
 }
 
 type findInput struct {
@@ -344,7 +315,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
 	})
-	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Every query term must match. Returns schemas and approval policies. For authenticated browser work, search browser and check browser.status; prefer the user's shared local Chrome tab over asking them to sign in again in an orb."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "find_tools", Description: "Search the permitted pinned tool catalogue. Every query term must match. Returns schemas and approval policies."}, func(ctx context.Context, r *mcp.CallToolRequest, in findInput) (*mcp.CallToolResult, any, error) {
 		words, err := searchTerms(in.Query)
 		if err != nil {
 			return nil, nil, err
@@ -447,9 +418,8 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 			account = integration.Account
 		}
 	}
-	dynamicBinding := g.dynamicBinding(t)
 	now := time.Now()
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: now.Unix(), Expires: now.Add(g.cfg.approvalLifetime(t.Connection)).Unix()}
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.binding(t), ConnectionBinding: g.connectionBinding(t.Connection), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: now.Unix(), Expires: now.Add(g.cfg.approvalLifetime()).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -515,17 +485,10 @@ func (g *Gateway) Run(ctx context.Context) error {
 			t, ok := g.tools[o.Tool]
 			// A binary without disabled connections can queue calls during a rollback.
 			ok = ok && !g.cfg.disabledConnection(t.Connection)
-			expectedBinding := ""
-			valid := false
 			integration, native := g.integration(t.Connection)
-			if ok && t.Policy != "deny" && !native {
-				expectedBinding = g.dynamicBinding(t)
-				valid = g.bindingWith(t, expectedBinding) == o.Binding
-			} else if ok && t.Policy != "deny" {
-				valid = g.bindingWith(t, "") == o.Binding
-			}
+			valid := ok && t.Policy != "deny" && g.binding(t) == o.Binding
 			if valid && o.ConnectionBinding != "" {
-				valid = g.connectionBindingWith(t.Connection, expectedBinding) == o.ConnectionBinding
+				valid = g.connectionBinding(t.Connection) == o.ConnectionBinding
 			}
 			g.mu.RUnlock()
 			if !valid {
@@ -540,7 +503,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			if native {
 				result, callErr = g.callIntegration(operationContext{Context: callCtx, Operation: o}, integration, t.Name, o.Arguments)
 			} else {
-				result, callErr = g.backend.Call(callCtx, t.Connection, t.Name, expectedBinding, o.Arguments)
+				result, callErr = g.backend.Call(callCtx, t.Connection, t.Name, o.Arguments)
 			}
 			cancel()
 			status := "succeeded"
@@ -549,16 +512,10 @@ func (g *Gateway) Run(ctx context.Context) error {
 				status = "unknown"
 				var diagnostic *upstream.Failure
 				errors.As(callErr, &diagnostic)
-				var browserErr *browserbridge.OutcomeError
-				detail := ""
-				if errors.As(callErr, &browserErr) {
-					detail = browserErr.Message
-				}
 				raw, err = json.Marshal(struct {
 					Message    string            `json:"message"`
 					Diagnostic *upstream.Failure `json:"diagnostic,omitempty"`
-					Detail     string            `json:"detail,omitempty"`
-				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic, detail})
+				}{"No reliable upstream outcome. Inspect the upstream before retrying.", diagnostic})
 				if err != nil {
 					return err
 				}
@@ -582,7 +539,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 }
 
 // UI returns the owner-authenticated server-rendered review and audit interface.
-func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *browserbridge.Manager, chromeAvailable bool) http.Handler {
+func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /events", g.ledgerEvents)
@@ -591,7 +548,6 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 	g.registerConnections(mux, m)
 	g.registerIntegrations(mux, m)
 	g.registerReviews(mux)
-	g.registerChrome(mux, browser, chromeAvailable)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/approvals", http.StatusSeeOther) })
 	mux.HandleFunc("GET /audit", g.audit)
 	mux.HandleFunc("GET /operations", func(w http.ResponseWriter, r *http.Request) {

@@ -38,12 +38,7 @@ func skillSession(t *testing.T, h http.Handler, identity ampIdentity) *mcp.Clien
 }
 
 func TestMCPSkills(t *testing.T) {
-	g, s, backend := fixture(t)
-	ConfigureChrome(&g.cfg)
-	g, err := New(g.cfg, s, backend)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g, _, backend := fixture(t)
 	session := skillSession(t, g.mcpHandler(), demoIdentity("owner"))
 	caps := session.InitializeResult().Capabilities
 	if settings, ok := caps.Extensions["io.modelcontextprotocol/skills"]; !ok || caps.Resources == nil || !reflect.DeepEqual(settings, map[string]any{}) {
@@ -53,10 +48,10 @@ func TestMCPSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Skills) != 2 || listed.ResultType != "complete" || listed.CacheScope != "private" || listed.TTLMs != 0 {
+	if len(listed.Skills) != 1 || listed.ResultType != "complete" || listed.CacheScope != "private" || listed.TTLMs != 0 {
 		t.Fatalf("listing: %+v", listed)
 	}
-	for i, name := range []string{"using-gateway", "using-shared-browser"} {
+	for i, name := range []string{"using-gateway"} {
 		entry := listed.Skills[i]
 		if entry.URI != "skill://"+name+"/SKILL.md" || entry.Frontmatter["name"] != name || len(entry.Resources) != 2 {
 			t.Fatalf("entry: %+v", entry)
@@ -105,7 +100,7 @@ func TestMCPSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "# Using connected") || strings.Contains(string(raw), "# Browser calls") {
+	if strings.Contains(string(raw), "# Using connected") {
 		t.Fatal("listing eagerly returned file bodies")
 	}
 	resources, err := session.ListResources(t.Context(), nil)
@@ -118,11 +113,11 @@ func TestMCPSkills(t *testing.T) {
 
 	_, err = mcp.CallCustomMethod[*listSkillsParams, *listSkillsResult](t.Context(), session, "skills/list", &listSkillsParams{Cursor: "invented"})
 	assertInvalidSkillParams(t, err)
-	for _, uri := range []string{"", "skill://unknown/SKILL.md", "skill://using-gateway/reference/operations.md", "skill://using-gateway/../using-shared-browser/SKILL.md"} {
+	for _, uri := range []string{"", "skill://unknown/SKILL.md", "skill://using-gateway/reference/operations.md", "skill://using-gateway/../unknown/SKILL.md"} {
 		_, err := mcp.CallCustomMethod[*getSkillParams, *getSkillResult](t.Context(), session, "skills/get", &getSkillParams{URI: uri})
 		assertInvalidSkillParams(t, err)
 	}
-	for _, uri := range []string{"skill://using-gateway/secret.md", "skill://using-gateway/../using-shared-browser/SKILL.md", "skill://using-gateway/%2e%2e/using-shared-browser/SKILL.md", "file:///etc/passwd", "skill://using-gateway/SKILL.md?extra=1"} {
+	for _, uri := range []string{"skill://using-gateway/secret.md", "skill://using-gateway/../unknown/SKILL.md", "skill://using-gateway/%2e%2e/unknown/SKILL.md", "file:///etc/passwd", "skill://using-gateway/SKILL.md?extra=1"} {
 		_, err := session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: uri})
 		assertInvalidSkillParams(t, err)
 	}
@@ -133,103 +128,5 @@ func assertInvalidSkillParams(t *testing.T, err error) {
 	var rpcErr *jsonrpc.Error
 	if !errors.As(err, &rpcErr) || rpcErr.Code != jsonrpc.CodeInvalidParams {
 		t.Fatalf("want invalid params, got %v", err)
-	}
-}
-
-func TestMCPSkillVisibility(t *testing.T) {
-	g, s, backend := fixture(t)
-	ConfigureChrome(&g.cfg)
-	g.cfg.PrivateConnections = map[string]bool{"browser": true}
-	g, err := New(g.cfg, s, backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := g.mcpHandler() // Shared server instance must not cache one actor's view.
-	private := demoIdentity("owner")
-	shared := private
-	shared.ThreadVisibility = "thread_workspace_shared"
-	multiplayer := private
-	multiplayer.ThreadMultiplayer = new(true)
-	influenced := private
-	influenced.ThreadNonOwnerCanInfluence = new(true)
-	for _, tc := range []struct {
-		name     string
-		identity ampIdentity
-		visible  bool
-	}{
-		{"private solo", private, true},
-		{"shared", shared, false},
-		{"multiplayer", multiplayer, false},
-		{"non-owner influence", influenced, false},
-		{"missing identity claims", ampIdentity{}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			session := skillSession(t, h, tc.identity)
-			checkBrowserSkill(t, session, tc.visible)
-		})
-	}
-
-	session := skillSession(t, h, private)
-	// Re-evaluate live policies/configuration even on a session that saw the skill.
-	g.mu.Lock()
-	tool := g.tools["browser.click"]
-	tool.Policy = "deny"
-	g.tools[tool.ID] = tool
-	g.mu.Unlock()
-	checkBrowserSkill(t, session, false)
-	g.mu.Lock()
-	tool.Policy = "require_approval"
-	g.tools[tool.ID] = tool
-	g.mu.Unlock()
-	checkBrowserSkill(t, session, true)
-	g.mu.Lock()
-	delete(g.tools, "browser.snapshot")
-	g.mu.Unlock()
-	checkBrowserSkill(t, session, false)
-
-	unconfigured, _, _ := fixture(t)
-	checkBrowserSkill(t, skillSession(t, unconfigured.mcpHandler(), private), false)
-	// Canonical IDs on a remote namespace collision must not enable native skills.
-	g.mu.Lock()
-	for i := range g.cfg.Connections {
-		if g.cfg.Connections[i].ID == "browser" {
-			g.cfg.Connections[i].Browser = false
-		}
-	}
-	g.tools["browser.snapshot"] = Tool{ID: "browser.snapshot", Connection: "browser", Name: "snapshot", Policy: "allow"}
-	g.mu.Unlock()
-	checkBrowserSkill(t, session, false)
-}
-
-func checkBrowserSkill(t *testing.T, session *mcp.ClientSession, visible bool) {
-	t.Helper()
-	listed, err := mcp.CallCustomMethod[*listSkillsParams, *listSkillsResult](t.Context(), session, "skills/list", &listSkillsParams{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := 1
-	if visible {
-		want = 2
-	}
-	if len(listed.Skills) != want || listed.Skills[0].URI != "skill://using-gateway/SKILL.md" {
-		t.Fatalf("listing leaked or omitted skill: %+v", listed)
-	}
-	_, err = mcp.CallCustomMethod[*getSkillParams, *getSkillResult](t.Context(), session, "skills/get", &getSkillParams{URI: "skill://using-shared-browser/SKILL.md"})
-	if visible {
-		if err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		assertInvalidSkillParams(t, err)
-	}
-	for _, uri := range []string{"skill://using-shared-browser/SKILL.md", "skill://using-shared-browser/reference/browser-workflow.md"} {
-		_, err := session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: uri})
-		if visible {
-			if err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			assertInvalidSkillParams(t, err)
-		}
 	}
 }
