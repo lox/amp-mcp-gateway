@@ -43,13 +43,18 @@ func TestIdentityNamesOnApprovalAndAuditPages(t *testing.T) {
 	mac := hmac.New(sha256.New, make([]byte, 32))
 	_, _ = mac.Write([]byte(encoded))
 	cookie.Value = encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	approved := formRequest(h, cookie, "POST", "/operations/standing-source/approve", url.Values{"remember": {"on"}, "breadth": {"exact"}, "scope": {"project"}, "expiry": {"never"}})
+	approved := formRequest(h, cookie, "POST", "/operations/standing-source/approve", url.Values{"trust": {"project"}})
 	if approved.Code != 303 {
 		t.Fatal("could not save project approval")
 	}
-	for _, path := range []string{"/operations/review-names", "/approval-grants"} {
+	// The approval card names the project and keeps full IDs on hover; the
+	// workspace name only appears with project-scoped standing approvals.
+	for path, wants := range map[string][]string{
+		"/operations/review-names": {`title="Project project-one">team/gateway</span>`, "Project project-one · Workspace workspace-one"},
+		"/approval-grants":         {"team/gateway", "project-one", "Example team", "workspace-one"},
+	} {
 		w := formRequest(h, cookie, "GET", path, nil)
-		for _, want := range []string{"team/gateway", "project-one", "Example team", "workspace-one"} {
+		for _, want := range wants {
 			if w.Code != 200 || !strings.Contains(w.Body.String(), want) {
 				t.Fatalf("%s missing %q", path, want)
 			}

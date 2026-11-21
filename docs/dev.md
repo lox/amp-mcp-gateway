@@ -91,12 +91,67 @@ After approval, poll the same ID until it reaches `succeeded`, `failed`, `denied
 `"fixture": true`. `ready` and `running` are intermediate states. If you repeat
 these examples, use new IDs only for deliberately new operations.
 
+A submitted operation must be approved and dispatched within 24 hours, or it
+becomes `expired` and never runs. Set `PendingApprovalMinutes` in `gateway.json`
+(1 to 10080) to change this for every account. Operations on the shared Chrome tab
+are capped at 30 minutes so an approval cannot act hours later on an unattended
+tab. Bindings, revocation and browser target checks still run at dispatch.
+
 For another MCP client, configure a Streamable HTTP connection to `/mcp` with an
 `Authorization: Bearer <gateway-token>` header. In demo mode the token is the
 `GatewayToken` field in the private local secrets file. Use your client's secret
 storage; do not commit it or paste it into a chat. The demo helper reads it directly.
 The helper refuses HTTP redirects so credentials stay at the chosen endpoint; pass
 the final MCP URL when overriding `-url`.
+
+## MCP usage skills
+
+The `/mcp` endpoint advertises the optional
+[`io.modelcontextprotocol/skills` extension (SEP-2640)](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/beta/skills.mdx)
+and Resources capability. It serves two gateway-authored skills:
+
+- `skill://using-gateway/SKILL.md` teaches catalogue search, single-operation calls,
+  approvals, status polling and ambiguous-outcome recovery.
+- `skill://using-shared-browser/SKILL.md` teaches local Chrome sharing, status,
+  snapshot-bound targeting and result verification. It is listed only when the
+  native browser connection and every tool it documents are discoverable in the
+  current caller's context. `require_approval` is discoverable; `deny` is not.
+  Blocking even one browser tool withholds the entire workflow rather than leaking
+  its details in a reference file. The underlying permitted tools remain usable.
+  Browser registration/sharing need not be active: the skill includes setup and
+  recovery guidance.
+
+`skills/list` returns the complete small catalogue in one page, with frontmatter
+and a manifest containing each file's URI, raw-byte SHA-256 digest and byte size.
+`skills/get` accepts the exact `SKILL.md` URI and returns the same entry. Files,
+including each skill's linked reference, load individually through `resources/read`
+only when the client asks. `resources/list` does not enumerate skill files; the
+skill manifests are authoritative, and the generic resource template reveals no
+account-specific names. No directory-read extension is advertised.
+
+An extension-aware Amp client can list these alongside its other skills, using
+its gateway connection label as the namespace. Clients without skills support
+continue using the same four tools; no new tool or alternate execution path is
+introduced. After upgrading the gateway, let the client's normal server catalogue
+sync run. If skills are absent, check the advertised capabilities and `skills/list`
+with the same connection and identity before assuming a client rollout problem.
+Hosted Amp ingestion of a deployed gateway is a separate acceptance check from
+this repository's HTTP protocol tests.
+
+The Markdown under `internal/gateway/skills/` is embedded at build time. Edit and
+review it with code, then rebuild; there is no live skill-management setting.
+Manifests derive from those exact embedded bytes, including YAML frontmatter, so
+an update changes the corresponding digests. Replies use `cacheScope: private`
+and `ttlMs: 0` because visibility can change with thread context or policy. Every
+list, get and file read rechecks current eligibility. Hosts must still isolate
+cached context appropriately; a server cannot retract bytes a client already read.
+
+Skills are untrusted instructions, not authority. These bundles contain no scripts,
+permission-grant frontmatter, credentials or account-specific schemas, and do not
+proxy upstream-authored skills. Digest verification proves consistency, not trust.
+Tool discovery and execution still enforce their existing private-thread,
+configuration, approval and idempotency rules. Follow the host's origin binding
+and approval rules for any local execution; a remote skill cannot grant it.
 
 ## Suggest approval policies with Jev
 
@@ -216,6 +271,9 @@ message. Once input may have reached the page, a disconnect or extension-reporte
 error marks the outcome `unknown`, stores the bounded extension message as
 `detail`, and is never replayed automatically. Extensions older than 0.2.1 do not
 report the pre-input distinction, so their rejections remain `unknown`.
+Before input, the extension rechecks the target against the same full accessibility
+tree used by `browser.snapshot`; a mismatch reports the expected and found role and
+name, each truncated to 200 characters.
 Deploy the gateway at a stable private HTTPS origin reachable by Chrome and the
 orbs before using the extension outside the local demo.
 
@@ -416,8 +474,28 @@ Edits expire after ten minutes and reject stale saves. Reopening saved permissio
 replaces any earlier saved-permissions edit for that connection, including in
 another tab; fetched-tool reviews remain independent. There is no background
 refresh or drift detection; upstream behavior can still change between calls.
-Editing endpoints, rotating pasted tokens, and removing connections in the UI
-are follow-up work.
+Editing endpoints and rotating pasted tokens in the UI are follow-up work.
+
+### Disabling and removing connections
+
+A remote connection's **Settings** tab can disable, enable or remove it. The native
+browser connection is managed under **Integrations → Chrome** instead.
+
+- **Disable connection** hides its tools from `find_tools` and rejects new calls,
+  keeping its credentials, OAuth refresh and saved permissions. You can still test,
+  reconnect or edit permissions. **Enable connection** restores tool access but not
+  revoked standing approvals.
+- **Remove connection**, after confirmation, deletes the connection, its saved tools
+  and permissions, and every stored OAuth grant for it, including grants under
+  earlier configurations. An OAuth callback that finishes after removal saves
+  nothing. To use the server again, add it and connect again.
+
+Both deny that connection's queued requests and revoke its standing approvals.
+Other connections keep theirs, because tool bindings cover only their own
+connection. Both are refused while any call is running. Audit history and past
+results remain. A binary rollback to a release without this setting re-enables
+disabled connections, with their standing approvals still revoked. After rolling
+forward, calls queued for them during the rollback are denied at execution.
 
 ## Reviews integration
 
@@ -495,11 +573,10 @@ encrypted and is never rendered again. The ID publishes one governed tool named
 {"purpose":"publish the reviewed release"}
 ```
 
-With **Require approval**, the owner can approve one request or use the existing
-Remember controls to grant matching access to that Amp thread or project. Exact
-approvals also bind the purpose; tool-wide approvals permit any schema-valid purpose
-for that one secret. Because each secret is a separate native integration, a
-connection-wide approval is also limited to that secret. The configured **Allow**
+With **Require approval**, the owner can approve one request or trust that secret's
+connection or tool for the Amp thread or project. Because each secret is a
+separate native integration, either kind of trust is limited to the one secret and
+permits any schema-valid purpose. The configured **Allow**
 policy skips human review for any authenticated owner thread, while **Block** hides
 and denies the tool.
 
@@ -715,14 +792,16 @@ race tests, vet and build the gateway. A separate plugin-test job installs the
 pinned Bun version through mise and runs `mise run check-plugin`.
 It tests the preview widget without contacting the gateway. A hosted
 cache volume retains the mise toolchains and Go module/build caches; cache misses
-fall back to normal downloads and compilation. On non-PR `main` builds, a parallel
-job uses Fly's remote Docker builder to publish an image tagged with the immutable
-Git commit. The deploy job installs only `flyctl` with the mise plugin and deploys
-that exact image after all checks pass.
+fall back to normal downloads and compilation. A parallel job builds the Docker
+image with Buildkite's hosted Docker builder, which keeps BuildKit layers and cache
+mounts between builds. Pull requests only verify that the image builds. Non-PR
+`main` builds push it to Fly's registry, tagged with the immutable Git commit. The
+deploy job installs only `flyctl` with the mise plugin and deploys that exact image
+after all checks pass.
 
 Only non-PR `main` builds publish deployment images or deploy. Image creation runs
-alongside checks so remote-builder startup and compilation stay off the deployment
-critical path; publishing an image does not change the running app. Deploys share
+alongside checks so compilation stays off the deployment critical path; publishing
+an image does not change the running app. Deploys share
 one concurrency slot, skip superseded main commits, use Fly's rolling strategy
 without HA, and check public `/healthz` afterwards. Running deployments are not
 automatically cancelled by a newer commit.
@@ -783,18 +862,22 @@ The gateway persists intent before returning an operation ID. Approval changes o
 the status, never the stored arguments. The worker claims that request atomically
 before contacting the upstream, then records its outcome and audit event together.
 
-- A pending operation can be approved once, or **Remember this approval** can
-  authorize exact tool/argument matches, that tool with any arguments, or any
-  non-blocked tool on its connection. Saved approvals are limited to the verified
-  owner's thread or project. Project approval requires an Amp project claim.
+- The review card offers **Approve once**, an **Approve & trust all <connection>
+  tools for this thread** split button, and **Deny**. The split button's menu also
+  offers the same for the project, and **Approve & trust <tool> for this
+  thread/project** for just the requested tool with any arguments. Every trust
+  option also approves the current request. Approve once covers only this request.
+  Trust saves a standing approval,
+  until revoked, limited to the verified owner's thread or project; project trust
+  requires an Amp project claim. Connection-wide trust binds the full
+  current tool catalogue and its configuration; it never covers added or blocked
+  tools. The card warns when Amp reports a multiplayer thread or one that
+  non-owners can influence.
 - The pending operation expires ten minutes after submission, including time spent
-  queued. New saved approvals default to exact arguments in this thread until
-  revoked, with optional one-hour or 24-hour expiry. Existing one-hour grants keep
-  their deadline. Restarting does not extend consent. Exact argument matching
-  ignores object key order and preserves JSON number spellings and precision.
-- Connection-wide approval binds the full current tool catalogue and its account,
-  policy and credential configuration. It does not silently cover added tools or
-  override blocked tools. Without JavaScript, the browser offers one-off approval only.
+  queued. Restarting does not extend consent. Exact-call and tool-wide grants saved
+  earlier remain valid and revocable: exact matching ignores object key order and
+  preserves JSON number spellings and precision. Existing timed grants keep their
+  deadline.
 - A queued grant-authorized call is checked again in the atomic claim transaction.
   Expiry, revocation or replacement of its original consent denies the call with
   audit actor `approval-grant-unavailable`. New consent cannot revive old queued
@@ -804,7 +887,8 @@ before contacting the upstream, then records its outcome and audit event togethe
   credential invalidate queued requests when checked at execution.
 - Reconnecting OAuth denies **all** pending/ready requests conservatively and
   revokes standing approvals for that connection. Catalogue changes revoke all
-  standing approvals. Reconfiguration is refused while any request is running.
+  standing approvals, except disabling or removing one remote connection, which
+  revokes only its own. Reconfiguration is refused while any request is running.
 - OAuth grants are bound to the connection configuration; changed endpoints require
   reconnecting rather than receiving an existing credential.
 - Timeouts and transport errors become `unknown`; a restart also marks previously

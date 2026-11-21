@@ -27,10 +27,9 @@ coverage. Planned features below are proposals, not shipped capabilities or date
   model metadata nor account labels are authentication evidence. Only the disposable
   demo fixture uses bearer authentication.
 - Encrypt credentials and payloads. Transactional local audit is not tamper-proof.
-- Approve the immutable stored request once or create a revocable standing approval
-  for exact arguments, a tool, or a connection in its verified Amp thread or project.
-  Default to exact arguments in this thread until revoked; optionally expire after
-  one or 24 hours. Keep configuration bindings and check consent again at atomic claim.
+- Approve the immutable stored request once, or trust every tool on its connection
+  (or just its tool) in its verified Amp thread or project until revoked. Keep
+  configuration bindings and check consent again at atomic claim.
   Never automatically retry an ambiguous dispatch.
 - Permit tools from private connections only when each fresh Amp token attests a
   private, non-multiplayer thread where no non-owner can influence the call.
@@ -90,8 +89,8 @@ redemption, a shell-capable workload can reveal or reuse the value.
 
 Next choose one provider with both a low-risk read and a reversible write in a
 disposable account or repository. Use the browser flow and verify its real auth
-behavior before adding more onboarding features. Endpoint/credential editing,
-connection removal, and automatic drift detection remain follow-ups.
+behavior before adding more onboarding features. Endpoint/credential editing
+and automatic drift detection remain follow-ups.
 
 Acceptance:
 
@@ -113,10 +112,10 @@ documentation/setup work.
 Amp tokens authenticate `/mcp` against a fixed issuer, shared gateway-origin audience,
 `token_use=mcp` and the linked account's user ID. The signed subject and thread ID plus
 optional workspace/project IDs are stored and shown during review. Pending requests
-default to one-off approval. A Remember checkbox reveals the allowed calls,
-thread/project context and optional expiry. Standing approvals are encrypted,
-bound to identity and configuration, listed for the owner, and revocable. New grants
-default to no expiry; existing one-hour grants retain their deadline. Expiry, revocation or replaced
+offer Approve, Deny, and trust for the thread or project, covering every tool on
+the connection or just the requested tool, until revoked. Standing approvals are encrypted, bound to identity and
+configuration, listed for the owner, and revocable; existing one-hour grants retain
+their deadline. Expiry, revocation or replaced
 consent denies queued grant-authorized calls at atomic claim; directly approved
 and already claimed calls are unaffected. Amp-hosted remote MCP definitions send the short-lived
 token directly, without a local bridge or stored gateway credential. Native credential

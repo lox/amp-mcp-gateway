@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -241,19 +242,35 @@ func (s *Store) LoadSecrets(ctx context.Context) (map[string][]byte, error) {
 // SaveCatalogue commits configuration and revokes queued approvals atomically.
 // Running operations must finish before their authority can change.
 func (s *Store) SaveCatalogue(ctx context.Context, b []byte, events ...Event) error {
-	return s.saveCatalogue(ctx, b, nil, nil, events...)
+	return s.saveCatalogue(ctx, b, nil, nil, nil, events...)
 }
 
 // SaveCatalogueProtecting also makes existing results from private connections
 // unreadable to older binaries in the same transaction as the policy change.
 func (s *Store) SaveCatalogueProtecting(ctx context.Context, b []byte, privateConnections map[string]bool, events ...Event) error {
-	return s.saveCatalogue(ctx, b, privateConnections, nil, events...)
+	return s.saveCatalogue(ctx, b, privateConnections, nil, nil, events...)
 }
 
 // SaveCatalogueProtectingWithSecrets atomically replaces the current secret
 // integrations. Legacy catalogue saves preserve this separate storage.
 func (s *Store) SaveCatalogueProtectingWithSecrets(ctx context.Context, b []byte, privateConnections map[string]bool, secrets map[string][]byte, events ...Event) error {
-	return s.saveCatalogue(ctx, b, privateConnections, secrets, events...)
+	return s.saveCatalogue(ctx, b, privateConnections, secrets, nil, events...)
+}
+
+// connectionScope confines a catalogue change's revocation to one connection.
+type connectionScope struct {
+	id, reason string
+	forget     bool
+}
+
+// SaveConnectionCatalogue commits a change to one remote connection, such as
+// disabling or removing it. It denies only that connection's queued requests,
+// recording reason as the audit actor, and revokes only its standing approvals.
+// Other connections keep their authority because their tool bindings do not
+// cover this connection. With forget, it also deletes every stored OAuth
+// credential for the connection. Running operations must finish first.
+func (s *Store) SaveConnectionCatalogue(ctx context.Context, b []byte, connection, reason string, forget bool, events ...Event) error {
+	return s.saveCatalogue(ctx, b, nil, nil, &connectionScope{id: connection, reason: reason, forget: forget}, events...)
 }
 
 // MigrateCatalogueSecrets moves already-authorized secret records out of a
@@ -285,7 +302,7 @@ func (s *Store) replaceSecrets(ctx context.Context, tx *sql.Tx, secrets map[stri
 	return nil
 }
 
-func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections map[string]bool, secrets map[string][]byte, events ...Event) error {
+func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections map[string]bool, secrets map[string][]byte, scope *connectionScope, events ...Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -344,17 +361,23 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) SELECT id,'denied','catalogue-changed',unixepoch() FROM operations WHERE status IN ('pending','ready')"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE approval_grants SET active=0 WHERE active=1"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM credential_leases"); err != nil {
-		return err
+	if scope != nil {
+		if err := s.revokeConnection(ctx, tx, *scope); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) SELECT id,'denied','catalogue-changed',unixepoch() FROM operations WHERE status IN ('pending','ready')"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE approval_grants SET active=0 WHERE active=1"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM credential_leases"); err != nil {
+			return err
+		}
 	}
 	for _, e := range events {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO events(operation,kind,actor,time) VALUES(?,?,?,unixepoch())", e.Operation, e.Kind, e.Actor); err != nil {
@@ -362,6 +385,50 @@ func (s *Store) saveCatalogue(ctx context.Context, b []byte, privateConnections 
 		}
 	}
 	return tx.Commit()
+}
+
+// revokeConnection denies one connection's queued requests and revokes its
+// standing approvals. Remote connections never hold credential leases.
+func (s *Store) revokeConnection(ctx context.Context, tx *sql.Tx, scope connectionScope) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id,status,payload FROM operations WHERE status IN ('pending','ready')")
+	if err != nil {
+		return err
+	}
+	var queued []string
+	for rows.Next() {
+		o, err := s.decode(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		if o.Connection == scope.id {
+			queued = append(queued, o.ID)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range queued {
+		if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE id=?", id); err != nil {
+			return err
+		}
+		if err := event(ctx, tx, id, "denied", scope.reason); err != nil {
+			return err
+		}
+	}
+	if err := s.revokeConnectionGrants(ctx, tx, scope.id); err != nil {
+		return err
+	}
+	if scope.forget {
+		// OAuth grants use "<connection>:<64 hex binding hash>", including grants
+		// under earlier configurations. Match only that shape so other records in
+		// this table can never be deleted by a connection name.
+		prefix := scope.id + ":"
+		if _, err := tx.ExecContext(ctx, "DELETE FROM tokens WHERE length(id)=? AND substr(id,1,?)=?", len(prefix)+64, len(prefix), prefix); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RecordEvent records a payload-free review lifecycle event.
@@ -391,8 +458,10 @@ func (s *Store) Reauthorize(ctx context.Context, id string, b []byte) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE operations SET status='denied' WHERE status IN ('pending','ready')"); err != nil {
 		return err
 	}
-	if err := s.revokeConnectionGrants(ctx, tx, id); err != nil {
-		return err
+	if connection, _, ok := strings.Cut(id, ":"); ok {
+		if err := s.revokeConnectionGrants(ctx, tx, connection); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO tokens VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", id, s.seal("token:"+id, b)); err != nil {
 		return err

@@ -941,3 +941,135 @@ func TestConnectionListSummarizesPoliciesAndCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestDisableAndRemoveConnectionAffectOnlyThatConnection(t *testing.T) {
+	g, s, b := fixture(t)
+	ctx := t.Context()
+	cfg := g.cfg
+	cfg.Connections = append(slices.Clone(cfg.Connections), upstream.Connection{ID: "other", URL: "http://localhost/other", NoAuth: true})
+	other := cfg.Tools[0]
+	other.ID, other.Connection = "other.write", "other"
+	cfg.Tools = append(slices.Clone(cfg.Tools), other)
+	if !ConfigureChrome(&cfg) {
+		t.Fatal("could not add the browser connection")
+	}
+	g, err := New(cfg, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	call := func(id, tool string) (store.Operation, error) {
+		in := input(id, "hello")
+		in.Calls[0].ToolID = tool
+		return g.submit(ctx, in)
+	}
+	found := func() []string {
+		t.Helper()
+		server := httptest.NewServer(g.mcpHandler())
+		defer server.Close()
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "disable-test", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "find_tools", Arguments: map[string]any{"query": "write"}})
+		if err != nil || result.IsError {
+			t.Fatalf("find tools: %v %+v", err, result)
+		}
+		raw, _ := json.Marshal(result.StructuredContent)
+		var out struct{ Tools []Tool }
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, tool := range out.Tools {
+			ids = append(ids, tool.ID)
+		}
+		return ids
+	}
+	status := func(id string) string {
+		t.Helper()
+		o, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o.Status
+	}
+	for id, tool := range map[string]string{"notes-waiting": "notes.write", "other-waiting": "other.write"} {
+		if o, err := call(id, tool); err != nil || o.Status != "pending" {
+			t.Fatalf("%s: %+v %v", id, o, err)
+		}
+	}
+
+	if w := formRequest(h, cookie, "POST", "/connections/notes/disable", nil); w.Code != 303 {
+		t.Fatalf("disable: %d %s", w.Code, w.Body.String())
+	}
+	if got := found(); !slices.Equal(got, []string{"other.write"}) {
+		t.Fatalf("disabled tools still discoverable: %v", got)
+	}
+	if _, err := call("notes-disabled", "notes.write"); err == nil {
+		t.Fatal("disabled connection accepted a call")
+	}
+	if status("notes-waiting") != "denied" || status("other-waiting") != "pending" {
+		t.Fatalf("disable revoked the wrong requests: notes %s, other %s", status("notes-waiting"), status("other-waiting"))
+	}
+	var restored Config
+	if err := LoadCatalogue(ctx, &restored, s); err != nil || !restored.disabledConnection("notes") || !slices.ContainsFunc(restored.Tools, func(t Tool) bool { return t.ID == "notes.write" }) {
+		t.Fatalf("disabled state not persisted with its tools: %+v %v", restored, err)
+	}
+	// A binary without this setting can queue calls during a rollback; the worker must still deny them.
+	tool := g.tools["notes.write"]
+	if _, err := s.Submit(ctx, store.Operation{ID: "notes-rollback", Tool: tool.ID, Connection: "notes", Arguments: map[string]any{"text": "hello"}, Binding: g.binding(tool), Status: "ready", Created: time.Now().Unix(), Expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, g)
+	await(t, s, "notes-rollback", "denied")
+	if b.calls.Load() != 0 {
+		t.Fatal("worker dispatched a call for a disabled connection")
+	}
+	if w := formRequest(h, cookie, "GET", "/connections", nil); !strings.Contains(w.Body.String(), `<span class="chip">Disabled</span>`) {
+		t.Fatal("connection list does not show the disabled state")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/enable", nil); w.Code != 303 {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	if o, err := call("notes-enabled", "notes.write"); err != nil || o.Status != "pending" {
+		t.Fatalf("re-enabled connection rejected a call: %+v %v", o, err)
+	}
+
+	if err := s.SaveToken(ctx, "notes:"+strings.Repeat("0", 64), []byte("token")); err != nil {
+		t.Fatal(err)
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", nil); w.Code != 400 || !g.remoteConnection("notes") {
+		t.Fatal("removed a connection without confirmation")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/"+chromeConnectionID+"/remove", url.Values{"confirm": {"remove"}}); w.Code != 404 {
+		t.Fatalf("removed the native browser connection: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "GET", "/connections/"+chromeConnectionID+"/settings", nil); w.Code != 404 {
+		t.Fatalf("native browser connection shows remote connection controls: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", url.Values{"confirm": {"remove"}}); w.Code != 303 {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := call("notes-removed", "notes.write"); err == nil || !slices.Equal(found(), []string{"other.write"}) {
+		t.Fatal("removed connection's tool is still available")
+	}
+	if status("notes-enabled") != "denied" || status("other-waiting") != "pending" {
+		t.Fatalf("remove revoked the wrong requests: notes %s, other %s", status("notes-enabled"), status("other-waiting"))
+	}
+	if raw, err := s.LoadToken(ctx, "notes:"+strings.Repeat("0", 64)); err != nil || raw != nil {
+		t.Fatalf("removed connection kept its OAuth token: %v", err)
+	}
+	restored = Config{}
+	if err := LoadCatalogue(ctx, &restored, s); err != nil || slices.ContainsFunc(restored.Connections, func(c upstream.Connection) bool { return c.ID == "notes" }) || slices.ContainsFunc(restored.Tools, func(t Tool) bool { return t.Connection == "notes" }) || !slices.ContainsFunc(restored.Tools, func(t Tool) bool { return t.ID == "other.write" }) {
+		t.Fatalf("removal not persisted: %+v %v", restored, err)
+	}
+	if o, err := s.Get(ctx, "notes-waiting"); err != nil || o.Tool != "notes.write" {
+		t.Fatal("removal deleted audit history")
+	}
+}

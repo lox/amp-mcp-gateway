@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,14 +18,154 @@ import (
 var reviewsHTML string
 
 var reviewTemplateFuncs = template.FuncMap{
-	"severities": func() []string { return []string{"critical", "high", "medium", "low"} },
-	"reviewTime": func(nanos int64) string { return time.Unix(0, nanos).UTC().Format(time.RFC3339) },
+	"severities":  func() []string { return []string{"critical", "high", "medium", "low"} },
+	"reviewTime":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format(time.RFC3339) },
+	"reviewDate":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format("02 Jan · 15:04 UTC") },
+	"reviewStats": reviewStats,
+	"reviewUsage": reviewUsage,
 	"reviewEstimate": func(cost *float64) string {
 		if cost == nil {
 			return "not reported"
 		}
 		return fmt.Sprintf("$%.4f", *cost)
 	},
+}
+
+// Summaries describe the review outcome separately from successful execution.
+// Costs include every attempt; missing usage must never look like a free review.
+func reviewStats(j reviews.Job) any {
+	v := struct {
+		Outcome, Class, Elapsed, Credits, Estimate string
+		Findings                                   []struct {
+			Severity string
+			Count    int
+		}
+	}{Outcome: j.Status, Class: j.Status, Elapsed: "—", Credits: "—", Estimate: "—"}
+	if j.Status == "succeeded" {
+		v.Outcome = "Completed"
+		switch j.Conclusion {
+		case "success":
+			v.Outcome = "Passed"
+		case "failure":
+			v.Outcome, v.Class = "Blocking issues", "failed"
+		case "neutral":
+			v.Outcome, v.Class = "Advisory issues", "neutral"
+		}
+	} else if j.Status == "failed" {
+		v.Outcome = "Review failed"
+	}
+	end := time.Unix(j.Completed, 0)
+	if j.Status == "running" || j.Status == "queued" {
+		end = time.Now()
+	}
+	if j.Created > 0 && (j.Completed > 0 || j.Status == "running" || j.Status == "queued") {
+		elapsed := end.Sub(time.Unix(0, j.Created))
+		if elapsed >= 0 {
+			v.Elapsed = elapsed.Round(time.Second).String()
+		}
+	}
+	if j.Result != nil {
+		for _, severity := range []string{"critical", "high", "medium", "low"} {
+			count := 0
+			for _, f := range j.Result.Findings {
+				if f.Severity == severity {
+					count++
+				}
+			}
+			if count > 0 {
+				v.Findings = append(v.Findings, struct {
+					Severity string
+					Count    int
+				}{severity, count})
+			}
+		}
+	}
+	credits, estimate, known, estimates := 0.0, 0.0, 0, 0
+	pending := j.Status == "queued" || j.Status == "running"
+	for _, t := range j.Threads {
+		if t.Usage == nil {
+			pending = pending || t.UsageError == ""
+			continue
+		}
+		known++
+		credits += t.Usage.CostUSD
+		if t.Usage.ProviderEstimateUSD != nil {
+			estimates++
+			estimate += *t.Usage.ProviderEstimateUSD
+		}
+	}
+	if len(j.Threads) > 0 || pending {
+		v.Credits, v.Estimate = "Unavailable", "Not reported"
+		if pending {
+			v.Credits, v.Estimate = "Pending", "Pending"
+		}
+		if known > 0 {
+			v.Credits = fmt.Sprintf("$%.4f", credits)
+			if pending || known < len(j.Threads) {
+				v.Credits += " (partial)"
+			}
+		}
+		if estimates > 0 {
+			v.Estimate = fmt.Sprintf("$%.4f", estimate)
+			if pending || estimates < len(j.Threads) {
+				v.Estimate += " (partial)"
+			}
+		}
+	}
+	return v
+}
+
+func usageCost(value float64, known, threads int) string {
+	if known == 0 {
+		return "—"
+	}
+	text := fmt.Sprintf("$%.4f", value)
+	if known < threads {
+		text += " (partial)"
+	}
+	return text
+}
+
+func reviewUsage(days []reviews.DailyUsage) any {
+	type day struct {
+		Date, Credits, Estimate                   string
+		Count, X, EstimateX                       int
+		CreditHeight, EstimateHeight, CountHeight float64
+		Partial                                   bool
+	}
+	v := struct {
+		Days                                       []day
+		Count, Threads, Known, Estimates, MaxCount int
+		Credits, Estimate, From, To, MaxCost       string
+	}{MaxCount: 1}
+	credits, estimate, maxCost := 0.0, 0.0, 0.0
+	for _, d := range days {
+		v.Count += d.Reviews
+		v.Threads += d.Threads
+		v.Known += d.Known
+		v.Estimates += d.Estimates
+		credits += d.Credits
+		estimate += d.ProviderEstimate
+		maxCost = max(maxCost, d.Credits, d.ProviderEstimate)
+		v.MaxCount = max(v.MaxCount, d.Reviews)
+	}
+	// Both cost series use the same zero-based USD scale.
+	maxCost = max(.01, math.Ceil(maxCost*100)/100)
+	v.MaxCost = fmt.Sprintf("$%.2f", maxCost)
+	v.Credits = usageCost(credits, v.Known, v.Threads)
+	v.Estimate = usageCost(estimate, v.Estimates, v.Threads)
+	for i, d := range days {
+		v.Days = append(v.Days, day{
+			Date: d.Date.Format("02 Jan"), Credits: usageCost(d.Credits, d.Known, d.Threads), Estimate: usageCost(d.ProviderEstimate, d.Estimates, d.Threads),
+			Count: d.Reviews, X: 48 + i*18, EstimateX: 56 + i*18,
+			CreditHeight: 100 * d.Credits / maxCost, EstimateHeight: 100 * d.ProviderEstimate / maxCost, CountHeight: 100 * float64(d.Reviews) / float64(v.MaxCount),
+			Partial: i == len(days)-1,
+		})
+	}
+	if len(days) > 0 {
+		v.From, v.To = days[0].Date.Format("02 Jan 2006"), days[len(days)-1].Date.Format("02 Jan 2006")
+	}
+	return v
 }
 
 func (g *Gateway) registerReviews(mux *http.ServeMux) {
@@ -111,6 +252,14 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		http.Error(w, "Review history unavailable", 503)
 		return
 	}
+	var usage []reviews.DailyUsage
+	if !editing {
+		usage, err = g.Reviews.UsageSummary(r.Context(), time.Now())
+		if err != nil {
+			http.Error(w, "Review usage unavailable", 503)
+			return
+		}
+	}
 	if message != "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
@@ -118,7 +267,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
 		"ReviewInstallations": installations, "ReviewCredentials": credentials,
 		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Prefix: "i.__i__", Index: "__r__"},
-		"ReviewJobs": jobs, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+		"ReviewJobs": jobs, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {

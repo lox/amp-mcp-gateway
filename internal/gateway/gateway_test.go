@@ -296,6 +296,55 @@ func TestPairingChangeInvalidatesPendingApproval(t *testing.T) {
 	}
 }
 
+func TestPendingApprovalLifetime(t *testing.T) {
+	schema := map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false}
+	for _, tc := range []struct {
+		name    string
+		minutes int
+		tool    string
+		want    time.Duration
+	}{
+		{"default", 0, "notes.write", 24 * time.Hour},
+		{"configured", 120, "notes.write", 2 * time.Hour},
+		{"browser capped", 0, "browser.click", 30 * time.Minute},
+		{"browser shorter configured", 10, "browser.click", 10 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { s.Close() })
+			cfg := Config{AmpUserID: "owner", Demo: true, BaseURL: "http://localhost", PendingApprovalMinutes: tc.minutes,
+				Connections: []upstream.Connection{{ID: "notes", URL: "http://localhost/mcp", Account: "test account", TokenEnv: "TEST_TOKEN"}, {ID: "browser", Account: "selected tab", Browser: true}},
+				Tools:       []Tool{{ID: "notes.write", Connection: "notes", Name: "write", Policy: "require_approval", InputSchema: schema}, {ID: "browser.click", Connection: "browser", Name: "click", Policy: "require_approval", InputSchema: schema}}}
+			g, err := New(cfg, s, &bindingBackend{binding: "tab"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := input("lifetime-check", "text")
+			in.Calls[0].ToolID = tc.tool
+			o, err := g.submit(t.Context(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := time.Duration(o.Expires-o.Created) * time.Second; got != tc.want {
+				t.Fatalf("lifetime %s, want %s", got, tc.want)
+			}
+		})
+	}
+	for _, minutes := range []int{-1, 7*24*60 + 1} {
+		if _, err := New(Config{AmpUserID: "owner", PendingApprovalMinutes: minutes}, nil, nil); err == nil {
+			t.Fatalf("PendingApprovalMinutes %d accepted", minutes)
+		}
+	}
+	for d, want := range map[time.Duration]string{0: "", 30 * time.Second: "1 min", time.Hour: "60 min", time.Hour + time.Second: "2 h", 24 * time.Hour: "24 h"} {
+		if got := remaining(d); got != want {
+			t.Errorf("remaining(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
 func TestDispatchUsesBindingValidatedByWorker(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"), base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
@@ -445,7 +494,7 @@ func TestMCPProtocolAndApprovalUI(t *testing.T) {
 	request = httptest.NewRequest("GET", "/operations/protocol-test", nil)
 	request.AddCookie(cookie)
 	mux.ServeHTTP(page, request)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once") || !strings.Contains(page.Body.String(), "Remember this approval") || strings.Contains(page.Body.String(), "<script>alert") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Approve once</button>") || !strings.Contains(page.Body.String(), "Approve &amp; trust all notes tools for this thread</button>") || strings.Contains(page.Body.String(), "<script>alert") {
 		t.Fatalf("unsafe/broken review page: %d", page.Code)
 	}
 	request = httptest.NewRequest("POST", "/operations/protocol-test/approve", nil)
@@ -485,13 +534,13 @@ func TestOperationPresentation(t *testing.T) {
 			if strings.Contains(body, "Refresh status") != (status == "ready" || status == "running") {
 				t.Fatal("incorrect refresh control")
 			}
-			if strings.Contains(body, "Approve once") != (status == "pending") {
+			if strings.Contains(body, "Approve once</button>") != (status == "pending") {
 				t.Fatal("incorrect approval control")
 			}
-			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once") {
+			if status == "pending" && strings.Index(body, "exact request") > strings.Index(body, "Approve once</button>") {
 				t.Fatal("arguments must precede approval")
 			}
-			if strings.Contains(body, "This thread") || strings.Contains(body, "This project") {
+			if strings.Contains(body, `value="thread"`) || strings.Contains(body, `value="project"`) {
 				t.Fatal("standing scope offered without verified Amp identity")
 			}
 			if len(o.Result) > 0 {
@@ -522,11 +571,12 @@ func TestApprovalScopePresentation(t *testing.T) {
 	for _, tc := range []struct {
 		id, project string
 		wantProject bool
+		multiplayer bool
 	}{
-		{"with-project", "project-one", true},
-		{"without-project", "", false},
+		{"with-project", "project-one", true, false},
+		{"without-project", "", false, true},
 	} {
-		o := store.Operation{ID: tc.id, Tool: "notes.write", Connection: "notes", Account: "test account", Status: "pending", Arguments: map[string]any{"text": "review"}, AmpUserID: "user-owner", AmpWorkspaceID: "workspace-one", AmpProjectID: tc.project, AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba"}
+		o := store.Operation{ID: tc.id, Tool: "notes.write", Connection: "notes", Account: "test account", Status: "pending", Arguments: map[string]any{"text": "review"}, AmpUserID: "user-owner", AmpWorkspaceID: "workspace-one", AmpProjectID: tc.project, AmpThreadID: "T-01a0b6d8-e50f-7723-941c-60bca63723ba", AmpThreadMultiplayer: tc.multiplayer}
 		if _, err := s.Submit(t.Context(), o); err != nil {
 			t.Fatal(err)
 		}
@@ -535,13 +585,20 @@ func TestApprovalScopePresentation(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.operation(w, r)
 		body := w.Body.String()
-		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once", "Remember this approval", `value="exact">Same tool + same arguments`, `value="thread">This thread`, `value="never">Until revoked`, "Expiry or revocation stops queued calls"} {
+		for _, want := range []string{"workspace-one", o.AmpThreadID, "Approve once</button>", `value="thread">Approve &amp; trust all notes tools for this thread</button>`, `value="thread-tool">Approve &amp; trust write for this thread</button>`, `<strong>test account</strong> <span class="receipt-unverified"`, "Open thread ↗</a>"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %q", tc.id, want)
 			}
 		}
-		if strings.Contains(body, `value="project">This project`) != tc.wantProject {
+		if strings.Contains(body, `value="project-tool">Approve &amp; trust write for this project</button>`) != tc.wantProject {
 			t.Errorf("%s: project scope visibility mismatch", tc.id)
+		}
+		// Unresolved IDs stay out of the context line; full IDs remain in Identity & audit.
+		if strings.Contains(body, "Workspace …") || strings.Contains(body, "Project …") || strings.Contains(body, `<span title="Project `) {
+			t.Errorf("%s: context line shows an unresolved ID", tc.id)
+		}
+		if strings.Contains(body, "Other people can influence this thread") != tc.multiplayer {
+			t.Errorf("%s: multiplayer warning mismatch", tc.id)
 		}
 	}
 }

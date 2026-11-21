@@ -131,8 +131,10 @@ func TestAmpIdentity(t *testing.T) {
 		t.Fatalf("submission actor: %v %v", events, err)
 	}
 	w = httptest.NewRecorder()
-	g.render(w, httptest.NewRequest("GET", "/", nil), map[string]any{"Operation": o, "Owner": "owner"})
-	if !strings.Contains(w.Body.String(), `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(w.Body.String(), "user-owner") || !strings.Contains(w.Body.String(), "workspace-123") || !strings.Contains(w.Body.String(), "project-456") || !strings.Contains(w.Body.String(), "Thread visibility") || !strings.Contains(w.Body.String(), "Multiplayer") || !strings.Contains(w.Body.String(), "Non-owner influence") {
+	r = httptest.NewRequest("GET", "/operations/"+o.ID, nil)
+	r.SetPathValue("id", o.ID)
+	g.operation(w, r)
+	if body := w.Body.String(); !strings.Contains(body, `href="https://ampcode.com/threads/`+thread+`"`) || !strings.Contains(body, "workspace-123") || !strings.Contains(body, "project-456") || strings.Contains(body, "Other people can influence this thread") {
 		t.Fatal("missing identity link")
 	}
 	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tools", Arguments: input("amp-request-001", "verified caller")})

@@ -110,7 +110,27 @@ whose mode is not `reviewbot-v1`; this verifies the mode key, **not cryptographi
 attestation of its model definition**. Keep the execution account's plugin under
 operator control.
 
+Size the host for the native CLI and its plugin subprocesses as well as the Go
+gateway, even though review inference runs in remote orbs. The deployment baseline
+is in [`fly.toml`](../fly.toml); a 256 MiB host is insufficient for the measured
+single-review footprint. Check memory headroom before adding concurrent accounts.
+
 ## Lifecycle and operational limits
+
+The history list shows each PR's title, frozen head, outcome, findings by severity,
+elapsed time and Amp credits without expanding the row. A completed review with
+blocking findings is distinct from a failed review execution. Elapsed time includes
+queue time and all attempts; running values update on refresh. Costs sum recorded
+usage across attempts, marking incomplete totals as partial rather than treating
+missing usage as zero. The separate provider estimate is not an additional charge.
+
+The 30-day overview includes all reviews created today (so far) and the preceding
+29 UTC days, not just the latest 100 history rows. Daily charts show review volume
+and recorded costs on a shared USD scale for Amp credits and provider estimates.
+All attempts are attributed to the review's creation day, including retries and
+later usage collection; this is not a billing-date ledger. Totals show usage
+coverage and mark missing attempts as partial. Expand the daily breakdown for
+exact values; a dash means no reported usage, not zero. Refresh to update.
 
 - Signed `opened`, `reopened`, `synchronize` and `ready_for_review` events enqueue
   non-draft PRs. `closed` and `converted_to_draft` are accepted; the live GitHub
@@ -242,7 +262,15 @@ legacy jobs remain visible but cannot be rerun with invented text.
 
 The importer and its tests are excluded from normal gateway builds. Before use,
 run `mise exec -- go test -tags=reviewimport ./internal/reviews -run TestLegacyOfflineImport`.
-No production-sized export has been rehearsed yet; allow for offline import time.
+Rehearse the export against a disposable copy of the configured account database;
+compare records and verify that a second import adds nothing. Allow for offline
+import time and take a fresh, drained export at cutover.
+
+Keep the original export unchanged. If repository names have changed, prepare a
+separate import copy only after verifying the immutable repository ID. Keep records
+for transferred or unapproved repositories in the protected backup rather than
+expanding approvals merely to import their history. Historical project mappings
+do not prove current execution access; verify them before enabling repository rows.
 
 ### Existing gateway configuration
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -51,6 +52,30 @@ type Config struct {
 	Tools                     []Tool
 	ToolDefaults              map[string]string `json:",omitempty"`
 	PrivateConnections        map[string]bool   `json:",omitempty"`
+	DisabledConnections       map[string]bool   `json:",omitempty"`
+	// PendingApprovalMinutes is how long a submitted operation may wait for
+	// approval and dispatch; zero means 24 hours. Browser operations are capped
+	// at 30 minutes.
+	PendingApprovalMinutes int `json:",omitempty"`
+}
+
+const (
+	defaultApprovalLifetime = 24 * time.Hour
+	maxApprovalLifetime     = 7 * 24 * time.Hour
+	browserApprovalLifetime = 30 * time.Minute
+)
+
+// approvalLifetime keeps browser actions to a short window: hours later the
+// shared tab is likely unattended and its page may no longer match the request.
+func (cfg Config) approvalLifetime(connection string) time.Duration {
+	lifetime := defaultApprovalLifetime
+	if cfg.PendingApprovalMinutes > 0 {
+		lifetime = time.Duration(cfg.PendingApprovalMinutes) * time.Minute
+	}
+	if slices.ContainsFunc(cfg.Connections, func(c upstream.Connection) bool { return c.ID == connection && c.Browser }) {
+		lifetime = min(lifetime, browserApprovalLifetime)
+	}
+	return lifetime
 }
 
 // Backend is the upstream transport boundary.
@@ -81,6 +106,9 @@ type Gateway struct {
 func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 	if cfg.AmpUserID == "" {
 		return nil, errors.New("AmpUserID is required")
+	}
+	if cfg.PendingApprovalMinutes < 0 || time.Duration(cfg.PendingApprovalMinutes)*time.Minute > maxApprovalLifetime {
+		return nil, errors.New("PendingApprovalMinutes must be between 0 (24 hours) and 10080 (7 days)")
 	}
 	cfg.Integrations = slices.Clone(cfg.Integrations)
 	cfg.Tools = slices.Clone(cfg.Tools)
@@ -316,7 +344,10 @@ func (g *Gateway) resultWithContent(o store.Operation) (*mcp.CallToolResult, ope
 }
 
 func (g *Gateway) mcpHandler() http.Handler {
-	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, nil)
+	capabilities := &mcp.ServerCapabilities{Resources: &mcp.ResourceCapabilities{}}
+	capabilities.AddExtension(skillsExtension, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "amp-mcp-gateway", Version: "0.1.0"}, &mcp.ServerOptions{Capabilities: capabilities})
+	g.registerSkills(s)
 	mcp.AddTool(s, &mcp.Tool{Name: "propose_policy_changes", Description: "Prepare an immutable batch of provider privacy, default policy, and tool exception changes for human browser review. Providers include remote MCP connections and native integrations. Never applies policies. Use exact saved tool IDs; omitted settings stay unchanged. Policies: allow, require_approval, deny; tool exceptions also accept inherit. Set private to restrict a remote connection to the owner's private, non-multiplayer Amp threads. Review expires in ten minutes."}, func(ctx context.Context, r *mcp.CallToolRequest, in policyInput) (*mcp.CallToolResult, any, error) {
 		out, err := g.proposePolicies(ctx, in)
 		return nil, out, err
@@ -331,7 +362,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" || !identity.allows(g.cfg.privateConnection(t.Connection)) || t.Artifact != g.javascriptArtifact(t.Connection) {
+			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) || t.Artifact != g.javascriptArtifact(t.Connection) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -397,6 +428,9 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
 		return store.Operation{}, errors.New("unknown tool")
 	}
+	if g.cfg.disabledConnection(t.Connection) {
+		return store.Operation{}, errors.New("tool unavailable: the owner disabled its connection")
+	}
 	if c.Arguments == nil {
 		c.Arguments = map[string]any{}
 	}
@@ -422,7 +456,8 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 		}
 	}
 	dynamicBinding := g.dynamicBinding(t)
-	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: time.Now().Unix(), Expires: time.Now().Add(10 * time.Minute).Unix()}
+	now := time.Now()
+	o := store.Operation{ID: in.RequestID, Tool: t.ID, Connection: t.Connection, Account: account, Model: in.ModelReported, Arguments: c.Arguments, Binding: g.bindingWith(t, dynamicBinding), ConnectionBinding: g.connectionBindingWith(t.Connection, dynamicBinding), Private: g.cfg.privateConnection(t.Connection), Status: status, Created: now.Unix(), Expires: now.Add(g.cfg.approvalLifetime(t.Connection)).Unix()}
 	o.AmpSubject, o.AmpUserID = identity.Subject, identity.UserID
 	o.AmpWorkspaceID, o.AmpProjectID, o.AmpThreadID = identity.WorkspaceID, identity.ProjectID, identity.ThreadID
 	o.AmpThreadVisibility, o.AmpThreadContext = identity.ThreadVisibility, identity.hasThreadContext()
@@ -486,6 +521,8 @@ func (g *Gateway) Run(ctx context.Context) error {
 			timer.Reset(0) // Continue draining after this operation, including denials.
 			g.mu.RLock()
 			t, ok := g.tools[o.Tool]
+			// A binary without disabled connections can queue calls during a rollback.
+			ok = ok && !g.cfg.disabledConnection(t.Connection)
 			expectedBinding := ""
 			valid := false
 			integration, native := g.integration(t.Connection)
@@ -593,15 +630,29 @@ func (g *Gateway) UI(auth *browserauth.Auth, m *upstream.Manager, browser *brows
 				http.Error(w, "Invalid approval.", 400)
 				return
 			}
-			if r.Form.Get("remember") != "on" {
+			// Approve covers only this request. Trusting the thread or project also
+			// saves a standing approval, until revoked, for every tool on the
+			// connection or (with the -tool variants) for this tool only.
+			trusts := map[string]store.ApprovalOptions{
+				"thread": {Breadth: "connection", Scope: "thread"}, "project": {Breadth: "connection", Scope: "project"},
+				"thread-tool": {Breadth: "tool", Scope: "thread"}, "project-tool": {Breadth: "tool", Scope: "project"},
+			}
+			switch trust := r.Form.Get("trust"); trust {
+			case "", "once":
 				err = g.store.Decide(r.Context(), r.PathValue("id"), actor, true)
-			} else {
-				options := store.ApprovalOptions{Breadth: r.Form.Get("breadth"), Scope: r.Form.Get("scope"), Expiry: r.Form.Get("expiry")}
-				if !slices.Contains([]string{"exact", "tool", "connection"}, options.Breadth) || !slices.Contains([]string{"thread", "project"}, options.Scope) || !slices.Contains([]string{"never", "1h", "24h"}, options.Expiry) {
-					http.Error(w, "Invalid approval.", http.StatusBadRequest)
+			case "thread", "project", "thread-tool", "project-tool":
+				// A review page opened before this layout still sends its old scope
+				// selectors; refuse it rather than save broader trust than it showed.
+				if r.Form.Has("arguments") || r.Form.Has("covers") || r.Form.Has("expiry") {
+					http.Error(w, "This approval page is out of date. Reload it and review again.", http.StatusBadRequest)
 					return
 				}
+				options := trusts[trust]
+				options.Expiry = "never"
 				err = g.store.ApproveWithOptions(r.Context(), r.PathValue("id"), actor, options)
+			default:
+				http.Error(w, "Invalid approval.", http.StatusBadRequest)
+				return
 			}
 		} else {
 			err = g.store.Decide(r.Context(), r.PathValue("id"), actor, false)
@@ -720,6 +771,17 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		encoded, _ := json.Marshal(attempts)
 		data["HTTPAttempts"] = prettyJSON(encoded)
 	}
+	if o.Status == "pending" {
+		rows := make([][2]string, 0, len(o.Arguments))
+		for _, key := range slices.Sorted(maps.Keys(o.Arguments)) {
+			value, _ := json.Marshal(o.Arguments[key])
+			rows = append(rows, [2]string{key, prettyJSON(value)})
+		}
+		data["ArgumentRows"] = rows
+		data["ToolName"] = strings.TrimPrefix(o.Tool, o.Connection+".")
+		data["Requested"] = time.Unix(o.Created, 0)
+		data["ExpiresIn"] = remaining(time.Until(time.Unix(o.Expires, 0)))
+	}
 	data["ActorNames"] = g.actorNames(r)
 	w.Header().Set("Vary", "HX-Request")
 	w.Header().Set("Cache-Control", "no-store")
@@ -731,6 +793,19 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.render(w, r, data)
+}
+
+// remaining rounds up to whole minutes within the last hour and whole hours
+// before it; an expired request shows nothing.
+func remaining(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d <= time.Hour:
+		return fmt.Sprintf("%d min", int(math.Ceil(d.Minutes())))
+	default:
+		return fmt.Sprintf("%d h", int(math.Ceil(d.Hours())))
+	}
 }
 
 func (g *Gateway) render(w http.ResponseWriter, r *http.Request, data map[string]any) {
