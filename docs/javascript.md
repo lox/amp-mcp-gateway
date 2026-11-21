@@ -1,36 +1,66 @@
 # Governed JavaScript integrations
 
-An operator can install small JavaScript API adapters as ordinary gateway tools.
+Owners can upload small JavaScript API adapters as ordinary gateway tools.
 They use the existing discovery, browser review, policies, standing grants, atomic
 operation claims and durable results. No MCP subprocess, container or Fly Machine
 is created per integration or call. This is source-only JavaScript, not Node.js or
 an arbitrary npm/MCP runner. Composition and agent-supplied code are not implemented.
 
-## Install an adapter
+## Upload an adapter
+
+Open **Connections → Add JavaScript**. Choose one JSON file and enter its bearer
+token separately. The file contains only `ID`, optional `Account` label, `Origin`,
+`Source` and `Tools` (see the form's inline example). `Tools` use the manifest
+format below. Uploads reject unknown fields, including paths, credentials,
+generation IDs and policy settings. Limits are 1 MiB for the file and 256 KiB
+for source. Uploading validates metadata but does not evaluate code or call the API.
 
 The example is a [GitHub issue adapter](../examples/github-issues.js) and its
 [connection manifest](../examples/github-issues.json). Use a disposable repository:
 
-1. Replace `OWNER/SANDBOX-REPO` in **both** files. The manifest grants exact paths,
-   not path templates or wildcards.
-2. Add the manifest object to the primary owner's `Connections` in the gateway
-   config. Supply a repository-scoped bearer token through `GITHUB_ISSUES_TOKEN`.
-   Neither the token nor its value belongs in source or the manifest.
-3. Make `SourceFile` readable at startup, relative to the gateway working directory
-   (or use an absolute path). The standard Docker image does not copy example
-   files: mount the bundle or include it in your own image. Restart the gateway.
-4. Open **Connections → Tools & permissions → Refresh tools**. Inspect
-   source, schemas, HTTP grants and artifact digest. Keep `createIssue` on
-   `require_approval`; optionally allow `listIssues`. Save the review.
-5. Discover `github-issues.listIssues` / `github-issues.createIssue` through the
+1. Replace `OWNER/SANDBOX-REPO` in **both** files. Grants are exact paths, not
+   templates or wildcards. Package the source inline for browser upload:
+
+   ```sh
+   jq --rawfile source examples/github-issues.js \
+     '{ID, Account, Origin: .JavaScript.Origin, Source: $source, Tools: .JavaScript.Tools}' \
+     examples/github-issues.json > github-issues-upload.json
+   ```
+
+2. Upload that file and enter a repository-scoped bearer token. Never embed the
+   token in source or the JSON file. Source and token are stored encrypted in
+   the owner's existing database; no gateway restart is required. Other owners
+   have separate catalogues and credentials.
+3. On **Tools & permissions**, click **Refresh tools**. Inspect source, schemas,
+   exact HTTP grants and artifact digest. New tools require approval even if the
+   connection default allows future tools; existing blocks remain blocked.
+   Keep `createIssue` on `require_approval`; optionally allow `listIssues`.
+   Save the review to make tools available.
+4. Discover `github-issues.listIssues` / `github-issues.createIssue` through the
    normal Amp gateway connection. Approve or deny writes in the browser; inspect
    the operation's **HTTP attempts** afterward.
 
+To update, open the connection's **Settings → Replace bundle**. Upload the same ID;
+leave the token blank to retain it, or enter a new token to rotate it. Every
+replacement pauses old tools until you refresh tools and save a fresh review,
+even for identical source or a reversion. Saving cancels queued requests and
+standing approvals; running operations must finish first. Stale replacement forms
+are rejected. Disable and remove use the standard connection controls.
+
 Discovery and connection tests do not execute the bundle or contact the API.
 The example is exercised against a fake provider; live GitHub consent and writes
-have not been validated. JavaScript installations currently belong only to the
-configured primary owner. There is no dashboard upload/editor or secondary-owner
-installation flow. OAuth and anonymous adapters are not supported yet.
+have not been validated. There is no browser editor, agent installation API,
+version-history/rollback UI, OAuth, npm or composition.
+
+### Operator-installed alternative
+
+The connection manifest can still be added to the primary owner's `Connections`
+in startup config, with a repository-scoped `GITHUB_ISSUES_TOKEN` environment
+variable. `SourceFile` is read once at startup, relative to the gateway working
+directory (absolute paths also work). Mount the file or include it in a custom
+image; the standard image does not copy examples. Restart, then use the same
+Tools & permissions review. Static installations belong only to the primary
+owner, remain controlled by startup config and cannot be replaced through upload.
 
 ## Authoring contract
 
@@ -85,16 +115,18 @@ This is software isolation, **not a VM or OS security boundary**. A wazero/runti
 escape or a gateway bug can compromise the shared process. Runtime pages also do
 not bound total Go-process RSS: compiled code, HTTP buffers, engine allocations
 and the rest of the gateway need headroom. Measure production memory/concurrency
-before enabling this on the current 256 MiB Fly allocation. No production capacity
+before enabling production workloads on the configured Fly allocation. No production capacity
 or escape resistance is certified by the local tests.
 
 ## Governance, outcomes and upgrades
 
-Source is read once at startup and retained with the definition. Saving the file
-later cannot change an in-flight call. Startup configuration is authoritative:
-removing a static installation removes its tools; a saved catalogue cannot restore
-old code. Reviewed tools pin the complete source/manifest, runtime ABI, credential
-and installation generation. Changes disable execution until a new browser review;
+Uploaded source and its generation are saved atomically in the owner's encrypted
+catalogue, which remains authoritative across restarts. Static source is read once
+at startup; saving the file later cannot change an in-flight call. Removing a
+static installation from startup config removes its tools; a saved catalogue
+cannot restore that old code. Startup IDs cannot overwrite owner-uploaded bundles.
+Reviewed tools pin the complete source/manifest, runtime ABI, credential and
+installation generation. Changes disable execution until a new browser review;
 changed permissions fall back to approval and existing blocks remain blocked.
 A → B → A and removal/reinstallation do not resurrect old consent.
 

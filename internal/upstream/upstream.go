@@ -35,10 +35,27 @@ type Connection struct {
 	Browser    bool
 	OAuth      *OAuthConfig
 	JavaScript *jsintegration.Definition `json:",omitempty"`
+	// ManagedJavaScript identifies owner-uploaded bundles, retained independently of startup files.
+	ManagedJavaScript bool `json:",omitempty"`
 	// Browser-managed configuration is encrypted at rest; never render these secrets.
 	BearerToken string `json:",omitempty"`
 	NoAuth      bool   `json:",omitempty"`
 	PublicOnly  bool   `json:",omitempty"`
+}
+
+func (c Connection) bearerToken() string {
+	if c.TokenEnv != "" {
+		return os.Getenv(c.TokenEnv)
+	}
+	return c.BearerToken
+}
+
+// JavaScriptBinding pins the artifact and its current credential without exposing the credential.
+func (c Connection) JavaScriptBinding() string {
+	if c.JavaScript == nil {
+		return ""
+	}
+	return c.JavaScript.Binding(c.bearerToken())
 }
 
 // OAuthConfig contains the pre-registered OAuth authorization-code endpoints.
@@ -100,9 +117,12 @@ func New(baseURL string, connections []Connection, store TokenStore) (*Manager, 
 			return nil, fmt.Errorf("duplicate connection ID %q", c.ID)
 		}
 		seen[c.ID] = true
+		if c.ManagedJavaScript && (c.JavaScript == nil || c.JavaScript.SourceFile != "" || c.JavaScript.Generation == "" || c.TokenEnv != "") {
+			return nil, errors.New("invalid managed JavaScript installation")
+		}
 		if c.JavaScript != nil {
-			if c.Browser || c.URL != "" || c.TokenEnv == "" || c.BearerToken != "" || c.OAuth != nil || c.NoAuth || c.PublicOnly {
-				return nil, errors.New("JavaScript connections require only JavaScript configuration and TokenEnv")
+			if c.Browser || c.URL != "" || (c.TokenEnv == "") == (c.BearerToken == "") || c.OAuth != nil || c.NoAuth || c.PublicOnly {
+				return nil, errors.New("JavaScript connections require only JavaScript configuration and one bearer credential")
 			}
 			// Clone at the ownership boundary; no caller can mutate the installed artifact.
 			b, err := json.Marshal(c.JavaScript)
@@ -333,10 +353,7 @@ func (m *Manager) httpClient(ctx context.Context, c *managedConnection) (*http.C
 		return base, nil
 	}
 	if c.config.TokenEnv != "" || c.config.BearerToken != "" {
-		token := c.config.BearerToken
-		if c.config.TokenEnv != "" {
-			token = os.Getenv(c.config.TokenEnv)
-		}
+		token := c.config.bearerToken()
 		if token == "" {
 			return nil, fmt.Errorf("connection %q bearer token environment variable is empty", c.config.ID)
 		}

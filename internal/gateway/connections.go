@@ -315,6 +315,10 @@ var connectionID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,60}$`)
 func (g *Gateway) registerConnections(mux *http.ServeMux, m *upstream.Manager) {
 	mux.HandleFunc("GET /policy-proposals/{ticket}", g.reviewPolicies)
 	mux.HandleFunc("POST /policy-proposals/{ticket}/{decision}", func(w http.ResponseWriter, r *http.Request) { g.decidePolicies(w, r, m) })
+	mux.HandleFunc("GET /connections/javascript/new", func(w http.ResponseWriter, r *http.Request) { g.javascriptUploadPage(w, r, "") })
+	mux.HandleFunc("POST /connections/javascript", func(w http.ResponseWriter, r *http.Request) { g.uploadJavaScript(w, r, m) })
+	mux.HandleFunc("GET /connections/{id}/javascript", func(w http.ResponseWriter, r *http.Request) { g.javascriptUploadPage(w, r, "") })
+	mux.HandleFunc("POST /connections/{id}/javascript", func(w http.ResponseWriter, r *http.Request) { g.uploadJavaScript(w, r, m) })
 	mux.HandleFunc("GET /connections/new", func(w http.ResponseWriter, r *http.Request) { g.addPage(w, r, nil, "", false) })
 	mux.HandleFunc("POST /connections", func(w http.ResponseWriter, r *http.Request) { g.addConnection(w, r, m) })
 	mux.HandleFunc("GET /connections/{id}/tools", func(w http.ResponseWriter, r *http.Request) { g.connectionTools(w, r, m) })
@@ -517,7 +521,7 @@ func (g *Gateway) removeConnection(w http.ResponseWriter, r *http.Request, m *up
 		return
 	}
 	// Startup configuration reinstalls JavaScript connections, so removal here would not last.
-	if slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && c.JavaScript != nil }) {
+	if slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && c.JavaScript != nil && !c.ManagedJavaScript }) {
 		g.mu.Unlock()
 		http.Error(w, "JavaScript connections are installed by the operator. Disable it here, or uninstall it from the gateway configuration.", http.StatusConflict)
 		return
@@ -548,6 +552,7 @@ func (g *Gateway) connectionView(id string) map[string]any {
 			if c.JavaScript != nil {
 				manifest, _ := json.Marshal(c.JavaScript.Tools)
 				connection["JavaScript"] = true
+				connection["ManagedJavaScript"] = c.ManagedJavaScript
 				connection["URL"] = c.JavaScript.Origin
 				connection["Source"] = c.JavaScript.Source
 				connection["Manifest"] = prettyJSON(manifest)
@@ -798,6 +803,9 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 	draft := toolDraft{Connection: id, Tools: tools, Default: previous.Default, Private: previous.Private, Changes: map[string]string{}}
 	for i := range tools {
 		tools[i].Artifact = g.javascriptArtifact(id)
+		if tools[i].Artifact != "" && g.cfg.defaultPolicy(id) != "deny" {
+			tools[i].Policy = "require_approval"
+		}
 	}
 	for i := range tools {
 		draft.Changes[tools[i].ID] = "New"

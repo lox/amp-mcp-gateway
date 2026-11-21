@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -76,7 +75,7 @@ func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name,
 	if tool == nil {
 		return nil, errors.New("unknown JavaScript tool")
 	}
-	token := os.Getenv(c.config.TokenEnv)
+	token := c.config.bearerToken()
 	if token == "" || len(token) > 16<<10 || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("invalid JavaScript credential")
 	}
@@ -114,7 +113,7 @@ func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name,
 	calls, total := 0, 0
 	output, err := engine.Run(ctx, definition.Source, tool.Handler, input, func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 		current, ok := m.connection(c.config.ID)
-		if !ok || current != c || definition.Binding(os.Getenv(c.config.TokenEnv)) != binding {
+		if !ok || current != c || definition.Binding(c.config.bearerToken()) != binding {
 			return nil, errors.New("JavaScript authority changed")
 		}
 		var request httpRequest

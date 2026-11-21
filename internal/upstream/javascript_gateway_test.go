@@ -1,14 +1,17 @@
 package upstream_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -49,7 +52,6 @@ func (b demoBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestGovernedJavaScriptReadWrite(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "")
-	t.Setenv("JS_TEST_TOKEN", "fake-provider-token")
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	path := filepath.Join(t.TempDir(), "ledger.db")
 	s, err := store.Open(path, key)
@@ -118,7 +120,7 @@ export async function createIssue(args,ctx) {
 		{Name: "listIssues", Handler: "listIssues", Description: "List disposable issues", InputSchema: input, OutputSchema: object, HTTP: []jsintegration.Grant{{Method: "GET", Path: "/repos/test/issues"}}},
 	}}
 	server := httptest.NewUnstartedServer(nil)
-	cfg := gateway.Config{AmpUserID: "demo-owner", Demo: true, BaseURL: "http://" + server.Listener.Addr().String(), Connections: []upstream.Connection{{ID: "issues", Account: "Disposable test repository", TokenEnv: "JS_TEST_TOKEN", JavaScript: definition}}}
+	cfg := gateway.Config{AmpUserID: "demo-owner", Demo: true, BaseURL: "http://" + server.Listener.Addr().String()}
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +161,30 @@ export async function createIssue(args,ctx) {
 		return string(b)
 	}
 	post("/login", url.Values{"password": {"demo-only"}})
+	var upload bytes.Buffer
+	multipartWriter := multipart.NewWriter(&upload)
+	part, err := multipartWriter.CreateFormFile("bundle", "issues.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(part).Encode(map[string]any{"ID": "issues", "Account": "Disposable test repository", "Origin": definition.Origin, "Source": definition.Source, "Tools": definition.Tools}); err != nil {
+		t.Fatal(err)
+	}
+	if err := multipartWriter.WriteField("token", "fake-provider-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := multipartWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	response, err := admin.Post(server.URL+"/connections/javascript", multipartWriter.FormDataContentType(), &upload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadPage, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || !strings.Contains(string(uploadPage), "Installed JavaScript bundle") || strings.Contains(string(uploadPage), "fake-provider-token") {
+		t.Fatalf("upload: %d %s", response.StatusCode, uploadPage)
+	}
 	// Discovery is static: no runtime instantiation, provider call or side effect.
 	review := post("/connections/issues/discover", url.Values{})
 	match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(review)
@@ -261,9 +287,29 @@ export async function createIssue(args,ctx) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(onDisk, []byte("fake-provider-token")) || bytes.Contains(onDisk, []byte(source)) {
+		t.Fatal("uploaded source or token persisted in plaintext")
+	}
 	s, err = store.Open(path, key)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := gateway.LoadCatalogue(t.Context(), &cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Connections) != 1 || !cfg.Connections[0].ManagedJavaScript || cfg.Connections[0].BearerToken != "fake-provider-token" {
+		t.Fatal("uploaded bundle or credential lost after restart")
+	}
+	restored, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tools, err := restored.ListTools(t.Context(), "issues"); err != nil || len(tools) != 2 {
+		t.Fatalf("restart lost uploaded tools: %v %v", tools, err)
 	}
 	if _, err := s.Claim(t.Context()); err == nil {
 		t.Fatal("restart scheduled an old handler")

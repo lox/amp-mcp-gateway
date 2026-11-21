@@ -1,8 +1,12 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +17,188 @@ import (
 	"ampcode.com/lox/amp-mcp-gateway/internal/jsintegration"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 )
+
+func javascriptUploadRequest(t *testing.T, h http.Handler, cookie *http.Cookie, path, bundle, token, revision string) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("bundle", "bundle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{"token": token, "revision": revision} {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", path, &body)
+	r.Header.Set("Content-Type", writer.FormDataContentType())
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestJavaScriptUploadReviewAndReplacement(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	bundle := `{"ID":"custom","Origin":"https://api.example.com","Source":"throw new Error('upload must not evaluate source')","Tools":[{"Name":"read","Handler":"read","InputSchema":{"type":"object"},"OutputSchema":{"type":"object"},"HTTP":[{"Method":"GET","Path":"/items"}]}]}`
+	upload := func(raw, token, revision string) *httptest.ResponseRecorder {
+		t.Helper()
+		path := "/connections/javascript"
+		if revision != "" {
+			path = "/connections/custom/javascript"
+		}
+		return javascriptUploadRequest(t, h, cookie, path, raw, token, revision)
+	}
+	if w := javascriptUploadRequest(t, h, nil, "/connections/javascript", bundle, "fake-upload-token", ""); w.Code != 303 || w.Header().Get("Location") == "/connections/custom/tools" {
+		t.Fatalf("unauthenticated upload accepted: %d", w.Code)
+	}
+	if w := upload(bundle, "fake-upload-token", ""); w.Code != 303 {
+		t.Fatalf("upload: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := g.tools["custom.read"]; ok {
+		t.Fatal("unreviewed upload exposed a tool")
+	}
+	review := func(policy string) {
+		t.Helper()
+		w := formRequest(h, cookie, "POST", "/connections/custom/discover", url.Values{"skip_jev": {"1"}})
+		match := regexp.MustCompile(`name="ticket" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if w.Code != 200 || len(match) != 2 {
+			t.Fatalf("review: %d %s", w.Code, w.Body.String())
+		}
+		if got := g.drafts[match[1]].Tools[0].Policy; got != "require_approval" {
+			t.Fatalf("new/replaced tool inherited permissive default: %q", got)
+		}
+		w = formRequest(h, cookie, "POST", "/connections/custom/tools", url.Values{"ticket": {match[1]}, "default_policy": {"allow"}, "policy_0": {policy}})
+		if w.Code != 303 {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+	}
+	review("allow")
+	first := g.javascriptArtifact("custom")
+	for _, path := range []string{"/connections/custom/tools", "/connections/custom/settings", "/connections/custom/javascript"} {
+		w := formRequest(h, cookie, "GET", path, nil)
+		if w.Code != 200 || strings.Contains(w.Body.String(), "fake-upload-token") {
+			t.Fatalf("token leaked or missing page: %s %d", path, w.Code)
+		}
+	}
+	var call callInput
+	if err := json.Unmarshal([]byte(`{"request_id":"custom-before-replace","calls":[{"tool_id":"custom.read","arguments":{}}]}`), &call); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := g.submit(t.Context(), call); err != nil || o.Status != "ready" {
+		t.Fatalf("reviewed tool not callable: %v %v", o, err)
+	}
+	// A byte-for-byte replacement must pause old authority, not restore it.
+	if w := upload(bundle, "", first); w.Code != 303 {
+		t.Fatalf("replace: %d %s", w.Code, w.Body.String())
+	}
+	if o, err := s.Get(t.Context(), "custom-before-replace"); err != nil || o.Status != "denied" {
+		t.Fatalf("replacement retained queued authority: %v %v", o, err)
+	}
+	if _, err := g.submit(t.Context(), call); err == nil {
+		t.Fatal("replaced tool accepted another call")
+	}
+	second := g.javascriptArtifact("custom")
+	if first == second {
+		t.Fatal("replacement reused consent identity")
+	}
+	if _, ok := g.tools["custom.read"]; ok {
+		t.Fatal("old tool still callable after replacement")
+	}
+	if w := upload(bundle, "", first); w.Code != 409 {
+		t.Fatalf("stale replacement accepted: %d", w.Code)
+	}
+	review("require_approval")
+	// Rotation is a replacement too, even when source is unchanged.
+	if w := upload(bundle, "rotated-fake-token", second); w.Code != 303 {
+		t.Fatalf("rotate: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := g.tools["custom.read"]; ok {
+		t.Fatal("credential rotation retained consent")
+	}
+	cfg := g.cfg
+	cfg.Connections = nil
+	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	var restored *upstream.Connection
+	for i := range cfg.Connections {
+		if cfg.Connections[i].ID == "custom" {
+			restored = &cfg.Connections[i]
+		}
+	}
+	if restored == nil || restored.BearerToken != "rotated-fake-token" || restored.JavaScript.Source != "throw new Error('upload must not evaluate source')" || restored.JavaScriptBinding() != g.javascriptArtifact("custom") {
+		t.Fatal("uploaded source, token or generation lost across reload")
+	}
+	other, _, _ := fixture(t)
+	if other.connectionView("custom") != nil {
+		t.Fatal("bundle crossed owner stores")
+	}
+	if w := formRequest(h, cookie, "GET", "/connections/custom/settings", nil); !strings.Contains(w.Body.String(), `action="/connections/custom/remove"`) {
+		t.Fatal("uploaded bundle has no removal control")
+	}
+	if w := formRequest(h, cookie, "POST", "/connections/custom/remove", url.Values{"confirm": {"remove"}}); w.Code != 303 {
+		t.Fatalf("remove uploaded bundle: %d %s", w.Code, w.Body.String())
+	}
+	cfg.Connections = nil
+	if err := LoadCatalogue(t.Context(), &cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cfg.Connections {
+		if c.ID == "custom" {
+			t.Fatal("removed upload resurrected after restart")
+		}
+	}
+}
+
+func TestJavaScriptUploadRejectsAuthorityAndHostPaths(t *testing.T) {
+	g, s, _ := fixture(t)
+	m, err := upstream.New(g.cfg.BaseURL, g.cfg.Connections, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, cookie := adminUI(t, g, m)
+	valid := `{"ID":"custom","Origin":"https://api.example.com","Source":"export function read(){return {}}","Tools":[{"Name":"read","Handler":"read","InputSchema":{"type":"object"},"OutputSchema":{"type":"object"},"HTTP":[{"Method":"GET","Path":"/items"}]}]}`
+	for _, raw := range []string{
+		strings.Replace(valid, `"ID":"custom"`, `"ID":"custom","SourceFile":"/etc/passwd"`, 1),
+		strings.Replace(valid, `"ID":"custom"`, `"ID":"custom","Generation":"chosen"`, 1),
+		strings.Replace(valid, `"ID":"custom"`, `"ID":"custom","BearerToken":"embedded"`, 1),
+		strings.Replace(valid, `"Handler":"read"`, `"Handler":"read","Policy":"allow"`, 1),
+		strings.Replace(valid, `"GET"`, `"CONNECT"`, 1),
+		strings.Replace(valid, `/items`, `/../private`, 1),
+		strings.Replace(valid, `https://api.example.com`, `https://127.0.0.1`, 1),
+		valid + `{}`,
+		strings.Repeat("x", (1<<20)+1),
+	} {
+		w := javascriptUploadRequest(t, h, cookie, "/connections/javascript", raw, "secret-never-echo", "")
+		if w.Code != 400 || strings.Contains(w.Body.String(), "secret-never-echo") {
+			t.Fatalf("invalid upload: %d", w.Code)
+		}
+	}
+	if g.connectionView("custom") != nil {
+		t.Fatal("invalid upload persisted")
+	}
+	// Uploads cannot replace a remote connection by reusing its ID.
+	raw := strings.Replace(valid, `"custom"`, `"notes"`, 1)
+	if w := javascriptUploadRequest(t, h, cookie, "/connections/javascript", raw, "fake", ""); w.Code != 400 {
+		t.Fatalf("duplicate upload: %d", w.Code)
+	}
+}
 
 func TestJavaScriptCandidateRequiresFreshReview(t *testing.T) {
 	t.Setenv("JS_REVIEW_TOKEN", "fake-token")

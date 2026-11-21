@@ -199,7 +199,7 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				return nil, errors.New("invalid native integration tool")
 			}
 		}
-		if connection != nil && connection.JavaScript != nil && t.Artifact != connection.JavaScript.Binding(os.Getenv(connection.TokenEnv)) {
+		if connection != nil && connection.JavaScript != nil && t.Artifact != connection.JavaScriptBinding() {
 			continue
 		} // Candidate code is unavailable until its metadata is reviewed.
 		compiler := jsonschema.NewCompiler()
