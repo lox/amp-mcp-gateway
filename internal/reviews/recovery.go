@@ -2,6 +2,7 @@ package reviews
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -16,7 +17,7 @@ type checkRun struct {
 
 // Recovery reads external state; it never blindly replays a check creation,
 // annotation append or Amp launch. Only pre-dispatch checkpoints requeue.
-func (s *Service) recover(ctx context.Context, a App, j *Job) error {
+func (s *Service) recover(ctx context.Context, a App, key string, j *Job) error {
 	s.mu.Lock()
 	_, authorized := s.authorized(*j)
 	s.mu.Unlock()
@@ -67,8 +68,39 @@ func (s *Service) recover(ctx context.Context, a App, j *Job) error {
 	if gh.request(ctx, "GET", fmt.Sprintf("/check-runs/%d", j.CheckID), nil, &check) != nil {
 		return nil
 	}
-	if check.ID != j.CheckID || check.ExternalID != j.ID || check.HeadSHA != j.HeadSHA || check.App.ID != a.AppID || check.Status != "completed" {
+	if check.ID != j.CheckID || check.ExternalID != j.ID || check.HeadSHA != j.HeadSHA || check.App.ID != a.AppID {
 		return nil
+	}
+	if check.Status != "completed" {
+		// A PR merged or closed mid-review leaves an ambiguous execution
+		// that would otherwise pause the account. Once the PR can no longer
+		// use this review and Amp shows every thread stopped, nothing can
+		// still spend credits or publish; close the check as cancelled.
+		if j.Phase != "starting_thread" && j.Phase != "reviewing" || len(j.Threads) == 0 {
+			return nil
+		}
+		if current, err := gh.current(ctx, *j); err != nil || current {
+			return nil
+		}
+		for _, t := range j.Threads {
+			if stopped, err := s.amp.Stopped(ctx, key, t.ID); err != nil || !stopped {
+				return nil
+			}
+		}
+		// Checkpoint first: a lost close is confirmed below on a later pass
+		// rather than resent.
+		j.Phase = "finishing"
+		if err := s.update(ctx, j); err != nil {
+			return err
+		}
+		message := "PR closed, draft or superseded during review; Amp thread confirmed stopped."
+		closing := *j
+		closing.Result = nil
+		if err := gh.finish(ctx, closing, "cancelled", message); err != nil && !errors.Is(err, errGitHubRejected) {
+			return nil
+		}
+		j.Status, j.Error, j.Completed = "cancelled", message, time.Now().Unix()
+		return s.update(ctx, j)
 	}
 	if (j.Phase == "publishing" || j.Phase == "completed") && j.Result != nil && check.Conclusion == j.Conclusion {
 		j.Status, j.Phase, j.Error, j.Completed = "succeeded", "completed", "", time.Now().Unix()

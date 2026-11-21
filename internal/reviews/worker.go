@@ -362,7 +362,7 @@ func (s *Service) Maintain(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-			if err := s.recover(ctx, a, &j); err != nil {
+			if err := s.recover(ctx, a, key, &j); err != nil {
 				return err
 			}
 			if j.Status == "unknown" || j.Status == "queued" {
