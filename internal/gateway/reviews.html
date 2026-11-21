@@ -5,9 +5,9 @@
 {{if .Saved}}<p class="success" role="status">Review configuration saved. Existing jobs retain their frozen PR context; changed authorization cancels queued work.</p>{{end}}
 {{if .ReviewDemo}}<p class="note">Demo only · Use fake credentials. No reviews run and no GitHub or Amp requests are made.</p>{{end}}
 {{if .ReviewEditing}}
-<form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off">
-<label>Integration name<input name="id" value="{{.ReviewApp.ID}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" {{if .ReviewExisting}}readonly{{end}} placeholder="lox-reviews"></label>
-<p class="help">One integration per GitHub App. Add all approved installations below; credentials are stored only once.</p>
+<form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off" {{if .Error}}data-review-unsaved{{end}}>
+{{if .ReviewExisting}}<input type="hidden" name="id" value="{{.ReviewApp.ID}}">{{else}}<label>Integration name<input name="id" value="{{.ReviewApp.ID}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" placeholder="lox-reviews"></label>
+<p class="help">One integration per GitHub App. Add all approved installations below; credentials are stored only once.</p>{{end}}
 <details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>GitHub connection{{if .ReviewExisting}} · App {{.ReviewApp.AppID}}{{end}}</summary>
 <fieldset><legend>GitHub connection</legend>
 <p class="help">A public App can serve multiple GitHub owners. Installing it alone never authorizes reviews. Its credentials stay on the gateway.</p>
@@ -29,12 +29,14 @@
 <p class="help">Service account usage belongs to its workspace. Keep “Members Can Drive Threads” off unless workspace members should use its connected access; workspace policy can override thread visibility.</p>
 </fieldset>
 </details>
-<fieldset><legend>Approved installations</legend>
-<p class="help">Only enabled rows can launch reviews, and only while the integration is enabled. New repositories and unknown installations never enrol automatically.</p>
+<details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>GitHub installations · {{range $n, $i := .ReviewInstallations}}{{if $n}}, {{end}}{{$i.Owner}}{{else}}none yet{{end}}</summary>
+<fieldset><legend>GitHub installations</legend>
+<p class="help">Add each GitHub owner the App is installed on. Repositories below belong to the installation matching their <code>owner/</code> prefix. Unknown installations never enrol automatically.</p>
 <div data-review-installations>{{range .ReviewInstallations}}{{template "review-installation" .}}{{end}}</div>
 <button type="button" data-review-add="installation">Add installation</button>
-<p class="help">Saving verifies installation owners and repository IDs with GitHub. Removing or disabling a row revokes new reviews and cancels affected work; history remains.</p>
 </fieldset>
+</details>
+<details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>Review settings · {{if .ReviewApp.Enabled}}Enabled{{else}}Paused{{end}} · fail on {{.ReviewApp.FailOn}} · {{.ReviewApp.Visibility}} · {{.ReviewApp.TimeoutMinutes}} min</summary>
 <fieldset><legend>Review settings</legend>
 <div class="form-grid"><label>Lowest failing severity<select name="fail_on">{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.ReviewApp.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
 <label>Thread visibility<select name="visibility"><option value="private" {{if eq .ReviewApp.Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .ReviewApp.Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
@@ -42,7 +44,15 @@
 <label><input name="enabled" type="checkbox" {{if .ReviewApp.Enabled}}checked{{end}} {{if .ReviewDemo}}disabled{{end}}> Enable reviews</label>
 <p class="help">One active review per gateway account; four across the host. Enabling also reconciles eligible open PRs updated between five minutes and seven days ago.</p>
 </fieldset>
-<div class="actions"><button class="primary">{{if .ReviewExisting}}Save changes{{else}}Create review integration{{end}}</button><a class="button" href="/integrations/reviews">Cancel</a></div>
+</details>
+<fieldset class="review-repositories"><legend>Repositories</legend>
+<div class="review-repository-tools"><p class="help">Only enabled rows can launch reviews, and only while the integration is enabled. New rows start disabled.</p><input type="search" data-review-filter placeholder="Filter repositories" aria-label="Filter repositories"><span class="help" data-review-count>{{.ReviewEnabledRepositories}} of {{len .ReviewRepositories}} enabled</span></div>
+<div class="scroll"><table class="review-repository-table"><thead><tr><th>Enabled</th><th>Repository</th><th>Amp project</th><th>Overrides</th><th><span class="visually-hidden">Remove</span></th></tr></thead>
+<tbody data-review-repositories>{{range .ReviewRepositories}}{{template "review-repository" .}}{{end}}</tbody></table></div>
+<div class="review-repository-add"><input data-review-new-name placeholder="owner/repo" aria-label="Repository to add" autocomplete="off" spellcheck="false"><input data-review-new-project placeholder="Amp project · defaults to the same name" aria-label="Amp project for the new repository" autocomplete="off" spellcheck="false"><button type="button" data-review-add="repository">Add repository</button></div>
+<p class="help">Saving verifies installation owners and new repository IDs with GitHub. Removing or disabling a row revokes new reviews and cancels affected work; history remains.</p>
+</fieldset>
+<div class="actions review-save-bar"><button class="primary">{{if .ReviewExisting}}Save changes{{else}}Create review integration{{end}}</button><a class="button" href="/integrations/reviews">Cancel</a><span class="help" data-review-dirty aria-live="polite"></span></div>
 </form>
 <template id="review-installation-template">{{template "review-installation" .ReviewInstallationTemplate}}</template>
 <template id="review-repository-template">{{template "review-repository" .ReviewRepositoryTemplate}}</template>
@@ -100,33 +110,27 @@
 {{end}}
 
 {{define "review-installation"}}
-<section class="card" data-review-installation="{{.Index}}">
-<div class="heading"><h3>{{if .Owner}}{{.Owner}}{{else}}GitHub installation{{end}}</h3><button type="button" data-review-remove="installation">Remove installation</button></div>
+<div class="form-grid review-installation" data-review-installation="{{.Index}}">
 <input type="hidden" name="installation" value="{{.Index}}">
-<div class="form-grid">
 <label>GitHub owner<input name="i.{{.Index}}.owner" value="{{.Owner}}" placeholder="lox or sporevm" required></label>
 <label>Installation ID<input name="i.{{.Index}}.id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{if .ID}}{{.ID}}{{end}}" required></label>
 <label>Execution credential<select name="i.{{.Index}}.credential" data-review-credential-select required><option value="{{.ExecutionCredential}}">{{if .ExecutionCredential}}{{.ExecutionCredential}}{{else}}Choose a credential{{end}}</option></select></label>
-</div>
 <p class="help">{{if .OwnerID}}Verified GitHub account ID {{.OwnerID}}{{else}}Identity will be verified on save (except in demo mode).{{end}}</p>
-<div data-review-repositories>{{range .Repositories}}{{template "review-repository" .}}{{end}}</div>
-<button type="button" data-review-add="repository">Add repository</button>
-</section>
+<button type="button" data-review-remove="installation">Remove installation</button>
+</div>
 {{end}}
 
 {{define "review-repository"}}
-<section class="card" data-review-repository>
-<input type="hidden" name="{{.Prefix}}.repository" value="{{.Index}}">
-<div class="form-grid">
-<label>Repository<input name="{{.Prefix}}.r.{{.Index}}.name" value="{{.Name}}" placeholder="owner/repo" required></label>
-<label>Amp project<input name="{{.Prefix}}.r.{{.Index}}.project" value="{{.Project}}" placeholder="namespace/project" required></label>
-</div>
-<div class="actions"><label><input type="checkbox" name="{{.Prefix}}.r.{{.Index}}.enabled" {{if .Enabled}}checked{{end}}> Enable this repository</label><button type="button" data-review-remove="repository">Remove repository</button></div>
-{{if .ID}}<p class="help">Verified repository ID {{.ID}}</p>{{end}}
-<details><summary>Override review defaults</summary><div class="form-grid">
-<label>Lowest failing severity<select name="{{.Prefix}}.r.{{.Index}}.fail_on"><option value="">Use default</option>{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
-<label>Thread visibility<select name="{{.Prefix}}.r.{{.Index}}.visibility"><option value="">Use default</option><option value="private" {{if eq .Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
-<label>Timeout (minutes)<input name="{{.Prefix}}.r.{{.Index}}.timeout" type="number" min="5" max="120" value="{{if .TimeoutMinutes}}{{.TimeoutMinutes}}{{end}}" placeholder="Use default"></label>
-</div></details>
-</section>
+<tr data-review-repository>
+<td><input type="hidden" name="repository" value="{{.Index}}"><label class="review-switch"><input type="checkbox" name="r.{{.Index}}.enabled" {{if .Enabled}}checked{{end}} aria-label="Enable reviews for {{.Name}}"><span aria-hidden="true"></span></label></td>
+<td><input type="hidden" name="r.{{.Index}}.name" value="{{.Name}}"><strong data-review-name>{{.Name}}</strong> {{if .ID}}<span class="help" title="Verified repository ID {{.ID}}">✓</span>{{else}}<span class="badge">Verify on save</span>{{end}}</td>
+<td><input name="r.{{.Index}}.project" value="{{.Project}}" placeholder="namespace/project" required aria-label="Amp project for {{.Name}}"></td>
+<td><button type="button" class="review-override-chip{{if ne .Overrides "Defaults"}} review-overridden{{end}}" popovertarget="review-overrides-{{.Index}}" data-review-overrides>{{.Overrides}}</button>
+<div class="card review-overrides" id="review-overrides-{{.Index}}" popover><h3>Overrides · <span data-review-name>{{.Name}}</span></h3>
+<label>Lowest failing severity<select name="r.{{.Index}}.fail_on"><option value="">Use default</option>{{range $severity := severities}}<option value="{{$severity}}" {{if eq $severity $.FailOn}}selected{{end}}>{{$severity}}</option>{{end}}</select></label>
+<label>Thread visibility<select name="r.{{.Index}}.visibility"><option value="">Use default</option><option value="private" {{if eq .Visibility "private"}}selected{{end}}>Private</option><option value="workspace" {{if eq .Visibility "workspace"}}selected{{end}}>Workspace</option></select></label>
+<label>Timeout (minutes)<input name="r.{{.Index}}.timeout" type="number" min="5" max="120" value="{{if .TimeoutMinutes}}{{.TimeoutMinutes}}{{end}}" placeholder="Use default"></label>
+<button type="button" popovertarget="review-overrides-{{.Index}}" popovertargetaction="hide">Done</button></div></td>
+<td><button type="button" class="review-remove" data-review-remove="repository" aria-label="Remove {{.Name}}" title="Remove {{.Name}}">✕</button></td>
+</tr>
 {{end}}

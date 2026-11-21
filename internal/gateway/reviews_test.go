@@ -35,8 +35,12 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	}
 	private := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	values := url.Values{"id": {"lox"}, "app_id": {"1"}, "private_key": {private}, "webhook_secret": {"short"}, "credential_name": {"reviews-bot"}, "credential_key": {"fake-execution-key"}, "fail_on": {"high"}, "visibility": {"private"}, "timeout": {"30"}, "enabled": {"on"},
-		"installation": {"0", "1"}, "i.0.owner": {"lox"}, "i.0.id": {"11"}, "i.0.credential": {"reviews-bot"}, "i.0.repository": {"0"}, "i.0.r.0.name": {"lox/repo"}, "i.0.r.0.project": {"lox/repo"}, "i.0.r.0.enabled": {"on"},
-		"i.1.owner": {"sporevm"}, "i.1.id": {"22"}, "i.1.credential": {"reviews-bot"}, "i.1.repository": {"0"}, "i.1.r.0.name": {"sporevm/repo"}, "i.1.r.0.project": {"sporevm/repo"}}
+		"installation": {"0", "1"}, "i.0.owner": {"lox"}, "i.0.id": {"11"}, "i.0.credential": {"reviews-bot"},
+		"i.1.owner": {"sporevm"}, "i.1.id": {"22"}, "i.1.credential": {"reviews-bot"},
+		// One blended list: each row belongs to the installation matching its owner prefix.
+		"repository": {"a", "b", "c"}, "r.a.name": {"sporevm/repo"}, "r.a.project": {"sporevm/repo"},
+		"r.b.name": {"lox/repo"}, "r.b.project": {"lox/repo"}, "r.b.enabled": {"on"},
+		"r.c.name": {"acme/repo"}, "r.c.project": {"acme/repo"}}
 	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel"} {
 		if w := formRequest(h, nil, "POST", path, values); w.Code != http.StatusSeeOther {
 			t.Fatalf("anonymous %s: %d", path, w.Code)
@@ -57,19 +61,31 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 		t.Fatal("invalid form leaked secrets or locked identity")
 	}
 	values.Set("webhook_secret", "long-enough-fake-hook-secret")
-	values.Set("i.0.r.0.project", "invalid-project")
+	// A row whose owner has no installation is rejected, not silently dropped.
 	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `value="invalid-project"`) {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no installation for GitHub owner") || !strings.Contains(w.Body.String(), `value="acme/repo"`) || len(g.Reviews.Configuration().Integrations) != 0 {
+		t.Fatal("repository without an installation was not rejected with its row kept")
+	}
+	values["repository"] = []string{"a", "b"}
+	values.Set("r.b.project", "invalid-project")
+	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `value="invalid-project"`) || !strings.Contains(w.Body.String(), `value="sporevm/repo"`) {
 		t.Fatal("invalid project mappings were lost instead of remaining editable")
 	}
-	values.Set("i.0.r.0.project", "lox/repo")
+	values.Set("r.b.project", "lox/repo")
 	values.Set("webhook_secret", "long-enough-fake-hook-secret")
 	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
-	if config := g.Reviews.Configuration(); len(config.Integrations) != 1 || config.Integrations["lox"].Enabled || len(config.Integrations["lox"].Installations) != 2 || len(config.Credentials) != 1 {
+	config := g.Reviews.Configuration()
+	if len(config.Integrations) != 1 || config.Integrations["lox"].Enabled || len(config.Integrations["lox"].Installations) != 2 || len(config.Credentials) != 1 {
 		t.Fatal("demo allowed execution")
+	}
+	for _, i := range config.Integrations["lox"].Installations {
+		if len(i.Repositories) != 1 || i.Repositories[0].Name != i.Owner+"/repo" || i.Repositories[0].Enabled != (i.Owner == "lox") {
+			t.Fatalf("repository rows assigned to the wrong installation: %+v", i)
+		}
 	}
 	values.Set("private_key", "")
 	values.Set("webhook_secret", "")
