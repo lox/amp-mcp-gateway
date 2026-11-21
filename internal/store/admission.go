@@ -38,7 +38,12 @@ length(cast(kind AS BLOB))+length(cast(actor AS BLOB))),0) FROM events`).Scan(&u
 	if used.events+delta.events > s.limits.events {
 		return fmt.Errorf("%w: retained audit event limit", ErrCapacity)
 	}
-	if used.bytes+eventBytes+delta.bytes > s.limits.bytes {
+	var attemptBytes int64
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce(sum(length(request)+coalesce(length(response),0)+
+length(cast(operation AS BLOB))),0) FROM http_attempts`).Scan(&attemptBytes); err != nil {
+		return err
+	}
+	if used.bytes+eventBytes+attemptBytes+delta.bytes > s.limits.bytes {
 		return fmt.Errorf("%w: retained payload and audit byte limit", ErrCapacity)
 	}
 	return nil
