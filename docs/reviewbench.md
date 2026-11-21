@@ -30,18 +30,18 @@ are private and archived after each review.
 
 Push the image to `ghcr.io` and register it at <https://review-bench.ai/submit/>
 (GitHub sign-in). The portal opens the manifest PR; a maintainer merging it is
-the approval. Then enter `AMP_API_KEY` (and `GHCR_PULL_TOKEN` for a private
-image) in the portal's credentials form. Expected manifest:
+the approval. The package is public, so ReviewBench pulls it anonymously.
+Then enter `AMP_API_KEY` in the portal's credentials form. Expected manifest:
 
 ```json
 {
   "name": "amp-review",
   "display_name": "Amp Review",
   "provider": "Amp",
-  "image": "ghcr.io/<owner>/amp-review-bench@sha256:<digest>",
-  "image_visibility": "private",
+  "image": "ghcr.io/lox/amp-mcp-gateway-reviewbench@sha256:<digest>",
+  "image_visibility": "public",
   "configuration": [{ "key": "mode", "value": "reviewbot-v1" }],
-  "secrets": { "env": ["AMP_API_KEY", "GHCR_PULL_TOKEN"] },
+  "secrets": { "env": ["AMP_API_KEY"] },
   "model_api_url": "https://ampcode.com",
   "contacts": ["lox"]
 }
