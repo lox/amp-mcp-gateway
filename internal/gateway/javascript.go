@@ -129,14 +129,14 @@ type javascriptUpload struct {
 }
 
 func (g *Gateway) javascriptUploadPage(w http.ResponseWriter, r *http.Request, message string) {
-	data := map[string]any{"Section": "connections", "JavaScriptUpload": true, "Error": message}
+	data := map[string]any{"Section": "integrations", "JavaScriptUpload": true, "Error": message}
 	if id := r.PathValue("id"); id != "" {
 		connection := g.connectionView(id)
 		if connection == nil || connection["ManagedJavaScript"] != true {
 			http.NotFound(w, r)
 			return
 		}
-		data["Connection"] = connection
+		data["Installation"] = connection
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	g.render(w, r, data)

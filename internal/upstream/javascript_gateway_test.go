@@ -176,7 +176,7 @@ export async function createIssue(args,ctx) {
 	if err := multipartWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	response, err := admin.Post(server.URL+"/connections/javascript", multipartWriter.FormDataContentType(), &upload)
+	response, err := admin.Post(server.URL+"/integrations/javascript", multipartWriter.FormDataContentType(), &upload)
 	if err != nil {
 		t.Fatal(err)
 	}

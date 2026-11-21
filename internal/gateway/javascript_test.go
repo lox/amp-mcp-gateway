@@ -58,13 +58,13 @@ func TestJavaScriptUploadReviewAndReplacement(t *testing.T) {
 	bundle := `{"ID":"custom","Origin":"https://api.example.com","Source":"throw new Error('upload must not evaluate source')","Tools":[{"Name":"read","Handler":"read","InputSchema":{"type":"object"},"OutputSchema":{"type":"object"},"HTTP":[{"Method":"GET","Path":"/items"}]}]}`
 	upload := func(raw, token, revision string) *httptest.ResponseRecorder {
 		t.Helper()
-		path := "/connections/javascript"
+		path := "/integrations/javascript"
 		if revision != "" {
-			path = "/connections/custom/javascript"
+			path = "/integrations/javascript/custom"
 		}
 		return javascriptUploadRequest(t, h, cookie, path, raw, token, revision)
 	}
-	if w := javascriptUploadRequest(t, h, nil, "/connections/javascript", bundle, "fake-upload-token", ""); w.Code != 303 || w.Header().Get("Location") == "/connections/custom/tools" {
+	if w := javascriptUploadRequest(t, h, nil, "/integrations/javascript", bundle, "fake-upload-token", ""); w.Code != 303 || w.Header().Get("Location") == "/connections/custom/tools" {
 		t.Fatalf("unauthenticated upload accepted: %d", w.Code)
 	}
 	if w := upload(bundle, "fake-upload-token", ""); w.Code != 303 {
@@ -72,6 +72,24 @@ func TestJavaScriptUploadReviewAndReplacement(t *testing.T) {
 	}
 	if _, ok := g.tools["custom.read"]; ok {
 		t.Fatal("unreviewed upload exposed a tool")
+	}
+	for _, path := range []string{"/integrations", "/connections"} {
+		w := formRequest(h, cookie, "GET", path, nil)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `/connections/custom/tools`) || strings.Contains(w.Body.String(), "fake-upload-token") {
+			t.Fatalf("uploaded adapter missing or secret leaked on %s: %d", path, w.Code)
+		}
+		if path == "/integrations" && !strings.Contains(w.Body.String(), `/integrations/javascript/custom`) {
+			t.Fatal("integration has no management link")
+		}
+		if path == "/connections" && strings.Contains(w.Body.String(), `href="/integrations/javascript"`) {
+			t.Fatal("JavaScript setup still offered under Connections")
+		}
+	}
+	for _, path := range []string{"/integrations/javascript", "/integrations/javascript/custom"} {
+		w := formRequest(h, cookie, "GET", path, nil)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `<title>Amp MCP Gateway · Integrations</title>`) || !strings.Contains(w.Body.String(), `href="/integrations" aria-current="page"`) || strings.Contains(w.Body.String(), `href="/connections" aria-current="page"`) {
+			t.Fatalf("wrong setup navigation on %s: %d", path, w.Code)
+		}
 	}
 	review := func(policy string) {
 		t.Helper()
@@ -90,7 +108,7 @@ func TestJavaScriptUploadReviewAndReplacement(t *testing.T) {
 	}
 	review("allow")
 	first := g.javascriptArtifact("custom")
-	for _, path := range []string{"/connections/custom/tools", "/connections/custom/settings", "/connections/custom/javascript"} {
+	for _, path := range []string{"/connections/custom/tools", "/connections/custom/settings", "/integrations/javascript/custom"} {
 		w := formRequest(h, cookie, "GET", path, nil)
 		if w.Code != 200 || strings.Contains(w.Body.String(), "fake-upload-token") {
 			t.Fatalf("token leaked or missing page: %s %d", path, w.Code)
@@ -185,7 +203,7 @@ func TestJavaScriptUploadRejectsAuthorityAndHostPaths(t *testing.T) {
 		valid + `{}`,
 		strings.Repeat("x", (1<<20)+1),
 	} {
-		w := javascriptUploadRequest(t, h, cookie, "/connections/javascript", raw, "secret-never-echo", "")
+		w := javascriptUploadRequest(t, h, cookie, "/integrations/javascript", raw, "secret-never-echo", "")
 		if w.Code != 400 || strings.Contains(w.Body.String(), "secret-never-echo") {
 			t.Fatalf("invalid upload: %d", w.Code)
 		}
@@ -195,7 +213,7 @@ func TestJavaScriptUploadRejectsAuthorityAndHostPaths(t *testing.T) {
 	}
 	// Uploads cannot replace a remote connection by reusing its ID.
 	raw := strings.Replace(valid, `"custom"`, `"notes"`, 1)
-	if w := javascriptUploadRequest(t, h, cookie, "/connections/javascript", raw, "fake", ""); w.Code != 400 {
+	if w := javascriptUploadRequest(t, h, cookie, "/integrations/javascript", raw, "fake", ""); w.Code != 400 {
 		t.Fatalf("duplicate upload: %d", w.Code)
 	}
 }

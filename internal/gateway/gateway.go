@@ -688,8 +688,15 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	case "/integrations":
 		g.mu.RLock()
 		_, configured := g.integration(flyIntegrationID)
-		g.mu.RUnlock()
 		data["FlyConfigured"] = configured
+		var installations []map[string]string
+		for _, c := range g.cfg.Connections {
+			if c.ManagedJavaScript {
+				installations = append(installations, map[string]string{"ID": c.ID, "Account": c.Account})
+			}
+		}
+		data["JavaScriptInstallations"] = installations
+		g.mu.RUnlock()
 	}
 	if err != nil {
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)

@@ -8,7 +8,7 @@ an arbitrary npm/MCP runner. Composition and agent-supplied code are not impleme
 
 ## Upload an adapter
 
-Open **Connections → Add JavaScript**. Choose one JSON file and enter its bearer
+Open **Integrations → JavaScript → Add JavaScript integration**. Choose one JSON file and enter its bearer
 token separately. The file contains only `ID`, optional `Account` label, `Origin`,
 `Source` and `Tools` (see the form's inline example). `Tools` use the manifest
 format below. Uploads reject unknown fields, including paths, credentials,
@@ -40,7 +40,10 @@ The example is a [GitHub issue adapter](../examples/github-issues.js) and its
    normal Amp gateway connection. Approve or deny writes in the browser; inspect
    the operation's **HTTP attempts** afterward.
 
-To update, open the connection's **Settings → Replace bundle**. Upload the same ID;
+The installed adapter appears in **Integrations → JavaScript**, with links to
+manage its bundle and review its connection's tools. It also appears in the normal
+**Connections** list. To update, choose **Manage** under Integrations (or follow
+**Settings → Manage integration** from its connection). Upload the same ID;
 leave the token blank to retain it, or enter a new token to rotate it. Every
 replacement pauses old tools until you refresh tools and save a fresh review,
 even for identical source or a reversion. Saving cancels queued requests and
