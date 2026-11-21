@@ -15,6 +15,7 @@ RUN npm install --prefix /amp --no-audit --no-fund @ampcode/cli@0.0.1793995239-g
     && /amp/node_modules/@ampcode/cli/bin/amp --version
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source=https://github.com/lox/amp-mcp-gateway
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=amp-cli /amp/node_modules/@ampcode/cli/bin/amp /usr/local/bin/amp
