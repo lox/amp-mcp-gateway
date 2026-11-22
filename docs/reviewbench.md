@@ -27,6 +27,14 @@ scripts/try-agent.sh amp-review-bench --pr 0 -e AMP_API_KEY
 The key must belong to an account that may run `reviewbot-v1` threads. Threads
 are private and archived after each review.
 
+To score locally, follow ReviewBench's
+[offline evaluation](https://github.com/review-bench/ReviewBench/blob/main/docs/OFFLINE_EVAL.md)
+with judge `claude-sonnet-5`. Its `models.json` example also needs
+`"compat": { "forceAdaptiveThinking": true }` and `"maxTokens": 8192` (as in its
+Harbor export); otherwise Anthropic rejects every judge call and the matcher
+reports invalid JSON. Use `--concurrency 1` unless the Anthropic key allows more
+concurrent connections.
+
 ## Register
 
 Push the image to `ghcr.io` and register it at <https://review-bench.ai/submit/>
