@@ -144,11 +144,14 @@ func execute(ctx context.Context, repo, prompt string) (string, error) {
 		}
 		switch {
 		case m.Type == "system" && m.Subtype == "init":
-			fmt.Fprintf(os.Stderr, "agent: thread %s mode=%s\n", m.SessionID, m.Mode)
-			if m.Mode != mode {
+			// Locally executed plugin modes report their base mode here
+			// ("medium"), so check the plugin mode the thread recorded.
+			got, err := threadMode(ctx, m.SessionID)
+			fmt.Fprintf(os.Stderr, "agent: thread %s mode=%s\n", m.SessionID, got)
+			if err != nil || got != mode {
 				_ = cmd.Process.Kill()
 				_ = cmd.Wait()
-				return "", fmt.Errorf("Amp mode mismatch: got %q, want %s", m.Mode, mode)
+				return "", fmt.Errorf("Amp mode mismatch: got %q, want %s: %v", got, mode, err)
 			}
 		case m.Type == "result" && m.IsError:
 			outcome = fmt.Errorf("Amp review failed: %s", m.Error)
@@ -160,6 +163,28 @@ func execute(ctx context.Context, repo, prompt string) (string, error) {
 		outcome = fmt.Errorf("Amp CLI: %w", err)
 	}
 	return result, outcome
+}
+
+// threadMode reads the plugin agent mode Amp recorded for the thread.
+func threadMode(ctx context.Context, thread string) (string, error) {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		var out []byte
+		if out, err = exec.CommandContext(ctx, "amp", "threads", "export", thread, "--log-file", "/dev/null").Output(); err == nil {
+			var t struct {
+				Meta struct {
+					ThreadAgent struct {
+						PluginAgentModeKey string `json:"pluginAgentModeKey"`
+					} `json:"threadAgent"`
+				} `json:"meta"`
+			}
+			if err = json.Unmarshal(out, &t); err == nil && t.Meta.ThreadAgent.PluginAgentModeKey != "" {
+				return t.Meta.ThreadAgent.PluginAgentModeKey, nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return "", fmt.Errorf("could not read thread mode: %v", err)
 }
 
 // changedLines maps each file in a unified diff to its added right-side lines.

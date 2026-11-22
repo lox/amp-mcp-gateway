@@ -11,8 +11,9 @@ gateway: the `reviewbot-v1` mode from [pinned-models.js](reviews/pinned-models.j
 the embedded methodology and severity rubric, `ParseResult` validation and
 changed-line anchoring. Differences from production: the Amp CLI runs locally in
 the container rather than in an orb (there is nothing to clone from), and the
-prompt says the checkout is already at head. It fails the PR if the stream
-reports a mode other than `reviewbot-v1`. Each finding's message is
+prompt says the checkout is already at head. It fails the PR unless the thread
+records plugin mode `reviewbot-v1` (locally run plugin modes report their base
+mode, `medium`, in the stream, so the stream's label is not checked). Each finding's message is
 `[severity] title: message Suggested fix: suggestion`.
 
 ## Build and try
