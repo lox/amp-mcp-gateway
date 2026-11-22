@@ -36,8 +36,8 @@ var reviewTemplateFuncs = template.FuncMap{
 // Costs include every attempt; missing usage must never look like a free review.
 func reviewStats(j reviews.Job) any {
 	v := struct {
-		Outcome, Class, Elapsed, Credits, Estimate string
-		Findings                                   []struct {
+		Outcome, Class, Elapsed, Queued, Credits, Estimate string
+		Findings                                           []struct {
 			Severity string
 			Count    int
 		}
@@ -63,6 +63,15 @@ func reviewStats(j reviews.Job) any {
 		elapsed := end.Sub(time.Unix(0, j.Created))
 		if elapsed >= 0 {
 			v.Elapsed = elapsed.Round(time.Second).String()
+		}
+		// Reviews recorded before Started existed show no split. The worker
+		// polls every second, so a few seconds is pickup, not a wait.
+		queuedUntil := time.Unix(0, j.Started)
+		if j.Started == 0 && j.Status == "queued" {
+			queuedUntil = end
+		}
+		if queued := queuedUntil.Sub(time.Unix(0, j.Created)).Round(time.Second); (j.Started > 0 || j.Status == "queued") && queued >= 5*time.Second && queued <= elapsed {
+			v.Queued = queued.String()
 		}
 	}
 	if j.Result != nil {

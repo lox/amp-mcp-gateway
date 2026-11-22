@@ -20,7 +20,9 @@ import (
 
 // Executor is the consumed Amp boundary. No GitHub credential enters it.
 type Executor interface {
-	Execute(context.Context, string, Job, func(string) error) (string, error)
+	// Execute reports each thread when the stream names it, and the stream's
+	// own usage for that thread when each CLI call ends.
+	Execute(context.Context, string, Job, func(string) error, func(string, StreamUsage)) (string, error)
 	Archive(context.Context, string, string) error
 	Usage(context.Context, string, string) (*Usage, error)
 	// Stopped reports whether Amp shows the thread's executor idle. Errors
@@ -72,7 +74,7 @@ func (c CLI) command(ctx context.Context, key string, args ...string) (*exec.Cmd
 
 // Execute retries only explicit terminal transient errors in the same known
 // thread. A truncated stream or launch without a thread ID is never replayed.
-func (c CLI) Execute(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
+func (c CLI) Execute(ctx context.Context, key string, j Job, onThread func(string) error, onUsage func(string, StreamUsage)) (string, error) {
 	thread := ""
 	for attempt := 0; attempt < 3; attempt++ {
 		args := []string{}
@@ -85,7 +87,7 @@ func (c CLI) Execute(ctx context.Context, key string, j Job, onThread func(strin
 		if thread == "" {
 			args = append(args, "--project", j.Project, "--title", "Review "+j.String(), "--visibility", j.Visibility, "--label", "reviewbot")
 		}
-		result, id, err := c.execute(ctx, key, args, text, thread, onThread)
+		result, id, err := c.execute(ctx, key, args, text, thread, onThread, onUsage)
 		if err == nil {
 			return result, nil
 		}
@@ -100,7 +102,7 @@ func (c CLI) Execute(ctx context.Context, key string, j Job, onThread func(strin
 	return "", errAmbiguous
 }
 
-func (c CLI) execute(ctx context.Context, key string, args []string, prompt, expected string, onThread func(string) error) (string, string, error) {
+func (c CLI) execute(ctx context.Context, key string, args []string, prompt, expected string, onThread func(string) error, onUsage func(string, StreamUsage)) (string, string, error) {
 	processCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd, cleanup, err := c.command(processCtx, key, args...)
@@ -117,6 +119,7 @@ func (c CLI) execute(ctx context.Context, key string, args []string, prompt, exp
 		return "", "", errors.New("could not start Amp CLI")
 	}
 	var result, thread string
+	var usage StreamUsage
 	var outcome error = errAmbiguous
 	initialized, finished := false, false
 	scanner := bufio.NewScanner(out)
@@ -128,6 +131,15 @@ func (c CLI) execute(ctx context.Context, key string, args []string, prompt, exp
 			Mode          string `json:"agent_mode"`
 			IsError       bool   `json:"is_error"`
 			Result, Error string
+			NumTurns      int64 `json:"num_turns"`
+			Message       struct {
+				Usage struct {
+					Input         int64 `json:"input_tokens"`
+					CacheCreation int64 `json:"cache_creation_input_tokens"`
+					CacheRead     int64 `json:"cache_read_input_tokens"`
+					Output        int64 `json:"output_tokens"`
+				}
+			}
 		}
 		if json.Unmarshal(scanner.Bytes(), &message) != nil {
 			break
@@ -159,12 +171,19 @@ func (c CLI) execute(ctx context.Context, key string, args []string, prompt, exp
 				break
 			}
 			initialized = true
+		case "assistant":
+			if initialized && message.SessionID == thread {
+				u := message.Message.Usage
+				usage.InputTokens += u.Input + u.CacheCreation + u.CacheRead
+				usage.OutputTokens += u.Output
+			}
 		case "result":
 			if !initialized || message.SessionID != thread {
 				finished = true
 				break
 			}
 			finished = true
+			usage.Turns = message.NumTurns
 			if !message.IsError {
 				result = message.Result
 				outcome = nil
@@ -185,6 +204,9 @@ func (c CLI) execute(ctx context.Context, key string, args []string, prompt, exp
 	// then reap the child. A deadline never turns a late result into success.
 	cancel()
 	_ = cmd.Wait()
+	if initialized && usage != (StreamUsage{}) {
+		onUsage(thread, usage)
+	}
 	if ctx.Err() != nil {
 		if errors.Is(outcome, errAmbiguous) {
 			return "", thread, errors.Join(errAmbiguous, ctx.Err())

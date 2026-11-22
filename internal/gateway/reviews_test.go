@@ -173,6 +173,35 @@ func TestReviewUsageOverview(t *testing.T) {
 	}
 }
 
+func TestReviewHistorySeparatesQueueTime(t *testing.T) {
+	created := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		started time.Duration
+		want    string
+	}{
+		{"waited behind another review", 150 * time.Second, "2m30s queued"},
+		{"picked up by the next poll", 3 * time.Second, ""},
+		{"recorded before start times", -1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := reviews.Job{Status: "succeeded", Conclusion: "success", Result: &reviews.Result{}, Created: created.UnixNano(), Completed: created.Add(400 * time.Second).Unix()}
+			if tc.started >= 0 {
+				j.Started = created.Add(tc.started).UnixNano()
+			}
+			var body strings.Builder
+			if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewJobs": []reviews.Job{j}}); err != nil {
+				t.Fatal(err)
+			}
+			_, summary, _ := strings.Cut(body.String(), `<summary class="review-summary">`)
+			summary, _, _ = strings.Cut(summary, "</summary>")
+			if !strings.Contains(summary, "6m40s") || (tc.want == "") == strings.Contains(summary, "queued") || !strings.Contains(summary, tc.want) {
+				t.Fatalf("want total 6m40s and %q: %s", tc.want, summary)
+			}
+		})
+	}
+}
+
 func TestReviewHistoryAtAGlance(t *testing.T) {
 	created := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
