@@ -202,6 +202,22 @@ func TestReviewHistorySeparatesQueueTime(t *testing.T) {
 	}
 }
 
+func TestReviewThreadShowsStreamUsageWithBilledUsage(t *testing.T) {
+	j := reviews.Job{Status: "succeeded", Threads: []reviews.Thread{
+		{ID: "T-00000000-0000-0000-0000-000000000001", Usage: &reviews.Usage{CostUSD: .02}, Stream: &reviews.StreamUsage{InputTokens: 1079070, OutputTokens: 5409, Turns: 13}},
+		{ID: "T-00000000-0000-0000-0000-000000000002", Stream: &reviews.StreamUsage{InputTokens: 900, OutputTokens: 7, Turns: 2}},
+	}}
+	var body strings.Builder
+	if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewJobs": []reviews.Job{j}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Amp credits: $0.0200 · Provider estimate: not reported · stream reported 1079070 input and 5409 output tokens over 13 turns", "Usage pending · stream reported 900 input and 7 output tokens over 2 turns"} {
+		if !strings.Contains(body.String(), want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
+
 func TestReviewHistoryAtAGlance(t *testing.T) {
 	created := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
