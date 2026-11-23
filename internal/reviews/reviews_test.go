@@ -35,26 +35,36 @@ import (
 const testThread = "T-00000000-0000-0000-0000-000000000123"
 
 type fakeAmp struct {
-	execute func(context.Context, string, Job, func(string) error) (string, error)
-	keys    []string
-	stopped bool
+	execute  func(context.Context, string, Job, func(string) error) (string, error)
+	keys     []string
+	stopped  bool
+	usageErr error
+	mu       sync.Mutex
 }
 
-func (f *fakeAmp) Execute(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
+func (f *fakeAmp) Execute(ctx context.Context, key string, j Job, onThread func(string) error, onUsage func(string, StreamUsage)) (string, error) {
 	if f.execute != nil {
 		return f.execute(ctx, key, j, onThread)
 	}
 	if err := onThread(testThread); err != nil {
 		return "", err
 	}
+	onUsage(testThread, StreamUsage{InputTokens: 100, OutputTokens: 7, Turns: 2})
 	return `{"summary":"Reviewed","findings":[{"severity":"high","title":"Wrong result","message":"This input returns the wrong value","suggestion":"Check the input","path":"main.go","startLine":3,"endLine":5},{"severity":"critical","title":"Unchanged","message":"Not in this diff","suggestion":"Ignore","path":"main.go","startLine":2}]}`, nil
 }
 func (f *fakeAmp) Archive(_ context.Context, key, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, key+":"+id)
 	return nil
 }
 func (f *fakeAmp) Usage(_ context.Context, key, id string) (*Usage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, key+":"+id)
+	if f.usageErr != nil {
+		return nil, f.usageErr
+	}
 	return &Usage{CostUSD: 0.23, InputTokens: 120, OutputTokens: 9, Requests: 2}, nil
 }
 func (f *fakeAmp) Stopped(context.Context, string, string) (bool, error) { return f.stopped, nil }
@@ -357,10 +367,10 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	if check["conclusion"] != "failure" || check["details_url"] != "https://ampcode.com/threads/"+testThread {
 		t.Fatalf("check: %+v", check)
 	}
-	if err := s.Maintain(t.Context()); err != nil {
-		t.Fatal(err)
+	if j.Started < j.Created || j.Threads[0].Stream == nil || *j.Threads[0].Stream != (StreamUsage{InputTokens: 100, OutputTokens: 7, Turns: 2}) {
+		t.Fatalf("start or stream usage lost: %+v", j)
 	}
-	j = history(t, s)[0]
+	// Publication archives and reads usage without waiting for maintenance.
 	if !j.Threads[0].Archived || j.Threads[0].Usage.CostUSD != 0.23 || j.Threads[0].Usage.ProviderEstimateUSD != nil {
 		t.Fatal("cleanup or unknown estimate lost")
 	}
@@ -1013,7 +1023,7 @@ func testMergedDuringReview(t *testing.T, reject int) {
 	amp.execute = func(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
 		calls++
 		if calls > 1 {
-			return (&fakeAmp{}).Execute(ctx, key, j, onThread)
+			return (&fakeAmp{}).Execute(ctx, key, j, onThread, func(string, StreamUsage) {})
 		}
 		// The PR merges mid-review and the CLI exits without a terminal result.
 		if err := onThread(testThread); err != nil {
@@ -1124,5 +1134,53 @@ func TestQueueCapacityAndUnknownHeadDoNotLaunchDuplicates(t *testing.T) {
 	}
 	if jobs, err := s.list(t.Context(), "queued", 100); err != nil || len(jobs) != 99 {
 		t.Fatal("resolved account did not resume")
+	}
+}
+
+func TestUsageReadsBackOffBeforeGivingUp(t *testing.T) {
+	f, gh := newGitHub(t)
+	_ = f
+	amp := &fakeAmp{usageErr: errors.New("Usage information is limited to 60 requests per hour")}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "first", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reads := func() int { return len(amp.keys) - 1 } // One archive, then usage reads.
+	thread := func() Thread { return history(t, s)[0].Threads[0] }
+	if got := thread(); reads() != 1 || got.UsageError != "" || got.UsageAttempts != 1 || got.UsageRetryAt < time.Now().Add(14*time.Minute).Unix() {
+		t.Fatalf("first failure was final or not backed off: %+v", got)
+	}
+	if err := s.Maintain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reads() != 1 {
+		t.Fatal("usage re-read before its retry time")
+	}
+	due := func() {
+		t.Helper()
+		j := history(t, s)[0]
+		j.Threads[0].UsageRetryAt = time.Now().Unix()
+		if err := s.update(t.Context(), &j); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Maintain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range usageRetries {
+		due()
+	}
+	if got := thread(); reads() != 1+len(usageRetries) || got.UsageError != "Usage unavailable" {
+		t.Fatalf("retries not exhausted: %d reads, %+v", reads(), got)
+	}
+	amp.usageErr = nil
+	due()
+	if reads() != 1+len(usageRetries) || thread().Usage != nil {
+		t.Fatal("final failure was retried")
 	}
 }

@@ -123,7 +123,10 @@ single-review footprint. Check memory headroom before adding concurrent accounts
 The history list shows each PR's title, frozen head, outcome, findings by severity,
 elapsed time and Amp credits without expanding the row. A completed review with
 blocking findings is distinct from a failed review execution. Elapsed time includes
-queue time and all attempts; running values update on refresh. Costs sum recorded
+queue time and all attempts, and the queued part is shown separately for reviews
+recorded since start times were stored; running values update on refresh. Each
+attempt also shows the tokens and turns its CLI stream reported, available as soon
+as the attempt ends; this has no cost and never replaces Amp's usage. Costs sum recorded
 usage across attempts, marking incomplete totals as partial rather than treating
 missing usage as zero. The separate provider estimate is not an additional charge.
 
@@ -191,9 +194,14 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   minutes and seven days ago, and never repeats a known head. Older/missing events
   require a GitHub redelivery or a new PR event. Dependency errors leave the next
   pass to retry reads rather than manufacturing a successful review.
-- Cleanup processes up to twenty terminal records per minute. Successful archival
+- A published review archives its threads and reads their usage straight after
+  publication, before the account's next review starts, so its orb stops billing;
+  other outcomes wait for cleanup because their remote thread may still be working.
+  Cleanup then processes up to twenty terminal records per minute. Successful archival
   and usage capture are persisted separately; failed archival retries on later
-  passes. Unavailable usage is recorded explicitly, not as zero. Amp credits and
+  passes. Amp limits usage reads to about 60 per hour per user, so a failed read
+  retries after 15 minutes, 1, 2 and 4 hours; only then is usage recorded explicitly
+  as unavailable, not as zero. Amp credits and
   provider list-price estimates are separate. The UI shows the latest 100 reviews
   plus the next unresolved outcome when older,
   linked checks/threads, frozen SHAs, findings, stage and errors; all history remains

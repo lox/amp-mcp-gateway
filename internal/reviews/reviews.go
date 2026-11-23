@@ -63,6 +63,17 @@ type Thread struct {
 	Archived   bool
 	Usage      *Usage
 	UsageError string
+	// Failed usage reads back off; UsageError records only the final failure.
+	UsageAttempts int
+	UsageRetryAt  int64
+	Stream        *StreamUsage
+}
+
+// StreamUsage is what the CLI stream itself reported, available as soon as an
+// attempt ends. It has no cost and may omit work the stream does not carry,
+// so it never replaces Amp's billed usage.
+type StreamUsage struct {
+	InputTokens, OutputTokens, Turns int64
 }
 
 // Usage separates billed Amp credits from an optional provider-price estimate.
@@ -86,11 +97,14 @@ type Job struct {
 	Threads                               []Thread
 	Attempts                              int
 	Created, Completed, CleanupAt         int64
-	Result                                *Result
-	Conclusion                            string
-	Omitted                               int
-	FailOn, Visibility, PromptVersion     string
-	TimeoutMinutes                        int
+	// Started is the first claim (Unix nanoseconds), separating queue time
+	// from run time. Restart requeues keep it; reruns reset it.
+	Started                           int64
+	Result                            *Result
+	Conclusion                        string
+	Omitted                           int
+	FailOn, Visibility, PromptVersion string
+	TimeoutMinutes                    int
 	// Cleanup never borrows a replacement execution identity's credential.
 	ExecutionBinding    string
 	ExecutionCredential string
@@ -264,7 +278,7 @@ func (s *Service) rerun(ctx context.Context, id, delivery string, ack bool, chec
 			return err
 		}
 	}
-	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt = "", 0, nil, nil, 0, "", "", "", 0, 0
+	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt, j.Started = "", 0, nil, nil, 0, "", "", "", 0, 0, 0
 	j.Delivery, j.Event = delivery, "check_run.rerequested"
 	return s.enqueue(ctx, a, j, false)
 }

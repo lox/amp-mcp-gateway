@@ -91,13 +91,25 @@ func (s *Service) Step(ctx context.Context) error {
 	s.activeID, s.activeCancel = j.ID, cancel
 	j.Status, j.Phase = "running", "preflight"
 	j.Attempts++
+	if j.Started == 0 {
+		j.Started = time.Now().UnixNano()
+	}
 	err = s.update(ctx, &j)
 	s.mu.Unlock()
 	defer func() { cancel(); s.mu.Lock(); s.activeID, s.activeCancel = "", nil; s.mu.Unlock() }()
 	if err != nil {
 		return err
 	}
-	return s.review(jobCtx, a, &j)
+	if err := s.review(jobCtx, a, &j); err != nil {
+		return err
+	}
+	// Archive a published review straight away: its orb otherwise keeps
+	// billing until the next maintenance pass. Other outcomes, whose remote
+	// thread may still be working, and shutdown stay with maintenance.
+	if j.Status != "succeeded" || ctx.Err() != nil {
+		return nil
+	}
+	return s.clean(ctx, j)
 }
 
 func (s *Service) checkpoint(ctx context.Context, j *Job, phase string) error {
@@ -218,6 +230,18 @@ func (s *Service) review(ctx context.Context, a App, j *Job) (persistErr error) 
 		}
 		_ = gh.link(ctx, *j, id) // Link failure is non-critical and never retried.
 		return nil
+	}, func(id string, u StreamUsage) {
+		// The finalizer persists this with the attempt's outcome.
+		for i := range j.Threads {
+			if t := &j.Threads[i]; t.ID == id {
+				if t.Stream == nil {
+					t.Stream = &StreamUsage{}
+				}
+				t.Stream.InputTokens += u.InputTokens
+				t.Stream.OutputTokens += u.OutputTokens
+				t.Stream.Turns += u.Turns
+			}
+		}
 	})
 	stopPoll()
 	<-pollDone
@@ -342,54 +366,68 @@ func (s *Service) Maintain(ctx context.Context) error {
 		if j.Status == "queued" || j.Status == "running" {
 			continue
 		}
-		j.CleanupAt = time.Now().Unix()
 		count++
-		if err := s.update(ctx, &j); err != nil {
+		if err := s.clean(ctx, j); err != nil {
 			return err
 		}
-		s.mu.Lock()
-		a, ok := s.config.resolve(j.App, j.InstallationID, j.Repository)
-		credential := j.ExecutionCredential
-		if credential == "" {
-			credential = j.App
-		} // Pre-v2 jobs used an App-specific key.
-		key := s.config.Credentials[credential]
-		s.mu.Unlock()
-		if key == "" || j.OwnerID != s.owner || hash(key) != j.ExecutionBinding {
-			continue
+	}
+	return nil
+}
+
+// Amp allows about 60 usage reads per hour per user, shared with anything else
+// using the execution key, so a failed read waits rather than giving up.
+var usageRetries = []time.Duration{15 * time.Minute, time.Hour, 2 * time.Hour, 4 * time.Hour}
+
+// clean archives a finished review's threads and records their usage.
+func (s *Service) clean(ctx context.Context, j Job) error {
+	j.CleanupAt = time.Now().Unix()
+	if err := s.update(ctx, &j); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	a, ok := s.config.resolve(j.App, j.InstallationID, j.Repository)
+	credential := j.ExecutionCredential
+	if credential == "" {
+		credential = j.App
+	} // Pre-v2 jobs used an App-specific key.
+	key := s.config.Credentials[credential]
+	s.mu.Unlock()
+	if key == "" || j.OwnerID != s.owner || hash(key) != j.ExecutionBinding {
+		return nil
+	}
+	if j.Status == "unknown" {
+		if !ok {
+			return nil
 		}
-		if j.Status == "unknown" {
-			if !ok {
+		if err := s.recover(ctx, a, key, &j); err != nil {
+			return err
+		}
+		if j.Status == "unknown" || j.Status == "queued" {
+			return nil
+		}
+	}
+	for i := range j.Threads {
+		t := &j.Threads[i]
+		if !t.Archived {
+			if err := s.amp.Archive(ctx, key, t.ID); err != nil {
 				continue
 			}
-			if err := s.recover(ctx, a, key, &j); err != nil {
+			t.Archived = true
+			if err := s.update(ctx, &j); err != nil {
 				return err
 			}
-			if j.Status == "unknown" || j.Status == "queued" {
-				continue
-			}
 		}
-		for i := range j.Threads {
-			t := &j.Threads[i]
-			if !t.Archived {
-				if err := s.amp.Archive(ctx, key, t.ID); err != nil {
-					continue
-				}
-				t.Archived = true
-				if err := s.update(ctx, &j); err != nil {
-					return err
-				}
+		if t.Usage == nil && t.UsageError == "" && time.Now().Unix() >= t.UsageRetryAt {
+			usage, err := s.amp.Usage(ctx, key, t.ID)
+			if err == nil {
+				t.Usage = usage
+			} else if t.UsageAttempts++; t.UsageAttempts > len(usageRetries) {
+				t.UsageError = "Usage unavailable"
+			} else {
+				t.UsageRetryAt = time.Now().Add(usageRetries[t.UsageAttempts-1]).Unix()
 			}
-			if t.Usage == nil && t.UsageError == "" {
-				usage, err := s.amp.Usage(ctx, key, t.ID)
-				if err != nil {
-					t.UsageError = "Usage unavailable"
-				} else {
-					t.Usage = usage
-				}
-				if err := s.update(ctx, &j); err != nil {
-					return err
-				}
+			if err := s.update(ctx, &j); err != nil {
+				return err
 			}
 		}
 	}
