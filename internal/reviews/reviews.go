@@ -294,7 +294,8 @@ func (s *Service) enqueue(ctx context.Context, a App, j Job, missing bool) error
 	return s.store.InsertReview(ctx, j.record(), missing)
 }
 
-// previous finds the pull request's latest successful review of another head.
+// previous returns the pull request's latest successful review when it
+// reviewed another head.
 func (s *Service) previous(ctx context.Context, j Job) (*Previous, error) {
 	records, err := s.store.PullReviews(ctx, j.App, j.pullKey(), 20)
 	if err != nil {
@@ -305,9 +306,15 @@ func (s *Service) previous(ctx context.Context, j Job) (*Previous, error) {
 		if err != nil {
 			return nil, err
 		}
-		if old.OwnerID == s.owner && old.Status == "succeeded" && old.Result != nil && old.HeadSHA != j.HeadSHA && shaPattern.MatchString(old.HeadSHA) {
-			return &Previous{HeadSHA: old.HeadSHA, Findings: old.Result.Findings}, nil
+		if old.OwnerID != s.owner || old.Status != "succeeded" || old.Result == nil {
+			continue
 		}
+		// An unchanged head (reopened, ready for review) has no interdiff;
+		// an older head's findings would drop the latest review's.
+		if old.HeadSHA == j.HeadSHA || !shaPattern.MatchString(old.HeadSHA) {
+			return nil, nil
+		}
+		return &Previous{HeadSHA: old.HeadSHA, Findings: old.Result.Findings}, nil
 	}
 	return nil, nil
 }

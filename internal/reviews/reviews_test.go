@@ -335,7 +335,7 @@ func TestGitHubAppJWT(t *testing.T) {
 func TestSignedLifecycleAndReruns(t *testing.T) {
 	f, gh := newGitHub(t)
 	amp := &fakeAmp{}
-	s, _, path, _ := fixtureService(t, "user-one", amp, gh, semaphore.NewWeighted(4))
+	s, st, path, _ := fixtureService(t, "user-one", amp, gh, semaphore.NewWeighted(4))
 	a := fixtureApp(t, "lox")
 	if err := s.Save(t.Context(), a); err != nil {
 		t.Fatal(err)
@@ -412,6 +412,19 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	}
 	if full := history(t, s)[0]; full.HeadSHA != pushed.Head.SHA || full.Previous != nil {
 		t.Fatalf("rerun is not a full review: %+v", full)
+	}
+	// Reopening the latest reviewed head has no interdiff, so it must not
+	// fall back to an older head and drop the latest review's findings.
+	older := j
+	older.ID, older.Delivery, older.HeadSHA, older.Created = "older", "older", strings.Repeat("e", 40), j.Created-1
+	if err := st.InsertReview(t.Context(), older.record(), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := deliver(t, s, a, p, "reopen", "pull_request", "reopened", nil); got != 202 {
+		t.Fatalf("reopen intake %d", got)
+	}
+	if reopened := history(t, s)[0]; reopened.Delivery != "reopen" || reopened.Previous != nil {
+		t.Fatalf("same-head event inherited an older review: %+v", reopened.Previous)
 	}
 	for _, suffix := range []string{"", "-wal"} {
 		raw, _ := os.ReadFile(path + suffix)
