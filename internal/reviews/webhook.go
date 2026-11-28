@@ -89,6 +89,10 @@ func (s *Service) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	a, approved := s.config.resolve(in.ID, event.Installation.ID, event.Repository.FullName)
 	if !approved || !a.Enabled || a.RepositoryID != event.Repository.ID || event.Repository.ID <= 0 {
+		if !approved && r.Header.Get("X-GitHub-Event") == "pull_request" {
+			// Surface it for one-click approval; still reject it and create no job.
+			_ = s.notePending(r.Context(), in, event.Installation.ID, event.Repository.FullName, event.Repository.ID, event.Number, event.Pull.Title)
+		}
 		http.Error(w, "repository or installation not approved", 403)
 		return
 	}

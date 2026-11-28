@@ -41,7 +41,7 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 		"repository": {"a", "b", "c"}, "r.a.name": {"sporevm/repo"}, "r.a.project": {"sporevm/repo"},
 		"r.b.name": {"lox/repo"}, "r.b.project": {"lox/repo"}, "r.b.enabled": {"on"},
 		"r.c.name": {"acme/repo"}, "r.c.project": {"acme/repo"}}
-	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel", "/integrations/reviews/unknown/close-check"} {
+	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel", "/integrations/reviews/unknown/close-check", "/integrations/reviews/lox/pending/approve", "/integrations/reviews/lox/pending/ignore"} {
 		if w := formRequest(h, nil, "POST", path, values); w.Code != http.StatusSeeOther {
 			t.Fatalf("anonymous %s: %d", path, w.Code)
 		}
@@ -97,6 +97,9 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	w = formRequest(h, cookie, "GET", "/integrations/reviews/lox/repositories", nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"lox/repo"`) || !strings.Contains(w.Body.String(), `"sporevm/fly-mcp"`) {
 		t.Fatalf("demo repository listing: %d %s", w.Code, w.Body.String())
+	}
+	if w := formRequest(h, cookie, "POST", "/integrations/reviews/lox/pending/approve", url.Values{"repository": {"lox/unseen"}}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not awaiting approval") || !strings.Contains(w.Body.String(), "Configure lox") {
+		t.Fatalf("approved a repository that was never pending: %d", w.Code)
 	}
 	values.Set("private_key", "")
 	values.Set("webhook_secret", "")

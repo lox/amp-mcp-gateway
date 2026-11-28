@@ -5,7 +5,17 @@
 {{if .Saved}}<p class="success" role="status">Review configuration saved. Existing jobs retain their frozen PR context; changed authorization cancels queued work.</p>{{end}}
 {{if .ReviewDemo}}<p class="note">Demo only · Use fake credentials. No reviews run and no GitHub or Amp requests are made.</p>{{end}}
 {{if .ReviewEditing}}
-<form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off" {{if .Error}}data-review-unsaved{{end}}>
+{{with .ReviewPending}}<section class="card review-pending" aria-labelledby="review-pending-heading">
+<h2 id="review-pending-heading">Awaiting approval · {{len .}}</h2>
+<p class="help">These repositories on your installations sent pull requests, but have no repository row. They were rejected: no review ran and no credits were spent. Enabling saves an enabled row and verifies it with GitHub; while the integration is enabled, open PRs updated in the last seven days are reviewed within about five minutes.</p>
+{{range .}}<form class="review-pending-row" method="post" action="/integrations/reviews/{{.Integration}}/pending/approve">
+<input type="hidden" name="repository" value="{{.Repository}}">
+<div><strong>{{.Repository}}</strong><span class="help">PR #{{.Number}}{{if .Title}} “{{.Title}}”{{end}} · <time datetime="{{iso .Seen}}">{{reviewSeen .Seen}}</time></span></div>
+<label>Amp project<input name="project" value="{{.Repository}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" spellcheck="false" aria-label="Amp project for {{.Repository}}"></label>
+<div class="actions"><button class="primary">Enable</button><button formaction="/integrations/reviews/{{.Integration}}/pending/ignore" formnovalidate>Ignore</button></div>
+</form>{{end}}
+</section>{{end}}
+<form class="card review-setup" method="post" action="/integrations/reviews" autocomplete="off" {{if .ReviewUnsaved}}data-review-unsaved{{end}}>
 {{if .ReviewExisting}}<input type="hidden" name="id" value="{{.ReviewApp.ID}}">{{else}}<label>Integration name<input name="id" value="{{.ReviewApp.ID}}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,99}" placeholder="lox-reviews"></label>
 <p class="help">One integration per GitHub App. Add all approved installations below; credentials are stored only once.</p>{{end}}
 <details {{if or .Error (not .ReviewExisting)}}open{{end}}><summary>GitHub connection{{if .ReviewExisting}} · App {{.ReviewApp.AppID}}{{end}}</summary>
@@ -91,7 +101,7 @@
 {{else}}<p class="empty">No reviews requested in this period. Usage will appear after reviews run.</p>{{end}}
 </section>
 {{end}}
-<div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
+<div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{$id := .ID}}{{with index $.ReviewPendingCounts .ID}}<p><a href="/integrations/reviews?app={{$id}}"><span class="badge">{{.}} awaiting approval</span></a></p>{{end}}{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
 <section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="{{if .ReviewRefresh}}{{.ReviewRefresh}}{{else}}/integrations/reviews{{end}}">Refresh</a></div>
 <form class="review-filters" method="get" action="/integrations/reviews" role="search">
 <label>Repository<select name="repo"><option value="">All repositories</option>{{range .ReviewFilterRepositories}}<option value="{{.}}" {{if eq . $.ReviewFilter.Repository}}selected{{end}}>{{.}}</option>{{end}}</select></label>
