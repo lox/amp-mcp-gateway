@@ -156,6 +156,48 @@ func (g *GitHub) verifyInstallation(ctx context.Context, a App) (int64, error) {
 	return installation.Account.ID, nil
 }
 
+// installationRepositories lists the repositories an installation can see, for
+// the configuration picker. The token is limited to metadata and is never used
+// for reviews; listed repositories are still verified and approved on save.
+func (g *GitHub) installationRepositories(ctx context.Context, a App) ([]string, error) {
+	if _, err := g.verifyInstallation(ctx, a); err != nil {
+		return nil, err
+	}
+	jwt, err := appJWT(a)
+	if err != nil {
+		return nil, err
+	}
+	var token struct{ Token string }
+	if err := g.request(ctx, jwt, "POST", fmt.Sprintf("/app/installations/%d/access_tokens", a.InstallationID), map[string]any{"permissions": map[string]string{"metadata": "read"}}, &token); err != nil {
+		return nil, err
+	}
+	if token.Token == "" {
+		return nil, errors.New("GitHub issued no installation token")
+	}
+	var names []string
+	for page := 1; page <= 10; page++ {
+		var batch struct {
+			Repositories []struct {
+				FullName string `json:"full_name"`
+				Archived bool
+			}
+		}
+		if err := g.request(ctx, token.Token, "GET", fmt.Sprintf("/installation/repositories?per_page=100&page=%d", page), nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, r := range batch.Repositories {
+			name := strings.ToLower(r.FullName)
+			if !r.Archived && validRepository(name) && strings.HasPrefix(name, a.Owner+"/") {
+				names = append(names, name)
+			}
+		}
+		if len(batch.Repositories) < 100 {
+			break
+		}
+	}
+	return names, nil
+}
+
 func (g *GitHub) session(ctx context.Context, a App, repo string) (*githubSession, error) {
 	if !a.allows(repo) {
 		return nil, errors.New("repository not approved")

@@ -116,6 +116,31 @@ func (s *Service) Configuration() Configuration {
 	return c
 }
 
+// InstallationRepositories lists repositories visible to an integration's saved
+// installations, sorted by name. Unsaved installations are not listed: their
+// owner has not been verified. Listing approves nothing.
+func (s *Service) InstallationRepositories(ctx context.Context, id string) ([]string, error) {
+	s.mu.Lock()
+	in, ok := s.config.Integrations[id]
+	s.mu.Unlock()
+	if !ok {
+		return nil, errors.New("unknown review integration")
+	}
+	var names []string
+	for _, i := range in.Installations {
+		if i.OwnerID <= 0 {
+			continue
+		}
+		listed, err := s.github.installationRepositories(ctx, App{AppID: in.AppID, PrivateKey: in.PrivateKey, InstallationID: i.ID, Owner: i.Owner, GitHubOwnerID: i.OwnerID})
+		if err != nil {
+			return nil, fmt.Errorf("list repositories for %s: %w", i.Owner, err)
+		}
+		names = append(names, listed...)
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
+}
+
 // SaveIntegration verifies GitHub identities before committing configuration.
 // Blank credentials retain saved values; credentials are shared by explicit name.
 func (s *Service) SaveIntegration(ctx context.Context, in Integration, credentials map[string]string) error {
@@ -142,9 +167,12 @@ func (s *Service) saveIntegration(ctx context.Context, in Integration, credentia
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, &in); err != nil {
+	// Decode into a fresh value: json reuses a non-nil slice's backing array.
+	var detached Integration
+	if err := json.Unmarshal(raw, &detached); err != nil {
 		return err
 	}
+	in = detached
 	s.mu.Lock()
 	previous := s.config // Published configurations are immutable.
 	base := hash(previous)
