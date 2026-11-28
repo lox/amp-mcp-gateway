@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 //go:embed reviews.html
 var reviewsHTML string
+
+var reviewStatuses = []string{"queued", "running", "succeeded", "failed", "cancelled", "unknown"}
 
 var reviewTemplateFuncs = template.FuncMap{
 	"severities":  func() []string { return []string{"critical", "high", "medium", "low"} },
@@ -292,7 +295,44 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 			}
 		}
 	}
-	jobs, err := g.Reviews.History(r.Context())
+	// Filter options come from configuration; unknown values are ignored.
+	var filterRepositories []string
+	for _, in := range config.Integrations {
+		for _, i := range in.Installations {
+			for _, repo := range i.Repositories {
+				if name := strings.ToLower(repo.Name); !slices.Contains(filterRepositories, name) {
+					filterRepositories = append(filterRepositories, name)
+				}
+			}
+		}
+	}
+	slices.Sort(filterRepositories)
+	query := r.URL.Query()
+	var filter reviews.HistoryFilter
+	if repo := strings.ToLower(query.Get("repo")); slices.Contains(filterRepositories, repo) {
+		filter.Repository = repo
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(query.Get("pr")), "#")); err == nil && n > 0 {
+		filter.Number = n
+	}
+	if status := query.Get("status"); slices.Contains(reviewStatuses, status) {
+		filter.Status = status
+	}
+	jobs, err := g.Reviews.History(r.Context(), filter)
+	// Refresh keeps the accepted filters; Clear is the explicit reset.
+	refresh := url.Values{}
+	for key, value := range map[string]string{"repo": filter.Repository, "status": filter.Status} {
+		if value != "" {
+			refresh.Set(key, value)
+		}
+	}
+	if filter.Number > 0 {
+		refresh.Set("pr", strconv.Itoa(filter.Number))
+	}
+	refreshURL := "/integrations/reviews"
+	if len(refresh) > 0 {
+		refreshURL += "?" + refresh.Encode()
+	}
 	if err != nil {
 		http.Error(w, "Review history unavailable", 503)
 		return
@@ -312,7 +352,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
 		"ReviewInstallations": installations, "ReviewRepositories": repositories, "ReviewEnabledRepositories": enabled, "ReviewCredentials": credentials,
 		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Index: "__r__", Repository: reviews.Repository{Name: "__name__"}},
-		"ReviewJobs": jobs, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+		"ReviewJobs": jobs, "ReviewFilter": filter, "ReviewRefresh": template.URL(refreshURL), "ReviewFilterRepositories": filterRepositories, "ReviewStatuses": reviewStatuses, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {

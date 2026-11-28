@@ -300,7 +300,8 @@
   }
   @media (max-width: 540px) {
     :where(html.dashboard) .review-summary { @apply gap-3; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    :where(html.dashboard) .review-summary::before { display: none; }
+    :where(html.dashboard) .review-summary { position: relative; padding-right: 24px; }
+    :where(html.dashboard) .review-summary::before { position: absolute; top: 0; right: 0; }
     :where(html.dashboard) .review-identity { grid-column: 1 / -1; }
     :where(html.dashboard) .review-outcome { grid-column: 1 / -1; }
     :where(html.dashboard) .review-summary .review-stat:nth-of-type(3) { grid-column: 1; }
@@ -308,6 +309,14 @@
   :where(html.dashboard) .review-setup {
     @apply max-w-240;
   }
+  :where(html.dashboard) .review-filters {
+    @apply flex flex-wrap items-end gap-3 mb-4;
+  }
+  :where(html.dashboard) .review-filters label { @apply grid gap-1 text-xs text-muted; min-width: 160px; flex: 1 1 160px; }
+  :where(html.dashboard) .review-filters :is(select, input) { @apply text-sm h-10 m-0; padding: 0 10px; }
+  :where(html.dashboard) .review-filters label { @apply m-0; }
+  :where(html.dashboard) .review-filters button { @apply h-10 min-h-10 py-0; }
+  :where(html.dashboard) .review-filters a { @apply leading-10; }
   :where(html.dashboard) .review-setup fieldset {
     @apply border-0 p-0 mt-8 mb-6 min-w-0;
   }
