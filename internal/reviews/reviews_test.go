@@ -384,6 +384,35 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	if rerun.Context != j.Context || rerun.BaseSHA != j.BaseSHA || rerun.HeadSHA != j.HeadSHA || rerun.CheckID != 0 {
 		t.Fatal("rerun changed frozen context")
 	}
+	if rerun.Previous != nil || strings.Contains(prompt(rerun), "previous-findings") {
+		t.Fatal("rerun of the first review is incremental")
+	}
+	// A push re-reviews from the last successful head and its published
+	// findings; re-running that job reviews the whole PR again.
+	if err := s.Cancel(t.Context(), rerun.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	pushed := p
+	pushed.Head.SHA = strings.Repeat("d", 40)
+	if got := deliver(t, s, a, pushed, "push", "pull_request", "synchronize", nil); got != 202 {
+		t.Fatalf("push intake %d", got)
+	}
+	next := history(t, s)[0]
+	if next.Previous == nil || next.Previous.HeadSHA != p.Head.SHA || !slices.Equal(next.Previous.Findings, j.Result.Findings) {
+		t.Fatalf("push did not freeze the previous review: %+v", next.Previous)
+	}
+	if text := prompt(next); !strings.Contains(text, "git diff "+p.Head.SHA+" "+pushed.Head.SHA) || !strings.Contains(text, "Wrong result") || strings.Contains(text, "Unchanged") {
+		t.Fatal("re-review prompt lacks the interdiff or published findings")
+	}
+	if err := s.Cancel(t.Context(), next.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rerun(t.Context(), next.ID, "manual-push", false); err != nil {
+		t.Fatal(err)
+	}
+	if full := history(t, s)[0]; full.HeadSHA != pushed.Head.SHA || full.Previous != nil {
+		t.Fatalf("rerun is not a full review: %+v", full)
+	}
 	for _, suffix := range []string{"", "-wal"} {
 		raw, _ := os.ReadFile(path + suffix)
 		for _, secret := range []string{a.AmpKey, a.WebhookSecret, a.PrivateKey, p.Body} {

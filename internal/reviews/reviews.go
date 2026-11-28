@@ -101,7 +101,10 @@ type Job struct {
 	Created, Completed, CleanupAt         int64
 	// Started is the first claim (Unix nanoseconds), separating queue time
 	// from run time. Restart requeues keep it; reruns reset it.
-	Started                           int64
+	Started int64
+	// Previous is the PR's latest successful review when this job was queued,
+	// so the prompt can focus on what changed since. Reruns review in full.
+	Previous                          *Previous `json:",omitempty"`
 	Result                            *Result
 	Conclusion                        string
 	Omitted                           int
@@ -111,6 +114,12 @@ type Job struct {
 	ExecutionBinding    string
 	ExecutionCredential string
 	Revision            int64 `json:"-"`
+}
+
+// Previous holds an earlier review's head and published findings.
+type Previous struct {
+	HeadSHA  string
+	Findings []Finding
 }
 
 func (j Job) headKey() string { return hash([]any{j.RepositoryID, j.Number, j.HeadSHA}) }
@@ -275,7 +284,32 @@ func (s *Service) enqueue(ctx context.Context, a App, j Job, missing bool) error
 	j.ExecutionBinding = hash(a.AmpKey)
 	j.ExecutionCredential = a.ExecutionCredential
 	j.PromptVersion = "gateway-review-v1"
+	if j.Event != "check_run.rerequested" {
+		previous, err := s.previous(ctx, j)
+		if err != nil {
+			return err
+		}
+		j.Previous = previous
+	}
 	return s.store.InsertReview(ctx, j.record(), missing)
+}
+
+// previous finds the pull request's latest successful review of another head.
+func (s *Service) previous(ctx context.Context, j Job) (*Previous, error) {
+	records, err := s.store.PullReviews(ctx, j.App, j.pullKey(), 20)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range records {
+		old, err := decode(r)
+		if err != nil {
+			return nil, err
+		}
+		if old.OwnerID == s.owner && old.Status == "succeeded" && old.Result != nil && old.HeadSHA != j.HeadSHA && shaPattern.MatchString(old.HeadSHA) {
+			return &Previous{HeadSHA: old.HeadSHA, Findings: old.Result.Findings}, nil
+		}
+	}
+	return nil, nil
 }
 
 func validJob(j Job) bool {
@@ -311,7 +345,7 @@ func (s *Service) rerun(ctx context.Context, id, delivery string, ack bool, chec
 			return err
 		}
 	}
-	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt, j.Started = "", 0, nil, nil, 0, "", "", "", 0, 0, 0
+	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt, j.Started, j.Previous = "", 0, nil, nil, 0, "", "", "", 0, 0, 0, nil
 	j.Delivery, j.Event = delivery, "check_run.rerequested"
 	return s.enqueue(ctx, a, j, false)
 }

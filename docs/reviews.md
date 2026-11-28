@@ -149,6 +149,12 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   PR. Other actions do not launch reviews. Delivery IDs deduplicate; an active or unknown head cannot
   be enqueued again. Explicit reruns use stored base/head SHAs and PR text, while
   reauthorising against current mappings/settings. Superseded heads do not execute.
+- A new head on a PR that already has a successful review is an incremental
+  re-review: the job freezes that review's head and published findings, and the
+  prompt asks for an in-depth review of the changes since, a re-check of each
+  earlier finding and the complete set of findings for the PR. A force-push or
+  rebase that drops the earlier head falls back to a full review. Explicit reruns
+  always review the whole PR.
 - Persist and atomically claim before dispatch. One active review per gateway
   account, four host slots with FIFO waiters, at most 100 queued/running jobs and
   ten Apps per account. Each App supports twenty installations, each with at most
