@@ -154,8 +154,10 @@ func (s *Service) ApprovePending(ctx context.Context, integration, repo, project
 		}
 	}
 	// Copy the stored integration, keys included; json decoding into a fresh
-	// value detaches it from the published configuration.
+	// value detaches it from the published configuration. The save is bound to
+	// this snapshot so a concurrent save is never overwritten.
 	raw, err := json.Marshal(s.config.Integrations[integration])
+	base := hash(s.config)
 	s.mu.Unlock()
 	if entry == nil {
 		return errors.New("repository is not awaiting approval")
@@ -175,12 +177,12 @@ func (s *Service) ApprovePending(ctx context.Context, integration, repo, project
 		project = repo
 	}
 	in.Installations[n].Repositories = append(in.Installations[n].Repositories, Repository{Name: repo, Project: project, Enabled: true})
-	if draft {
-		err = s.SaveDraft(ctx, in, nil)
-	} else {
-		err = s.SaveIntegration(ctx, in, nil)
+	if draft && in.Enabled {
+		return errors.New("unverified drafts cannot enable reviews")
 	}
-	if err != nil {
+	// Verification must find the repository that sent the pull request, not
+	// a replacement created under the same name since.
+	if err := s.saveIntegration(ctx, in, nil, !draft, &saveGuard{base: base, repository: repo, repositoryID: entry.RepositoryID}); err != nil {
 		return err
 	}
 	// The row is saved; Pending already hides configured repositories, so a

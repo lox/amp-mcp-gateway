@@ -91,7 +91,11 @@ func (s *Service) Webhook(w http.ResponseWriter, r *http.Request) {
 	if !approved || !a.Enabled || a.RepositoryID != event.Repository.ID || event.Repository.ID <= 0 {
 		if !approved && r.Header.Get("X-GitHub-Event") == "pull_request" {
 			// Surface it for one-click approval; still reject it and create no job.
-			_ = s.notePending(r.Context(), in, event.Installation.ID, event.Repository.FullName, event.Repository.ID, event.Number, event.Pull.Title)
+			// A failed write must be visible in GitHub's delivery log.
+			if err := s.notePending(r.Context(), in, event.Installation.ID, event.Repository.FullName, event.Repository.ID, event.Number, event.Pull.Title); err != nil {
+				http.Error(w, "repository not approved; recording it for approval failed", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		http.Error(w, "repository or installation not approved", 403)
 		return

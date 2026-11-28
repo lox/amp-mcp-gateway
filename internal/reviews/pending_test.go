@@ -44,6 +44,13 @@ func TestUnmappedRepositoriesAwaitApproval(t *testing.T) {
 	if err := s.ApprovePending(t.Context(), "lox", "lox/stranger", "", false); err == nil {
 		t.Fatal("approved a repository that was never awaiting approval")
 	}
+	// A same-name repository with another ID (recreated since GitHub sent the
+	// event) must not be approved in its place.
+	deliver(t, s, a, p, "d6", "pull_request", "synchronize", func(m map[string]any) { m["repository"].(map[string]any)["id"] = 999 })
+	if err := s.ApprovePending(t.Context(), "lox", "lox/repo", "work/reviewed", false); err == nil || len(s.Configuration().Integrations["lox"].Installations[0].Repositories) != 0 {
+		t.Fatalf("approved a recreated repository: %v", err)
+	}
+	deliver(t, s, a, p, "d7", "pull_request", "synchronize", nil)
 	if err := s.ApprovePending(t.Context(), "lox", "lox/repo", "work/reviewed", false); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +58,7 @@ func TestUnmappedRepositoriesAwaitApproval(t *testing.T) {
 	if len(row) != 1 || row[0].Name != "lox/repo" || row[0].Project != "work/reviewed" || !row[0].Enabled || row[0].ID != 44 || len(s.Pending("lox")) != 0 {
 		t.Fatalf("approval did not save a verified enabled row: %+v", row)
 	}
-	if code := deliver(t, s, a, p, "d6", "pull_request", "synchronize", nil); code != http.StatusAccepted || len(history(t, s)) != 1 {
+	if code := deliver(t, s, a, p, "d8", "pull_request", "synchronize", nil); code != http.StatusAccepted || len(history(t, s)) != 1 {
 		t.Fatalf("approved repository did not enqueue: %d", code)
 	}
 }

@@ -144,7 +144,7 @@ func (s *Service) InstallationRepositories(ctx context.Context, id string) ([]st
 // SaveIntegration verifies GitHub identities before committing configuration.
 // Blank credentials retain saved values; credentials are shared by explicit name.
 func (s *Service) SaveIntegration(ctx context.Context, in Integration, credentials map[string]string) error {
-	return s.saveIntegration(ctx, in, credentials, true)
+	return s.saveIntegration(ctx, in, credentials, true, nil)
 }
 
 // SaveDraft supports the credential-free demo. Unverified drafts cannot execute.
@@ -152,7 +152,7 @@ func (s *Service) SaveDraft(ctx context.Context, in Integration, credentials map
 	if in.Enabled {
 		return errors.New("unverified drafts cannot enable reviews")
 	}
-	return s.saveIntegration(ctx, in, credentials, false)
+	return s.saveIntegration(ctx, in, credentials, false, nil)
 }
 
 func validSettings(v Settings, optional bool) bool {
@@ -161,7 +161,15 @@ func validSettings(v Settings, optional bool) bool {
 		(optional && v.TimeoutMinutes == 0 || v.TimeoutMinutes >= 5 && v.TimeoutMinutes <= 120)
 }
 
-func (s *Service) saveIntegration(ctx context.Context, in Integration, credentials map[string]string, verify bool) error {
+// saveGuard binds a save to the configuration it was derived from and,
+// when verifying, to the repository ID a pending approval was recorded with.
+type saveGuard struct {
+	base         string
+	repository   string
+	repositoryID int64
+}
+
+func (s *Service) saveIntegration(ctx context.Context, in Integration, credentials map[string]string, verify bool, guard *saveGuard) error {
 	// Detach caller-owned slices before normalization and retaining the config.
 	raw, err := json.Marshal(in)
 	if err != nil {
@@ -177,6 +185,9 @@ func (s *Service) saveIntegration(ctx context.Context, in Integration, credentia
 	previous := s.config // Published configurations are immutable.
 	base := hash(previous)
 	s.mu.Unlock()
+	if guard != nil && guard.base != base {
+		return errors.New("review configuration changed; reload and try again")
+	}
 	old, exists := previous.Integrations[in.ID]
 	if exists && old.AppID != in.AppID {
 		return errors.New("create a new integration for a different GitHub App")
@@ -296,6 +307,9 @@ func (s *Service) saveIntegration(ctx context.Context, in Integration, credentia
 				r.ID = repository.ID
 			} else if !verify {
 				r.ID = 0
+			}
+			if verify && guard != nil && r.Name == guard.repository && r.ID != guard.repositoryID {
+				return errors.New("this repository was recreated after it sent the pull request; ignore it, or add it from the repository list")
 			}
 		}
 	}
