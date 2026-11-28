@@ -47,6 +47,7 @@ type persistedCatalogue struct {
 
 // LoadCatalogue restores saved connections and policies before startup validation.
 func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
+	startup := slices.Clone(cfg.Connections)
 	raw, err := s.LoadCatalogue(ctx)
 	if err != nil {
 		return err
@@ -56,7 +57,7 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 		return err
 	}
 	if raw == nil && len(storedSecrets) == 0 {
-		return nil
+		return javascriptGenerations(ctx, cfg, nil, s)
 	}
 	var c catalogue
 	hadEmbeddedSecrets := false
@@ -130,7 +131,10 @@ func LoadCatalogue(ctx context.Context, cfg *Config, s *store.Store) error {
 	}
 	cfg.Connections, cfg.Integrations, cfg.Tools = c.Connections, c.Integrations, c.Tools
 	cfg.ToolDefaults, cfg.PrivateConnections, cfg.DisabledConnections = c.ToolDefaults, c.PrivateConnections, c.DisabledConnections
-	return nil
+	if err := reconcileJavaScript(cfg, startup); err != nil {
+		return err
+	}
+	return javascriptGenerations(ctx, cfg, c.Connections, s)
 }
 
 func recoveredSecretID(id string, used map[string]bool) string {
@@ -523,6 +527,12 @@ func (g *Gateway) removeConnection(w http.ResponseWriter, r *http.Request, m *up
 		http.NotFound(w, r)
 		return
 	}
+	// Startup configuration reinstalls JavaScript connections, so removal here would not last.
+	if slices.ContainsFunc(g.cfg.Connections, func(c upstream.Connection) bool { return c.ID == id && c.JavaScript != nil && !c.ManagedJavaScript }) {
+		g.mu.Unlock()
+		http.Error(w, "JavaScript connections are installed by the operator. Disable it here, or uninstall it from the gateway configuration.", http.StatusConflict)
+		return
+	}
 	next := g.catalogue()
 	next.Connections = slices.DeleteFunc(next.Connections, func(c upstream.Connection) bool { return c.ID == id })
 	next.Tools = slices.DeleteFunc(next.Tools, func(t Tool) bool { return t.Connection == id })
@@ -546,6 +556,20 @@ func (g *Gateway) connectionView(id string) map[string]any {
 	for _, c := range g.cfg.Connections {
 		if c.ID == id {
 			connection = map[string]any{"ID": c.ID, "URL": c.URL, "Account": c.Account, "OAuth": c.OAuth != nil, "ReviewOAuth": c.OAuth != nil, "Disabled": g.cfg.disabledConnection(c.ID)}
+			if c.JavaScript != nil {
+				manifest, _ := json.Marshal(c.JavaScript.Tools)
+				connection["JavaScript"] = true
+				connection["ManagedJavaScript"] = c.ManagedJavaScript
+				connection["URL"] = c.JavaScript.Origin
+				connection["Source"] = c.JavaScript.Source
+				connection["Manifest"] = prettyJSON(manifest)
+				connection["Artifact"] = g.javascriptArtifact(id)
+				for _, tool := range g.cfg.Tools {
+					if tool.Connection == id && tool.Artifact != connection["Artifact"] {
+						connection["ReviewRequired"] = true
+					}
+				}
+			}
 			if c.OAuth != nil {
 				connection["AuthURL"], connection["TokenURL"], connection["Scopes"] = c.OAuth.AuthURL, c.OAuth.TokenURL, strings.Join(c.OAuth.Scopes, " ")
 			}
@@ -593,7 +617,9 @@ func (g *Gateway) connectionRows(ctx context.Context, m *upstream.Manager) ([]co
 	rows := []connectionRow{}
 	for _, c := range g.cfg.Connections {
 		row := connectionRow{ID: c.ID, Account: c.Account, Auth: "Bearer", Private: g.cfg.privateConnection(c.ID), Disabled: g.cfg.disabledConnection(c.ID)}
-		if c.OAuth != nil {
+		if c.JavaScript != nil {
+			row.Auth = "JavaScript"
+		} else if c.OAuth != nil {
 			row.Auth = "OAuth"
 		} else if c.NoAuth {
 			row.Auth = "No auth"
@@ -780,17 +806,23 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 	}
 	draft := toolDraft{Connection: id, Tools: tools, Default: previous.Default, Private: previous.Private, Changes: map[string]string{}}
 	for i := range tools {
+		tools[i].Artifact = g.javascriptArtifact(id)
+		if tools[i].Artifact != "" && g.cfg.defaultPolicy(id) != "deny" {
+			tools[i].Policy = "require_approval"
+		}
+	}
+	for i := range tools {
 		draft.Changes[tools[i].ID] = "New"
 		for _, old := range g.cfg.Tools {
 			if old.Connection == id && old.Name == tools[i].Name {
 				delete(draft.Changes, tools[i].ID)
 				tools[i].ID = old.ID
-				if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description {
+				if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description && old.Artifact == tools[i].Artifact {
 					tools[i].Policy = old.Policy
 				} else {
 					draft.Changes[old.ID] = "Changed"
 					tools[i].Policy = "require_approval"
-					if g.tools[old.ID].Policy == "deny" {
+					if old.Policy == "deny" || (old.Policy == "" && g.cfg.defaultPolicy(id) == "deny") {
 						tools[i].Policy = "deny"
 					}
 				}
@@ -808,7 +840,7 @@ func (g *Gateway) discoverTools(w http.ResponseWriter, r *http.Request, m *upstr
 			if old.Name != tools[i].Name {
 				continue
 			}
-			if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description {
+			if digest(old.InputSchema) == digest(tools[i].InputSchema) && old.Description == tools[i].Description && old.Artifact == tools[i].Artifact {
 				tools[i].Policy = old.Policy
 			} else {
 				tools[i].Policy = "require_approval"

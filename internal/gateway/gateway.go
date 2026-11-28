@@ -36,6 +36,8 @@ import (
 type Tool struct {
 	ID, Connection, Name, Description, Policy string
 	InputSchema                               map[string]any
+	// Artifact pins a reviewed JavaScript bundle, capabilities and credential generation.
+	Artifact string `json:",omitempty"`
 }
 
 // Config holds non-secret configuration. Secrets are supplied by environment variables.
@@ -187,6 +189,9 @@ func New(cfg Config, s *store.Store, b Backend) (*Gateway, error) {
 				return nil, errors.New("invalid native integration tool")
 			}
 		}
+		if connection != nil && connection.JavaScript != nil && t.Artifact != connection.JavaScriptBinding() {
+			continue
+		} // Candidate code is unavailable until its metadata is reviewed.
 		compiler := jsonschema.NewCompiler()
 		// Upstream schemas are untrusted: only references within this document are allowed.
 		compiler.UseLoader(jsonschema.SchemeURLLoader{})
@@ -214,9 +219,22 @@ func digest(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (g *Gateway) binding(tool Tool) string { return g.bindings[tool.ID] }
+func (g *Gateway) binding(tool Tool) string {
+	return g.bindingWith(tool, g.javascriptArtifact(tool.Connection))
+}
+
+func (g *Gateway) bindingWith(tool Tool, binding string) string {
+	if binding == "" {
+		return g.bindings[tool.ID]
+	}
+	return g.bindings[tool.ID] + ":" + binding
+}
 
 func (g *Gateway) connectionBinding(connection string) string {
+	return g.connectionBindingWith(connection, g.javascriptArtifact(connection))
+}
+
+func (g *Gateway) connectionBindingWith(connection, binding string) string {
 	// Reuse the tool bindings, which already cover schema, policy, account,
 	// credentials and owner configuration. Adding or changing a tool changes
 	// the connection-wide authority, including across a restart.
@@ -227,8 +245,9 @@ func (g *Gateway) connectionBinding(connection string) string {
 		}
 	}
 	// The empty element held a shared browser tab's binding before the native
-	// Chrome integration was removed. Keeping it keeps saved approvals valid.
-	return digest([]any{bindings, ""})
+	// Chrome integration was removed. Keeping it keeps saved approvals valid;
+	// JavaScript connections place their live artifact binding here.
+	return digest([]any{bindings, binding})
 }
 
 type findInput struct {
@@ -325,7 +344,7 @@ func (g *Gateway) mcpHandler() http.Handler {
 		identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
 		out := []Tool{}
 		for _, t := range g.tools {
-			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) {
+			if t.Policy == "deny" || g.cfg.disabledConnection(t.Connection) || !identity.allows(g.cfg.privateConnection(t.Connection)) || t.Artifact != g.javascriptArtifact(t.Connection) {
 				continue
 			}
 			hay := strings.ToLower(t.ID + " " + t.Description)
@@ -385,7 +404,7 @@ func (g *Gateway) submit(ctx context.Context, in callInput) (store.Operation, er
 	}
 	c := in.Calls[0]
 	t, ok := g.tools[c.ToolID]
-	if !ok {
+	if !ok || t.Artifact != g.javascriptArtifact(t.Connection) {
 		return store.Operation{}, errors.New("unknown tool")
 	}
 	if !identity.allows(g.cfg.privateConnection(t.Connection)) {
@@ -485,10 +504,17 @@ func (g *Gateway) Run(ctx context.Context) error {
 			t, ok := g.tools[o.Tool]
 			// A binary without disabled connections can queue calls during a rollback.
 			ok = ok && !g.cfg.disabledConnection(t.Connection)
+			expectedBinding := ""
+			valid := false
 			integration, native := g.integration(t.Connection)
-			valid := ok && t.Policy != "deny" && g.binding(t) == o.Binding
+			if ok && t.Policy != "deny" && !native && t.Artifact == g.javascriptArtifact(t.Connection) {
+				expectedBinding = g.javascriptArtifact(t.Connection)
+				valid = g.bindingWith(t, expectedBinding) == o.Binding
+			} else if ok && t.Policy != "deny" && native {
+				valid = g.bindingWith(t, "") == o.Binding
+			}
 			if valid && o.ConnectionBinding != "" {
-				valid = g.connectionBinding(t.Connection) == o.ConnectionBinding
+				valid = g.connectionBindingWith(t.Connection, expectedBinding) == o.ConnectionBinding
 			}
 			g.mu.RUnlock()
 			if !valid {
@@ -503,7 +529,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			if native {
 				result, callErr = g.callIntegration(operationContext{Context: callCtx, Operation: o}, integration, t.Name, o.Arguments)
 			} else {
-				result, callErr = g.backend.Call(callCtx, t.Connection, t.Name, o.Arguments)
+				result, callErr = g.backend.Call(upstream.WithOperation(callCtx, o.ID, expectedBinding), t.Connection, t.Name, o.Arguments)
 			}
 			cancel()
 			status := "succeeded"
@@ -636,8 +662,15 @@ func (g *Gateway) dashboard(w http.ResponseWriter, r *http.Request, m *upstream.
 	case "/integrations":
 		g.mu.RLock()
 		_, configured := g.integration(flyIntegrationID)
-		g.mu.RUnlock()
 		data["FlyConfigured"] = configured
+		var installations []map[string]string
+		for _, c := range g.cfg.Connections {
+			if c.ManagedJavaScript {
+				installations = append(installations, map[string]string{"ID": c.ID, "Account": c.Account})
+			}
+		}
+		data["JavaScriptInstallations"] = installations
+		g.mu.RUnlock()
 	}
 	if err != nil {
 		http.Error(w, "page data unavailable", http.StatusServiceUnavailable)
@@ -710,6 +743,15 @@ func (g *Gateway) operation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{"Operation": o, "Title": name, "ResultBlocks": blocks, "RawResult": prettyJSON(o.Result), "Arguments": prettyJSON(args), "Events": events, "Next": next}
+	attempts, err := g.store.HTTPAttempts(r.Context(), o.ID)
+	if err != nil {
+		http.Error(w, "HTTP journal unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if len(attempts) > 0 {
+		encoded, _ := json.Marshal(attempts)
+		data["HTTPAttempts"] = prettyJSON(encoded)
+	}
 	if o.Status == "pending" {
 		rows := make([][2]string, 0, len(o.Arguments))
 		for _, key := range slices.Sorted(maps.Keys(o.Arguments)) {

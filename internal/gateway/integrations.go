@@ -84,6 +84,10 @@ func (g *Gateway) integration(id string) (Integration, bool) {
 }
 
 func (g *Gateway) registerIntegrations(mux *http.ServeMux, m *upstream.Manager) {
+	mux.HandleFunc("GET /integrations/javascript", func(w http.ResponseWriter, r *http.Request) { g.javascriptUploadPage(w, r, "") })
+	mux.HandleFunc("POST /integrations/javascript", func(w http.ResponseWriter, r *http.Request) { g.uploadJavaScript(w, r, m) })
+	mux.HandleFunc("GET /integrations/javascript/{id}", func(w http.ResponseWriter, r *http.Request) { g.javascriptUploadPage(w, r, "") })
+	mux.HandleFunc("POST /integrations/javascript/{id}", func(w http.ResponseWriter, r *http.Request) { g.uploadJavaScript(w, r, m) })
 	mux.HandleFunc("GET /integrations/fly", g.flyIntegrationPage)
 	mux.HandleFunc("POST /integrations/fly", func(w http.ResponseWriter, r *http.Request) { g.saveFlyIntegration(w, r, m) })
 	mux.HandleFunc("POST /integrations/fly/remove", func(w http.ResponseWriter, r *http.Request) { g.removeFlyIntegration(w, r, m) })
