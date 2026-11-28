@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -291,5 +294,57 @@ func TestSlowInstallationVerificationCannotBlockOrOverwriteRevocation(t *testing
 	stored := s.Configuration().Integrations[in.ID]
 	if stored.Enabled || len(stored.Installations) != 1 {
 		t.Fatal("revocation lost")
+	}
+}
+
+func TestInstallationRepositoriesUseMetadataOnlyTokens(t *testing.T) {
+	f, gh := newGitHub(t)
+	f.sharedApp = true
+	s, _, _, _ := fixtureService(t, "admin", &fakeAmp{}, gh, semaphore.NewWeighted(4))
+	in, _ := sharedIntegration(t)
+	// Drafts are never verified, so they list nothing and call no GitHub API.
+	draft := in
+	draft.Enabled = false
+	if err := s.SaveDraft(t.Context(), draft, map[string]string{"bot": "fake-service-account"}); err != nil {
+		t.Fatal(err)
+	}
+	transport := gh.Client.Transport
+	calls := 0
+	gh.Client.Transport = reviewTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return transport.RoundTrip(r)
+	})
+	if names, err := s.InstallationRepositories(t.Context(), in.ID); err != nil || len(names) != 0 || calls != 0 {
+		t.Fatalf("unverified installations were listed: %v %v %d", names, err, calls)
+	}
+	gh.Client.Transport = transport
+	if err := s.SaveIntegration(t.Context(), in, nil); err != nil {
+		t.Fatal(err)
+	}
+	gh.Client.Transport = reviewTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			var input map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			if _, scoped := input["repositories"]; scoped || !reflect.DeepEqual(input["permissions"], map[string]any{"metadata": "read"}) {
+				t.Errorf("listing token is not metadata-only: %v", input)
+			}
+			_, _ = w.WriteString(`{"token":"list-` + strings.Split(r.URL.Path, "/")[3] + `"}`)
+		case r.URL.Path == "/installation/repositories":
+			owner := map[string]string{"Bearer list-11": "lox", "Bearer list-22": "sporevm"}[r.Header.Get("Authorization")]
+			_, _ = w.WriteString(`{"repositories":[{"full_name":"` + strings.ToUpper(owner) + `/Zeta"},{"full_name":"` + owner + `/alpha"},{"full_name":"` + owner + `/old","archived":true},{"full_name":"elsewhere/repo"}]}`)
+		default:
+			return transport.RoundTrip(r)
+		}
+		return w.Result(), nil
+	})
+	names, err := s.InstallationRepositories(t.Context(), in.ID)
+	if want := []string{"lox/alpha", "lox/zeta", "sporevm/alpha", "sporevm/zeta"}; err != nil || !slices.Equal(names, want) {
+		t.Fatalf("listed %v (%v), want %v", names, err, want)
+	}
+	if _, err := s.InstallationRepositories(t.Context(), "missing"); err == nil {
+		t.Fatal("listed an unknown integration")
 	}
 }

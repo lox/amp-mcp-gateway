@@ -75,8 +75,10 @@ credentials are retained even when no installation currently selects them.
    named Amp execution credential, then installation sections with their owner,
    installation ID and chosen credential. Use fake credentials only in demo mode;
    demo saves unverified paused drafts and never calls GitHub or Amp.
-3. Add `owner/repo` rows to the single **Repositories** list; the Amp
-   `namespace/project` defaults to the same name. Each row belongs to the
+3. Add `owner/repo` rows to the single **Repositories** list, typed or picked
+   with **Add from GitHub…**, which lists the repositories that saved, verified
+   installations can see (using a metadata-only installation token). Listing
+   approves nothing. The Amp `namespace/project` defaults to the same name. Each row belongs to the
    installation whose owner matches its prefix, and a row with no matching
    installation is rejected on save. Explicitly enable the desired rows; new rows
    start disabled. The mapped project must contain that repository, grant the execution

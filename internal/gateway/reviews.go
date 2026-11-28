@@ -3,6 +3,7 @@ package gateway
 import (
 	"crypto/rand"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
@@ -184,6 +185,7 @@ func reviewUsage(days []reviews.DailyUsage) any {
 func (g *Gateway) registerReviews(mux *http.ServeMux) {
 	mux.HandleFunc("GET /integrations/reviews", g.reviewsPage)
 	mux.HandleFunc("POST /integrations/reviews", g.saveReviews)
+	mux.HandleFunc("GET /integrations/reviews/{id}/repositories", g.reviewInstallationRepositories)
 	mux.HandleFunc("POST /integrations/reviews/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if g.Reviews == nil {
 			http.Error(w, "Reviews unavailable", 503)
@@ -214,6 +216,46 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 		}
 		http.Redirect(w, r, "/integrations/reviews", http.StatusSeeOther)
 	})
+}
+
+// reviewInstallationRepositories feeds the "Add from GitHub" picker. It only
+// lists names; adding a row still needs an explicit save that verifies it.
+func (g *Gateway) reviewInstallationRepositories(w http.ResponseWriter, r *http.Request) {
+	if g.Reviews == nil {
+		http.Error(w, "Reviews unavailable", 503)
+		return
+	}
+	id := r.PathValue("id")
+	var names []string
+	var err error
+	if g.cfg.Demo {
+		// The demo never calls GitHub: offer fixed fake names per installation.
+		in, ok := g.Reviews.Configuration().Integrations[id]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		for _, i := range in.Installations {
+			for _, repo := range i.Repositories {
+				names = append(names, repo.Name)
+			}
+			for _, name := range []string{"fly-mcp", "gh-review-bot", "pinned-models", "website"} {
+				names = append(names, i.Owner+"/"+name)
+			}
+		}
+		slices.Sort(names)
+		names = slices.Compact(names)
+	} else {
+		names, err = g.Reviews.InstallationRepositories(r.Context(), id)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string][]string{"repositories": names})
 }
 
 func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) {

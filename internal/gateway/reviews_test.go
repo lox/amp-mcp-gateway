@@ -87,6 +87,17 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 			t.Fatalf("repository rows assigned to the wrong installation: %+v", i)
 		}
 	}
+	// The picker lists names only; the demo offers fake ones and never calls GitHub.
+	if w := formRequest(h, nil, "GET", "/integrations/reviews/lox/repositories", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("anonymous repository listing: %d", w.Code)
+	}
+	if w := formRequest(h, cookie, "GET", "/integrations/reviews/missing/repositories", nil); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown integration listing: %d", w.Code)
+	}
+	w = formRequest(h, cookie, "GET", "/integrations/reviews/lox/repositories", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"lox/repo"`) || !strings.Contains(w.Body.String(), `"sporevm/fly-mcp"`) {
+		t.Fatalf("demo repository listing: %d %s", w.Code, w.Body.String())
+	}
 	values.Set("private_key", "")
 	values.Set("webhook_secret", "")
 	values.Set("credential_key", "")

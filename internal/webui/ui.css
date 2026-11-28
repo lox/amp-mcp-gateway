@@ -429,13 +429,53 @@
   }
   :where(html.dashboard) .review-repository-add {
     @apply grid gap-2 items-center mt-3;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   }
   :where(html.dashboard) .review-repository-add input {
     @apply p-[8px_10px];
   }
   @media (max-width: 600px) {
     :where(html.dashboard) .review-repository-add { grid-template-columns: 1fr; }
+  }
+  :where(html.dashboard) .review-picker {
+    @apply mt-3 p-4;
+  }
+  :where(html.dashboard) .review-picker[hidden] {
+    display: none;
+  }
+  :where(html.dashboard) .review-picker-head {
+    @apply flex flex-wrap items-start gap-3;
+  }
+  :where(html.dashboard) .review-picker-head > div {
+    @apply flex-1;
+  }
+  :where(html.dashboard) .review-picker-head .help {
+    @apply m-0;
+  }
+  :where(html.dashboard) .review-picker-head input {
+    @apply w-56 p-[7px_10px];
+  }
+  :where(html.dashboard) .review-picker ul {
+    @apply list-none p-0 my-3 max-h-80 overflow-y-auto border-y border-divider;
+  }
+  :where(html.dashboard) .review-picker li {
+    @apply grid gap-3 items-center p-[4px_0];
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  :where(html.dashboard) .review-picker li[hidden] {
+    display: none;
+  }
+  :where(html.dashboard) .review-picker li label {
+    @apply m-0;
+  }
+  :where(html.dashboard) .review-picker li input:not([type]) {
+    @apply p-[6px_8px];
+  }
+  :where(html.dashboard) .review-picker .actions {
+    @apply items-center mt-0;
+  }
+  :where(html.dashboard) .review-picker .actions .help {
+    @apply m-0 mr-auto;
   }
   :where(html.dashboard) .review-save-bar {
     @apply sticky bottom-0 z-10 items-center mt-4 -mx-4 p-[12px_16px] bg-surface border-t border-divider;

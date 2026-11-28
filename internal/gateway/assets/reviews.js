@@ -79,6 +79,18 @@
       newName.reportValidity();
       return false;
     }
+    appendRepository(name, newProject.value.trim() || name, false).scrollIntoView({ block: 'nearest' });
+    newName.value = newProject.value = '';
+    newProject.placeholder = 'Amp project · same as repo';
+    newName.focus();
+    return true;
+  }
+
+  function configured() {
+    return new Set(Array.from(rows.querySelectorAll('[data-review-repository] [name$=".name"]'), input => input.value));
+  }
+
+  function appendRepository(name, project, enabled) {
     const fragment = clone('repository', `new${sequence++}`);
     fragment.querySelector('[name$=".name"]').value = name;
     for (const label of fragment.querySelectorAll('[data-review-name]')) label.textContent = name;
@@ -87,17 +99,96 @@
         if (control.hasAttribute(attribute)) control.setAttribute(attribute, control.getAttribute(attribute).replace('__name__', name));
       }
     }
-    fragment.querySelector('[name$=".project"]').value = newProject.value.trim() || name;
+    fragment.querySelector('[name$=".project"]').value = project;
+    fragment.querySelector('input[type="checkbox"]').checked = enabled;
     const row = fragment.querySelector('[data-review-repository]');
     rows.append(fragment);
-    newName.value = newProject.value = '';
-    newProject.placeholder = 'Amp project · defaults to the same name';
     if (filter) filter.value = '';
     refresh();
-    row.scrollIntoView({ block: 'nearest' });
-    newName.focus();
-    return true;
+    return row;
   }
+
+  // "Add from GitHub" lists what the saved installations can see. It only fills
+  // in rows: nothing is approved until the form is saved and verified.
+  const picker = form.querySelector('[data-review-picker]');
+  const pickerList = picker?.querySelector('[data-review-picker-list]');
+  const pickerStatus = picker?.querySelector('[data-review-picker-status]');
+  function pickerSelection() {
+    const count = pickerList.querySelectorAll('input[type="checkbox"]:checked').length;
+    picker.querySelector('[data-review-picker-selected]').textContent = `${count} selected`;
+    for (const button of picker.querySelectorAll('[data-review-picker-add]')) button.disabled = count === 0;
+  }
+  async function openPicker(url) {
+    picker.hidden = false;
+    pickerList.replaceChildren();
+    picker.querySelector('[data-review-picker-filter]').value = '';
+    pickerStatus.textContent = 'Loading repositories from GitHub…';
+    pickerSelection();
+    let names;
+    try {
+      const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      names = body.repositories ?? [];
+    } catch (error) {
+      pickerStatus.textContent = `Could not list repositories: ${error.message}`;
+      return;
+    }
+    const existing = configured();
+    const available = names.filter(name => !existing.has(name));
+    pickerStatus.textContent = `${names.length} visible to the App · ${available.length} not configured`;
+    pickerList.replaceChildren(...available.map(name => {
+      const item = document.createElement('li');
+      item.dataset.name = name;
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      label.append(box, document.createTextNode(name));
+      const project = document.createElement('input');
+      project.value = name;
+      project.setAttribute('aria-label', `Amp project for ${name}`);
+      project.spellcheck = false;
+      item.append(label, project);
+      return item;
+    }));
+    if (!available.length) pickerStatus.textContent += ' · everything is already in the list';
+    picker.querySelector('[data-review-picker-filter]').focus();
+  }
+  picker?.addEventListener('input', event => {
+    if (event.target.matches('[data-review-picker-filter]')) {
+      const query = event.target.value.trim().toLowerCase();
+      for (const item of pickerList.children) item.hidden = query !== '' && !item.dataset.name.includes(query);
+    }
+    event.stopPropagation();
+  });
+  picker?.addEventListener('change', event => {
+    pickerSelection();
+    event.stopPropagation();
+  });
+  picker?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') event.preventDefault();
+  });
+  picker?.addEventListener('click', event => {
+    const add = event.target.closest('[data-review-picker-add]');
+    if (add) {
+      const enable = add.dataset.reviewPickerAdd === 'enable';
+      const existing = configured();
+      let last;
+      for (const item of pickerList.children) {
+        const box = item.querySelector('input[type="checkbox"]');
+        if (!box.checked || existing.has(item.dataset.name)) continue;
+        last = appendRepository(item.dataset.name, item.querySelector('input:not([type])').value.trim() || item.dataset.name, enable);
+      }
+      picker.hidden = true;
+      last?.scrollIntoView({ block: 'nearest' });
+      form.querySelector('[data-review-picker-open]').focus();
+    } else if (event.target.closest('[data-review-picker-close]')) {
+      picker.hidden = true;
+      form.querySelector('[data-review-picker-open]').focus();
+    }
+    event.stopPropagation();
+  });
+  form.querySelector('[data-review-picker-open]')?.addEventListener('click', event => openPicker(event.currentTarget.dataset.reviewPickerOpen));
 
   credentials();
   refresh();
@@ -106,7 +197,7 @@
     if (event.target.name === 'credential_name') credentials();
     if (event.target === newName) {
       newName.setCustomValidity('');
-      newProject.placeholder = repositoryName() || 'Amp project · defaults to the same name';
+      newProject.placeholder = repositoryName() || 'Amp project · same as repo';
     }
     refresh();
   });
