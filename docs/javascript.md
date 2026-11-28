@@ -134,7 +134,8 @@ changed permissions fall back to approval and existing blocks remain blocked.
 A → B → A and removal/reinstallation do not resurrect old consent.
 
 The worker claims the parent operation before executing JS. Before each possible
-HTTP send, the broker rechecks authority and durably appends a sanitized intent.
+HTTP send, the broker rechecks authority and durably appends a sanitized intent
+with the full destination URL, effective allowed headers and body.
 It adds the bearer header only afterward. Known JSON responses are encrypted in
 the ordered journal; authentication and arbitrary response headers are omitted.
 Request/response bodies can contain sensitive application data and remain visible

@@ -313,6 +313,25 @@ export async function createIssue(args,ctx) {
 	if err != nil || len(attempts) != 1 || attempts[0].Response != nil {
 		t.Fatalf("lost uncertainty on restart: %+v %v", attempts, err)
 	}
+	restoredGateway, err := gateway.New(cfg, s, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredMux := http.NewServeMux()
+	auth.Register(restoredMux)
+	restoredMux.Handle("/", restoredGateway.UI(auth, restored))
+	server.Config.Handler = restoredMux
+	// Removing the integration must not strip the historical origin from an unknown operation's journal.
+	post("/connections/issues/remove", url.Values{"confirm": {"remove"}})
+	lostPageResp, err := admin.Get(server.URL + "/operations/js-case-lost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lostPage, _ := io.ReadAll(lostPageResp.Body)
+	lostPageResp.Body.Close()
+	if lostPageResp.StatusCode != 200 || !strings.Contains(string(lostPage), "https://api.example.com/repos/test/issues") || strings.Contains(string(lostPage), "fake-provider-token") {
+		t.Fatalf("operation page lost immutable HTTP destination after connection removal: %d %s", lostPageResp.StatusCode, lostPage)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if writes != 4 {

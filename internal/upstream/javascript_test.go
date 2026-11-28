@@ -25,7 +25,8 @@ func TestJavaScriptHTTPAuthority(t *testing.T) {
 		name, request string
 		allowed       bool
 	}{
-		{"granted", `{"method":"POST","path":"/allowed","body":{"x":3}}`, true},
+		{"granted", `{"method":"POST","path":"/allowed","query":{"page":"2"},"headers":{"Accept":"application/vnd.example+json"},"body":{"x":3}}`, true},
+		{"duplicate header", `{"method":"POST","path":"/allowed","headers":{"Accept":"application/json","accept":"text/plain"}}`, false},
 		{"wrong method", `{"method":"DELETE","path":"/allowed"}`, false},
 		{"wrong path", `{"method":"POST","path":"/other"}`, false},
 		{"absolute URL", `{"method":"POST","path":"https://evil.example/allowed"}`, false},
@@ -57,7 +58,7 @@ func TestJavaScriptHTTPAuthority(t *testing.T) {
 			old := javascriptTransport
 			javascriptTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls++
-				if r.URL.String() != "https://api.example.com/allowed" || r.Header.Get("Authorization") != "Bearer fake-broker-token" {
+				if r.URL.String() != "https://api.example.com/allowed?page=2" || r.Header.Get("Authorization") != "Bearer fake-broker-token" {
 					t.Errorf("wrong authenticated destination %s", r.URL)
 				}
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
@@ -77,6 +78,9 @@ func TestJavaScriptHTTPAuthority(t *testing.T) {
 			}
 			if calls != expected || len(attempts) != expected {
 				t.Fatalf("calls=%d journal=%d expected=%d", calls, len(attempts), expected)
+			}
+			if tt.allowed && string(attempts[0].Request) != `{"method":"POST","url":"https://api.example.com/allowed?page=2","headers":{"Accept":"application/vnd.example+json","Content-Type":"application/json"},"body":{"x":3}}` {
+				t.Fatalf("journal request = %s", attempts[0].Request)
 			}
 		})
 	}

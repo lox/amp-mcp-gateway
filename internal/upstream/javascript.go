@@ -152,21 +152,41 @@ func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name 
 		if err != nil {
 			return nil, err
 		}
+		seenHeaders := make(map[string]bool, len(request.Headers))
 		for k, v := range request.Headers {
-			switch strings.ToLower(k) {
-			case "accept", "content-type":
+			canonical := http.CanonicalHeaderKey(k)
+			switch canonical {
+			case "Accept", "Content-Type":
 			default:
 				return nil, errors.New("HTTP header denied")
 			}
-			if strings.ContainsAny(v, "\r\n") {
+			if seenHeaders[canonical] || strings.ContainsAny(v, "\r\n") {
 				return nil, errors.New("invalid HTTP header")
 			}
-			req.Header.Set(k, v)
+			seenHeaders[canonical] = true
+			req.Header.Set(canonical, v)
 		}
 		if req.Header.Get("Content-Type") == "" && len(request.Body) > 0 {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		sanitized, err := json.Marshal(request)
+		var headers map[string]string
+		if len(req.Header) > 0 {
+			headers = make(map[string]string, len(req.Header))
+			for k := range req.Header {
+				headers[k] = req.Header.Get(k)
+			}
+		}
+		sanitized, err := json.Marshal(struct {
+			Method  string            `json:"method"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers,omitempty"`
+			Body    json.RawMessage   `json:"body,omitempty"`
+		}{
+			Method:  req.Method,
+			URL:     req.URL.String(),
+			Headers: headers,
+			Body:    request.Body,
+		})
 		if err != nil || len(sanitized) > jsruntime.MaxInput {
 			return nil, errors.New("HTTP request exceeds limit")
 		}
