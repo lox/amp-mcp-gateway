@@ -25,7 +25,11 @@ repository ID before recording work. GitHub verifies new installation owner IDs
 and repository IDs on save; subsequent execution verifies the App/installation/
 owner again and uses a token restricted to that repository. Repository recreation
 or transfer does not inherit approval. Unknown installations and repositories are
-rejected without creating jobs. All installations of an App use its one webhook
+rejected without creating jobs. A pull request event from a configured
+installation's repository with no row is still rejected, but the repository is
+listed under **Awaiting approval** on the configure page; **Enable** saves an
+enabled row through the same verified save, and **Ignore** hides it until the
+repository is recreated with a new ID. All installations of an App use its one webhook
 URL; the account segment routes to an isolated gateway account, never grants access.
 
 The gateway's retained browser OAuth grant is **not an execution credential**.

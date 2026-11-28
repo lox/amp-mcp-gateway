@@ -139,6 +139,7 @@ type Service struct {
 	owner        string
 	store        *store.Store
 	config       Configuration
+	pending      pendingState
 	amp          Executor
 	github       *GitHub
 	slots        *semaphore.Weighted
@@ -163,6 +164,12 @@ func New(ctx context.Context, owner string, st *store.Store, amp Executor, githu
 	s.config, err = readConfiguration(b)
 	if err != nil {
 		return nil, errors.New("invalid reviews configuration")
+	}
+	if b, err = st.LoadToken(ctx, pendingKey); err != nil {
+		return nil, err
+	}
+	if s.pending, err = readPending(b); err != nil {
+		return nil, errors.New("invalid pending reviews state")
 	}
 	if err := st.RecoverReviews(ctx); err != nil {
 		return nil, err

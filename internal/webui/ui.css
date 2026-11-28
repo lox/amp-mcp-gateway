@@ -477,6 +477,34 @@
   :where(html.dashboard) .review-picker .actions .help {
     @apply m-0 mr-auto;
   }
+  :where(html.dashboard) .review-pending.card {
+    @apply max-w-240 mb-6 p-[16px_20px];
+    border-color: #e9cf7a;
+    background: #fffaea;
+  }
+  :where(html.dashboard) .review-pending h2 {
+    @apply mt-0 mb-1 text-[18px];
+  }
+  :where(html.dashboard) .review-pending-row {
+    @apply grid gap-4 items-center py-3 border-t;
+    border-color: #f0e2b0;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  }
+  :where(html.dashboard) .review-pending-row > div:first-of-type {
+    @apply flex flex-col;
+  }
+  :where(html.dashboard) .reviews .review-pending-row label {
+    @apply m-0 text-[12px] text-muted;
+  }
+  :where(html.dashboard) .review-pending-row input {
+    @apply p-[6px_8px] text-[14px] text-ink;
+  }
+  :where(html.dashboard) .review-pending-row .actions {
+    @apply m-0 flex-nowrap;
+  }
+  @media (max-width: 700px) {
+    :where(html.dashboard) .review-pending-row { grid-template-columns: 1fr; }
+  }
   :where(html.dashboard) .review-save-bar {
     @apply sticky bottom-0 z-10 items-center mt-4 -mx-4 p-[12px_16px] bg-surface border-t border-divider;
     box-shadow: 0 -6px 16px rgb(21 36 67 / 0.06);

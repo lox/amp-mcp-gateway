@@ -27,6 +27,7 @@ var reviewTemplateFuncs = template.FuncMap{
 	"reviewTime":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format(time.RFC3339) },
 	"reviewDate":  func(nanos int64) string { return time.Unix(0, nanos).UTC().Format("02 Jan · 15:04 UTC") },
 	"reviewStats": reviewStats,
+	"reviewSeen":  func(unix int64) string { return time.Unix(unix, 0).UTC().Format("02 Jan · 15:04 UTC") },
 	"reviewUsage": reviewUsage,
 	"reviewEstimate": func(cost *float64) string {
 		if cost == nil {
@@ -186,6 +187,7 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 	mux.HandleFunc("GET /integrations/reviews", g.reviewsPage)
 	mux.HandleFunc("POST /integrations/reviews", g.saveReviews)
 	mux.HandleFunc("GET /integrations/reviews/{id}/repositories", g.reviewInstallationRepositories)
+	mux.HandleFunc("POST /integrations/reviews/{id}/pending/{action}", g.reviewPending)
 	mux.HandleFunc("POST /integrations/reviews/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if g.Reviews == nil {
 			http.Error(w, "Reviews unavailable", 503)
@@ -258,6 +260,37 @@ func (g *Gateway) reviewInstallationRepositories(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(map[string][]string{"repositories": names})
 }
 
+// reviewPending approves or ignores a repository awaiting approval. Approval
+// saves an enabled row through the normal verified save.
+func (g *Gateway) reviewPending(w http.ResponseWriter, r *http.Request) {
+	if g.Reviews == nil {
+		http.Error(w, "Reviews unavailable", 503)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if r.ParseForm() != nil {
+		http.Error(w, "Invalid form", 400)
+		return
+	}
+	id, repo := r.PathValue("id"), r.PostForm.Get("repository")
+	var err error
+	switch r.PathValue("action") {
+	case "approve":
+		err = g.Reviews.ApprovePending(r.Context(), id, repo, r.PostForm.Get("project"), g.cfg.Demo)
+	case "ignore":
+		err = g.Reviews.IgnorePending(r.Context(), id, repo)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		r.URL.RawQuery = url.Values{"app": {id}}.Encode()
+		g.renderReviews(w, r, err.Error(), nil, nil)
+		return
+	}
+	http.Redirect(w, r, "/integrations/reviews?"+url.Values{"saved": {"1"}, "app": {id}}.Encode(), http.StatusSeeOther)
+}
+
 func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) {
 	g.renderReviews(w, r, "", nil, nil)
 }
@@ -325,6 +358,10 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		if repo.Enabled {
 			enabled++
 		}
+	}
+	pendingCounts := map[string]int{}
+	for id := range config.Integrations {
+		pendingCounts[id] = len(g.Reviews.Pending(id))
 	}
 	credentials := map[string]bool{}
 	for id := range config.Credentials {
@@ -394,6 +431,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
 		"ReviewInstallations": installations, "ReviewRepositories": repositories, "ReviewEnabledRepositories": enabled, "ReviewCredentials": credentials,
 		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Index: "__r__", Repository: reviews.Repository{Name: "__name__"}},
+		"ReviewPending": g.Reviews.Pending(selected.ID), "ReviewUnsaved": values != nil, "ReviewPendingCounts": pendingCounts,
 		"ReviewJobs": jobs, "ReviewFilter": filter, "ReviewRefresh": template.URL(refreshURL), "ReviewFilterRepositories": filterRepositories, "ReviewStatuses": reviewStatuses, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
