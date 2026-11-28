@@ -104,6 +104,9 @@ keys/tokens are never passed to the CLI or review orb. Amp/project access comes
 from the execution account and project, not a GitHub credential injected by the
 gateway.
 
+Reviews leave full test suites, builds and repository-wide checks to CI: the
+prompt allows only the narrowest test that settles a specific suspected defect.
+
 The Docker image includes a pinned native Amp CLI; Node is only a build tool, not
 a review service runtime. For non-container deployment install the version pinned
 in `Dockerfile` on the service PATH. The Go executor uses the official CLI's
