@@ -41,7 +41,7 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 		"repository": {"a", "b", "c"}, "r.a.name": {"sporevm/repo"}, "r.a.project": {"sporevm/repo"},
 		"r.b.name": {"lox/repo"}, "r.b.project": {"lox/repo"}, "r.b.enabled": {"on"},
 		"r.c.name": {"acme/repo"}, "r.c.project": {"acme/repo"}}
-	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel"} {
+	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel", "/integrations/reviews/unknown/close-check"} {
 		if w := formRequest(h, nil, "POST", path, values); w.Code != http.StatusSeeOther {
 			t.Fatalf("anonymous %s: %d", path, w.Code)
 		}

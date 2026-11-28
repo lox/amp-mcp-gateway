@@ -174,7 +174,10 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   GitHub and stop the external execution before acknowledging a rerun, or choose
   **Resolve without re-running** (also available when paused). Resolve records the
   owner's acknowledgement; it does not stop a remote orb or repair a GitHub check.
-  GitHub reruns cannot acknowledge unknown outcomes.
+  GitHub reruns cannot acknowledge unknown outcomes. To close a check left open,
+  use **Close GitHub check** on the failed or cancelled review: it reads the check
+  and, only if GitHub still shows it in progress, closes it as cancelled without
+  findings.
 - Restart marks interrupted work unknown. Recovery can requeue pre-dispatch work,
   discover an already-created check, or confirm a completed publication by its
   App, external ID, SHA and conclusion. It never guesses that an uncertain launch

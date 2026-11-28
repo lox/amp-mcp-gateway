@@ -192,9 +192,13 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 			return
 		}
 		var err error
+		message := "Review action unavailable. Check its status, approved repository and frozen context; unknown outcomes require acknowledgement."
 		switch r.PathValue("action") {
 		case "cancel":
 			err = g.Reviews.Cancel(r.Context(), r.PathValue("id"), r.PostForm.Get("acknowledge") == "on")
+		case "close-check":
+			err = g.Reviews.CloseCheck(r.Context(), r.PathValue("id"))
+			message = "Could not close the GitHub check. It may already be closed or the repository is no longer approved; refresh to see its state."
 		case "rerun":
 			err = g.Reviews.Rerun(r.Context(), r.PathValue("id"), "browser:"+rand.Text(), r.PostForm.Get("acknowledge") == "on")
 		default:
@@ -202,7 +206,7 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 			return
 		}
 		if err != nil {
-			g.renderReviews(w, r, "Review action unavailable. Check its status, approved repository and frozen context; unknown outcomes require acknowledgement.", nil, nil)
+			g.renderReviews(w, r, message, nil, nil)
 			return
 		}
 		http.Redirect(w, r, "/integrations/reviews", http.StatusSeeOther)
