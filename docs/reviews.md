@@ -209,7 +209,9 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   provider list-price estimates are separate. The UI shows the latest 100 reviews
   plus the next unresolved outcome when older,
   linked checks/threads, frozen SHAs, findings, stage and errors; all history remains
-  stored. There is no retention deletion, historical pagination or spend budget yet.
+  stored. Filters by configured repository, exact pull request number and status
+  search all stored history and show the newest 100 matches. There is no retention
+  deletion, historical pagination or spend budget yet.
 
 ## Migrate lox-amp-reviewbot without dual execution
 

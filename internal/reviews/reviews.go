@@ -2,6 +2,7 @@
 package reviews
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -189,18 +191,45 @@ func (s *Service) update(ctx context.Context, j *Job) error {
 	return nil
 }
 
+// HistoryFilter narrows history. Zero fields match everything; Number
+// matches one pull request exactly.
+type HistoryFilter struct {
+	Repository, Status string
+	Number             int
+}
+
 // History returns recent records only from this account, with no credentials.
 // Always include the next unresolved outcome, even behind a full queue.
-func (s *Service) History(ctx context.Context) ([]Job, error) {
-	jobs, err := s.list(ctx, "", 100)
-	if err != nil {
-		return nil, err
+// A filter searches all stored history and returns the newest 100 matches.
+func (s *Service) History(ctx context.Context, f HistoryFilter) ([]Job, error) {
+	if f.Repository == "" && f.Number == 0 {
+		jobs, err := s.list(ctx, f.Status, 100)
+		if err != nil || f.Status != "" {
+			return jobs, err
+		}
+		unknown, err := s.list(ctx, "unknown", 1)
+		if len(unknown) > 0 && !slices.ContainsFunc(jobs, func(j Job) bool { return j.ID == unknown[0].ID }) {
+			jobs = append(unknown, jobs...)
+		}
+		return jobs, err
 	}
-	unknown, err := s.list(ctx, "unknown", 1)
-	if len(unknown) > 0 && !slices.ContainsFunc(jobs, func(j Job) bool { return j.ID == unknown[0].ID }) {
-		jobs = append(unknown, jobs...)
-	}
-	return jobs, err
+	// Repository and number live in the encrypted payload, so scan it all.
+	var jobs []Job
+	err := s.store.VisitReviews(ctx, 0, math.MaxInt64, func(r store.ReviewRecord) error {
+		j, err := decode(r)
+		if err != nil {
+			return err
+		}
+		if j.OwnerID != s.owner {
+			return errors.New("review owner mismatch")
+		}
+		if (f.Status == "" || j.Status == f.Status) && (f.Repository == "" || j.Repository == f.Repository) && (f.Number == 0 || j.Number == f.Number) {
+			jobs = append(jobs, j)
+		}
+		return nil
+	})
+	slices.SortFunc(jobs, func(a, b Job) int { return cmp.Or(cmp.Compare(b.Created, a.Created), strings.Compare(b.ID, a.ID)) })
+	return jobs[:min(len(jobs), 100)], err
 }
 
 func (s *Service) list(ctx context.Context, status string, limit int) ([]Job, error) {

@@ -302,7 +302,7 @@ func deliver(t *testing.T, s *Service, a App, p pull, delivery, event, action st
 }
 func history(t *testing.T, s *Service) []Job {
 	t.Helper()
-	jobs, err := s.History(t.Context())
+	jobs, err := s.History(t.Context(), HistoryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1228,5 +1228,48 @@ func TestOwnerClosesCheckLeftOpenByResolve(t *testing.T) {
 	}
 	if s.CloseCheck(t.Context(), j.ID) == nil || f.finished != 1 {
 		t.Fatal("closed an already completed check again")
+	}
+}
+
+func TestHistoryFilterMatchesExactlyBeyondLatestPage(t *testing.T) {
+	s, st, _, _ := fixtureService(t, "owner", &fakeAmp{}, &GitHub{}, semaphore.NewWeighted(1))
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	insert := func(id, repo string, number int, status string, created time.Time) {
+		t.Helper()
+		j := Job{ID: id, App: "app", Delivery: id, OwnerID: "owner", Repository: repo, Number: number, Status: status, Created: created.UnixNano()}
+		if err := st.InsertReview(t.Context(), j.record(), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("target", "lox/bridge", 1, "cancelled", start)
+	insert("other-repo", "lox/gateway", 1, "cancelled", start)
+	insert("other-status", "lox/bridge", 1, "succeeded", start.Add(time.Second))
+	// More than a page of newer reviews, sharing one timestamp, hide the target
+	// from the unfiltered list. PR #10 and #11 must not match #1.
+	for i := range 120 {
+		insert(fmt.Sprint("newer-", i), "lox/bridge", 10+i%2, "cancelled", start.Add(time.Hour))
+	}
+	ids := func(jobs []Job) []string {
+		var out []string
+		for _, j := range jobs {
+			out = append(out, j.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	got, err := s.History(t.Context(), HistoryFilter{Repository: "lox/bridge", Number: 1, Status: "cancelled"})
+	if err != nil || !slices.Equal(ids(got), []string{"target"}) {
+		t.Fatalf("filtered history %v, %v", ids(got), err)
+	}
+	got, _ = s.History(t.Context(), HistoryFilter{Number: 1})
+	if !slices.Equal(ids(got), []string{"other-repo", "other-status", "target"}) || got[0].ID != "other-status" {
+		t.Fatalf("exact number match or newest-first order wrong: %v", ids(got))
+	}
+	got, _ = s.History(t.Context(), HistoryFilter{Number: 10})
+	if len(got) != 60 {
+		t.Fatalf("tied timestamps dropped: %d of 60", len(got))
+	}
+	if got, _ := s.History(t.Context(), HistoryFilter{Repository: "lox/bridge"}); len(got) != 100 || got[0].Created != start.Add(time.Hour).UnixNano() {
+		t.Fatalf("not the newest 100: %d", len(got))
 	}
 }

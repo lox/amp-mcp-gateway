@@ -87,6 +87,12 @@
 {{end}}
 <div class="integration-grid">{{range .ReviewApps}}<section class="card integration-card"><h2>{{.ID}} <span class="badge {{if .Enabled}}succeeded{{end}}">{{if .Enabled}}Enabled{{else}}Paused{{end}}</span></h2><p class="sub">App {{.AppID}} · {{len .Installations}} approved installations</p>{{range .Installations}}<p>{{.Owner}} · {{len .Repositories}} configured repositories · {{.ExecutionCredential}}</p>{{end}}<p>Fail on {{.FailOn}} or above</p><a class="button" href="/integrations/reviews?app={{.ID}}">Configure {{.ID}} →</a></section>{{else}}<p class="empty">No review integrations yet. Add one to connect GitHub repositories to Amp.</p>{{end}}</div>
 <section class="card"><div class="heading"><div><h2>Review history</h2><p class="sub">Latest 100 jobs plus unresolved work · frozen commits and context · refresh to see progress</p></div><a class="button" href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Refresh</a></div>
+<form class="review-filters" method="get" action="/integrations/reviews" role="search">{{if .ReviewApp.ID}}<input type="hidden" name="app" value="{{.ReviewApp.ID}}">{{end}}
+<label>Repository<select name="repo"><option value="">All repositories</option>{{range .ReviewFilterRepositories}}<option value="{{.}}" {{if eq . $.ReviewFilter.Repository}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label>Pull request<input name="pr" inputmode="numeric" pattern="#?[0-9]+" placeholder="Exact number" value="{{if .ReviewFilter.Number}}{{.ReviewFilter.Number}}{{end}}"></label>
+<label>Status<select name="status"><option value="">Any status</option>{{range .ReviewStatuses}}<option value="{{.}}" {{if eq . $.ReviewFilter.Status}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<button>Filter</button>{{if or .ReviewFilter.Repository .ReviewFilter.Number .ReviewFilter.Status}}<a href="/integrations/reviews{{if .ReviewApp.ID}}?app={{.ReviewApp.ID}}{{end}}">Clear</a>{{end}}</form>
+{{if or .ReviewFilter.Repository .ReviewFilter.Number .ReviewFilter.Status}}<p class="help">{{len .ReviewJobs}} matching review{{if ne (len .ReviewJobs) 1}}s{{end}}{{if eq (len .ReviewJobs) 100}} · showing the newest 100{{end}}</p>{{end}}
 {{range .ReviewJobs}}{{$stats := reviewStats .}}<details class="card review-job"><summary class="review-summary">
 <span class="review-identity"><strong>{{if .Context.Title}}{{.Context.Title}}{{else}}{{.Repository}}#{{.Number}}{{end}}</strong><span class="help">{{.Repository}}#{{.Number}}{{if ge (len .HeadSHA) 7}} · <code>{{slice .HeadSHA 0 7}}</code>{{end}}</span><time class="help" datetime="{{reviewTime .Created}}">{{reviewDate .Created}}</time></span>
 <span class="review-outcome"><span class="badge {{$stats.Class}}">{{$stats.Outcome}}</span><span class="help">{{.App}}</span></span>
@@ -105,7 +111,7 @@
 {{$closable := and .CheckID (or (eq .Status "failed") (eq .Status "cancelled"))}}{{if $closable}}<p class="help">If GitHub still shows this review's check in progress, Close GitHub check marks it cancelled. No findings are sent.</p>{{end}}
 <div class="actions flex items-center gap-2">{{if $closable}}<form method="post" action="/integrations/reviews/{{.ID}}/close-check"><button>Close GitHub check</button></form>{{end}}
 {{if or (eq .Status "queued") (eq .Status "running")}}<form method="post" action="/integrations/reviews/{{.ID}}/cancel"><button class="danger">Cancel review</button></form>{{else}}<form method="post" action="/integrations/reviews/{{.ID}}/rerun">{{if eq .Status "unknown"}}<label><input type="checkbox" name="acknowledge" required> I checked the external outcome and stopped any old execution.</label><button formaction="/integrations/reviews/{{.ID}}/cancel">Resolve without re-running</button>{{end}}<button>Re-run frozen review</button></form>{{end}}</div>
-</details>{{else}}<p class="empty">No reviews yet. Reviews will appear here when an enabled integration receives a pull request.</p>{{end}}
+</details>{{else}}<p class="empty">{{if or .ReviewFilter.Repository .ReviewFilter.Number .ReviewFilter.Status}}No reviews match these filters.{{else}}No reviews yet. Reviews will appear here when an enabled integration receives a pull request.{{end}}</p>{{end}}
 </section>
 {{end}}
 </div>
