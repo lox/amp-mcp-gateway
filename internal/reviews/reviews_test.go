@@ -335,7 +335,7 @@ func TestGitHubAppJWT(t *testing.T) {
 func TestSignedLifecycleAndReruns(t *testing.T) {
 	f, gh := newGitHub(t)
 	amp := &fakeAmp{}
-	s, _, path, _ := fixtureService(t, "user-one", amp, gh, semaphore.NewWeighted(4))
+	s, st, path, _ := fixtureService(t, "user-one", amp, gh, semaphore.NewWeighted(4))
 	a := fixtureApp(t, "lox")
 	if err := s.Save(t.Context(), a); err != nil {
 		t.Fatal(err)
@@ -383,6 +383,48 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	rerun := history(t, s)[0]
 	if rerun.Context != j.Context || rerun.BaseSHA != j.BaseSHA || rerun.HeadSHA != j.HeadSHA || rerun.CheckID != 0 {
 		t.Fatal("rerun changed frozen context")
+	}
+	if rerun.Previous != nil || strings.Contains(prompt(rerun), "previous-findings") {
+		t.Fatal("rerun of the first review is incremental")
+	}
+	// A push re-reviews from the last successful head and its published
+	// findings; re-running that job reviews the whole PR again.
+	if err := s.Cancel(t.Context(), rerun.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	pushed := p
+	pushed.Head.SHA = strings.Repeat("d", 40)
+	if got := deliver(t, s, a, pushed, "push", "pull_request", "synchronize", nil); got != 202 {
+		t.Fatalf("push intake %d", got)
+	}
+	next := history(t, s)[0]
+	if next.Previous == nil || next.Previous.HeadSHA != p.Head.SHA || !slices.Equal(next.Previous.Findings, j.Result.Findings) {
+		t.Fatalf("push did not freeze the previous review: %+v", next.Previous)
+	}
+	if text := prompt(next); !strings.Contains(text, "git diff "+p.Head.SHA+" "+pushed.Head.SHA) || !strings.Contains(text, "Wrong result") || strings.Contains(text, "Unchanged") {
+		t.Fatal("re-review prompt lacks the interdiff or published findings")
+	}
+	if err := s.Cancel(t.Context(), next.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rerun(t.Context(), next.ID, "manual-push", false); err != nil {
+		t.Fatal(err)
+	}
+	if full := history(t, s)[0]; full.HeadSHA != pushed.Head.SHA || full.Previous != nil {
+		t.Fatalf("rerun is not a full review: %+v", full)
+	}
+	// Reopening the latest reviewed head has no interdiff, so it must not
+	// fall back to an older head and drop the latest review's findings.
+	older := j
+	older.ID, older.Delivery, older.HeadSHA, older.Created = "older", "older", strings.Repeat("e", 40), j.Created-1
+	if err := st.InsertReview(t.Context(), older.record(), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := deliver(t, s, a, p, "reopen", "pull_request", "reopened", nil); got != 202 {
+		t.Fatalf("reopen intake %d", got)
+	}
+	if reopened := history(t, s)[0]; reopened.Delivery != "reopen" || reopened.Previous != nil {
+		t.Fatalf("same-head event inherited an older review: %+v", reopened.Previous)
 	}
 	for _, suffix := range []string{"", "-wal"} {
 		raw, _ := os.ReadFile(path + suffix)
