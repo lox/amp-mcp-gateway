@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -318,6 +319,20 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		filter.Status = status
 	}
 	jobs, err := g.Reviews.History(r.Context(), filter)
+	// Refresh keeps the accepted filters; Clear is the explicit reset.
+	refresh := url.Values{}
+	for key, value := range map[string]string{"repo": filter.Repository, "status": filter.Status} {
+		if value != "" {
+			refresh.Set(key, value)
+		}
+	}
+	if filter.Number > 0 {
+		refresh.Set("pr", strconv.Itoa(filter.Number))
+	}
+	refreshURL := "/integrations/reviews"
+	if len(refresh) > 0 {
+		refreshURL += "?" + refresh.Encode()
+	}
 	if err != nil {
 		http.Error(w, "Review history unavailable", 503)
 		return
@@ -337,7 +352,7 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
 		"ReviewInstallations": installations, "ReviewRepositories": repositories, "ReviewEnabledRepositories": enabled, "ReviewCredentials": credentials,
 		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Index: "__r__", Repository: reviews.Repository{Name: "__name__"}},
-		"ReviewJobs": jobs, "ReviewFilter": filter, "ReviewFilterRepositories": filterRepositories, "ReviewStatuses": reviewStatuses, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+		"ReviewJobs": jobs, "ReviewFilter": filter, "ReviewRefresh": template.URL(refreshURL), "ReviewFilterRepositories": filterRepositories, "ReviewStatuses": reviewStatuses, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {

@@ -103,6 +103,9 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	if body := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(body, `<option value="lox/repo" selected>`) || !strings.Contains(body, `name="pr" inputmode="numeric" pattern="#?[0-9]+" placeholder="Exact number" value="1"`) || strings.Contains(body, `<option value="bogus"`) || strings.Contains(body, `" selected>queued`) || !strings.Contains(body, "No reviews match these filters.") {
 		t.Fatal("history filter not parsed")
 	}
+	if body := formRequest(h, cookie, "GET", "/integrations/reviews?repo=lox/repo&pr=1", nil).Body.String(); !strings.Contains(body, `href="/integrations/reviews?pr=1&amp;repo=lox%2Frepo">Refresh`) {
+		t.Fatal("refresh dropped the active filters")
+	}
 	if body := formRequest(h, cookie, "GET", "/integrations/reviews?repo=acme/other", nil).Body.String(); strings.Contains(body, " selected>acme/other") || strings.Contains(body, "No reviews match") {
 		t.Fatal("unconfigured repository applied as a filter")
 	}
