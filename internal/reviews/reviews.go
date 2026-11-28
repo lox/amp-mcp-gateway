@@ -213,8 +213,10 @@ func (s *Service) History(ctx context.Context, f HistoryFilter) ([]Job, error) {
 		}
 		return jobs, err
 	}
-	// Repository and number live in the encrypted payload, so scan it all.
-	var jobs []Job
+	// Repository and number live in the encrypted payload, so scan it all,
+	// keeping only the newest 100 matches: history is never deleted.
+	newer := func(a, b Job) int { return cmp.Or(cmp.Compare(b.Created, a.Created), strings.Compare(b.ID, a.ID)) }
+	jobs := make([]Job, 0, 101)
 	err := s.store.VisitReviews(ctx, 0, math.MaxInt64, func(r store.ReviewRecord) error {
 		j, err := decode(r)
 		if err != nil {
@@ -224,12 +226,14 @@ func (s *Service) History(ctx context.Context, f HistoryFilter) ([]Job, error) {
 			return errors.New("review owner mismatch")
 		}
 		if (f.Status == "" || j.Status == f.Status) && (f.Repository == "" || j.Repository == f.Repository) && (f.Number == 0 || j.Number == f.Number) {
-			jobs = append(jobs, j)
+			i, _ := slices.BinarySearchFunc(jobs, j, newer)
+			if i < 100 {
+				jobs = slices.Insert(jobs, i, j)[:min(len(jobs)+1, 100)]
+			}
 		}
 		return nil
 	})
-	slices.SortFunc(jobs, func(a, b Job) int { return cmp.Or(cmp.Compare(b.Created, a.Created), strings.Compare(b.ID, a.ID)) })
-	return jobs[:min(len(jobs), 100)], err
+	return jobs, err
 }
 
 func (s *Service) list(ctx context.Context, status string, limit int) ([]Job, error) {
