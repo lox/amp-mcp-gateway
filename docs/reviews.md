@@ -75,8 +75,11 @@ credentials are retained even when no installation currently selects them.
    named Amp execution credential, then installation sections with their owner,
    installation ID and chosen credential. Use fake credentials only in demo mode;
    demo saves unverified paused drafts and never calls GitHub or Amp.
-3. Add individual `owner/repo` → Amp `namespace/project` rows, then explicitly
-   enable the desired rows. New rows start disabled. The mapped project must contain that repository, grant the execution
+3. Add `owner/repo` rows to the single **Repositories** list; the Amp
+   `namespace/project` defaults to the same name. Each row belongs to the
+   installation whose owner matches its prefix, and a row with no matching
+   installation is rejected on save. Explicitly enable the desired rows; new rows
+   start disabled. The mapped project must contain that repository, grant the execution
    account access and allow fetching the exact PR commits, including fork heads.
 4. Install [pinned-models.js](reviews/pinned-models.js) in the execution account's
    **User or Workspace Plugins repository** (once, not additionally in each
@@ -101,6 +104,9 @@ keys/tokens are never passed to the CLI or review orb. Amp/project access comes
 from the execution account and project, not a GitHub credential injected by the
 gateway.
 
+Reviews leave full test suites, builds and repository-wide checks to CI: the
+prompt allows only the narrowest test that settles a specific suspected defect.
+
 The Docker image includes a pinned native Amp CLI; Node is only a build tool, not
 a review service runtime. For non-container deployment install the version pinned
 in `Dockerfile` on the service PATH. The Go executor uses the official CLI's
@@ -120,7 +126,10 @@ single-review footprint. Check memory headroom before adding concurrent accounts
 The history list shows each PR's title, frozen head, outcome, findings by severity,
 elapsed time and Amp credits without expanding the row. A completed review with
 blocking findings is distinct from a failed review execution. Elapsed time includes
-queue time and all attempts; running values update on refresh. Costs sum recorded
+queue time and all attempts, and the queued part is shown separately for reviews
+recorded since start times were stored; running values update on refresh. Each
+attempt also shows the tokens and turns its CLI stream reported, available as soon
+as the attempt ends; this has no cost and never replaces Amp's usage. Costs sum recorded
 usage across attempts, marking incomplete totals as partial rather than treating
 missing usage as zero. The separate provider estimate is not an additional charge.
 
@@ -168,12 +177,21 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   GitHub and stop the external execution before acknowledging a rerun, or choose
   **Resolve without re-running** (also available when paused). Resolve records the
   owner's acknowledgement; it does not stop a remote orb or repair a GitHub check.
-  GitHub reruns cannot acknowledge unknown outcomes.
+  GitHub reruns cannot acknowledge unknown outcomes. To close a check left open,
+  use **Close GitHub check** on the failed or cancelled review: it reads the check
+  and, only if GitHub still shows it in progress, closes it as cancelled without
+  findings.
 - Restart marks interrupted work unknown. Recovery can requeue pre-dispatch work,
   discover an already-created check, or confirm a completed publication by its
   App, external ID, SHA and conclusion. It never guesses that an uncertain launch
-  failed. Persistently unknown jobs need the owner; their threads are not silently
-  archived. Check creation recovery is bounded to 1,000 checks for the commit.
+  failed. SIGTERM detaches the pinned CLI from an orb thread, which keeps running
+  remotely, so a PR merged mid-review usually leaves an unknown review. Once its
+  PR is closed, draft or superseded, recovery archives each recorded thread that
+  is still working, which stops its executor. When `amp threads export` then shows
+  each thread idle, recovery closes its still-open check as cancelled (no findings)
+  and the account resumes, normally within two maintenance passes. Other persistently unknown jobs, including
+  those on still-open PRs, need the owner; their threads are not silently archived.
+  Check creation recovery is bounded to 1,000 checks for the commit.
 - A failed finalization database write stops the worker and propagates through
   the gateway's supervised process. After storage is healthy, restart recovery
   handles the last durable checkpoint; the worker never silently leaves a review
@@ -183,13 +201,20 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   minutes and seven days ago, and never repeats a known head. Older/missing events
   require a GitHub redelivery or a new PR event. Dependency errors leave the next
   pass to retry reads rather than manufacturing a successful review.
-- Cleanup processes up to twenty terminal records per minute. Successful archival
+- A published review archives its threads and reads their usage straight after
+  publication, before the account's next review starts, so its orb stops billing;
+  other outcomes wait for cleanup because their remote thread may still be working.
+  Cleanup then processes up to twenty terminal records per minute. Successful archival
   and usage capture are persisted separately; failed archival retries on later
-  passes. Unavailable usage is recorded explicitly, not as zero. Amp credits and
+  passes. Amp limits usage reads to about 60 per hour per user, so a failed read
+  retries after 15 minutes, 1, 2 and 4 hours; only then is usage recorded explicitly
+  as unavailable, not as zero. Amp credits and
   provider list-price estimates are separate. The UI shows the latest 100 reviews
   plus the next unresolved outcome when older,
   linked checks/threads, frozen SHAs, findings, stage and errors; all history remains
-  stored. There is no retention deletion, historical pagination or spend budget yet.
+  stored. Filters by configured repository, exact pull request number and status
+  search all stored history and show the newest 100 matches. There is no retention
+  deletion, historical pagination or spend budget yet.
 
 ## Migrate lox-amp-reviewbot without dual execution
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,10 +28,12 @@ func TestCLIStreamAndEnvironmentIsolation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			init, _ := json.Marshal(map[string]any{"type": "system", "subtype": "init", "agent_mode": tc.mode, "session_id": testThread})
-			result, _ := json.Marshal(map[string]any{"type": "result", "session_id": tc.resultID, "is_error": false, "result": `{"summary":"ok","findings":[]}`})
+			result, _ := json.Marshal(map[string]any{"type": "result", "session_id": tc.resultID, "is_error": false, "result": `{"summary":"ok","findings":[]}`, "num_turns": 2})
+			// Real CLI shape: uncached, cache-write and cache-read input all count.
+			assistant := `{"type":"assistant","message":{"usage":{"input_tokens":5,"cache_creation_input_tokens":300,"cache_read_input_tokens":4000,"output_tokens":20}},"session_id":"` + testThread + `"}`
 			script := "#!/bin/sh\nset -eu\ntest -z \"${GITHUB_PRIVATE_KEY:-}${GATEWAY_ENCRYPTION_KEY:-}${AMP_THREAD_ID:-}\"\ntest \"$AMP_API_KEY\" = 'tenant-execution-key'\ntest \"$PWD\" = \"$HOME\"\ncat >/dev/null\n"
 			if !tc.omitInit {
-				script += "printf '%s\\n' '" + string(init) + "'\n"
+				script += "printf '%s\\n' '" + string(init) + "' '" + assistant + "' '" + assistant + "'\n"
 			}
 			script += "printf '%s\\n' '" + string(result) + "'\n"
 			binary := filepath.Join(t.TempDir(), "amp")
@@ -38,12 +41,24 @@ func TestCLIStreamAndEnvironmentIsolation(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := ""
-			output, err := (CLI{Binary: binary}).Execute(t.Context(), "tenant-execution-key", Job{Project: "workspace/project", Visibility: "private"}, func(id string) error { seen = id; return nil })
+			var usage []StreamUsage
+			output, err := (CLI{Binary: binary}).Execute(t.Context(), "tenant-execution-key", Job{Project: "workspace/project", Visibility: "private"}, func(id string) error { seen = id; return nil }, func(id string, u StreamUsage) {
+				if id != testThread {
+					t.Errorf("usage for %s", id)
+				}
+				usage = append(usage, u)
+			})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("output %q error %v", output, err)
 			}
 			if !tc.wantErr && (seen != testThread || output != `{"summary":"ok","findings":[]}`) {
 				t.Fatal("stream result lost")
+			}
+			if tc.name == "valid" && !slices.Equal(usage, []StreamUsage{{InputTokens: 8610, OutputTokens: 40, Turns: 2}}) {
+				t.Fatalf("stream usage %+v", usage)
+			}
+			if tc.omitInit && usage != nil {
+				t.Fatal("usage reported for an unidentified stream")
 			}
 		})
 	}
@@ -60,7 +75,7 @@ func TestCLITruncationAndTimeoutNeverReturnSuccess(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		_, err := (CLI{Binary: binary}).Execute(ctx, "fake-key", Job{}, func(string) error { return nil })
+		_, err := (CLI{Binary: binary}).Execute(ctx, "fake-key", Job{}, func(string) error { return nil }, func(string, StreamUsage) {})
 		cancel()
 		if block {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -96,6 +111,30 @@ func TestUsageDistinguishesCreditsAndProviderEstimate(t *testing.T) {
 	}
 }
 
+func TestStoppedRequiresIdleExecutor(t *testing.T) {
+	// Shapes taken from `amp threads export` output.
+	export := func(state, last string) string {
+		return `{"id":"T-1","meta":{"lastKnownAgentState":{"state":"` + state + `","messageID":"M-1"}},"messages":[{"role":"user","content":[]}` + last + `]}`
+	}
+	for _, tc := range []struct {
+		name, export string
+		want         bool
+	}{
+		{"finished", export("idle", `,{"role":"assistant","state":{"type":"complete","stopReason":"end_turn"}}`), true},
+		{"orb-booting-after-detach", export("working", ""), false},
+		{"running-tools", export("running_tools", `,{"role":"assistant","state":{"type":"complete","stopReason":"tool_use"}}`), false},
+		{"no-agent-state", `{"meta":{},"messages":[]}`, false},
+	} {
+		got, err := parseStopped([]byte(tc.export))
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %v, %v", tc.name, got, err)
+		}
+	}
+	if _, err := parseStopped([]byte("Error: thread not found")); err == nil {
+		t.Error("unreadable export treated as a state")
+	}
+}
+
 func TestCLIRejectsDuplicateInitAndWrongContinuation(t *testing.T) {
 	init := `{"type":"system","subtype":"init","agent_mode":"reviewbot-v1","session_id":"` + testThread + `"}`
 	result := `{"type":"result","session_id":"` + testThread + `","result":"incorrect success"}`
@@ -108,7 +147,7 @@ func TestCLIRejectsDuplicateInitAndWrongContinuation(t *testing.T) {
 			t.Fatal(err)
 		}
 		seen := map[string]bool{}
-		_, _, err := (CLI{Binary: binary}).execute(t.Context(), "fake-key", nil, "prompt", tc.expected, func(id string) error { seen[id] = true; return nil })
+		_, _, err := (CLI{Binary: binary}).execute(t.Context(), "fake-key", nil, "prompt", tc.expected, func(id string) error { seen[id] = true; return nil }, func(string, StreamUsage) {})
 		if !errors.Is(err, errAmbiguous) {
 			t.Fatalf("invalid stream became successful: %v", err)
 		}

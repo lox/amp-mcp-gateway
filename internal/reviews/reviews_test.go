@@ -35,27 +35,39 @@ import (
 const testThread = "T-00000000-0000-0000-0000-000000000123"
 
 type fakeAmp struct {
-	execute func(context.Context, string, Job, func(string) error) (string, error)
-	keys    []string
+	execute  func(context.Context, string, Job, func(string) error) (string, error)
+	keys     []string
+	stopped  bool
+	usageErr error
+	mu       sync.Mutex
 }
 
-func (f *fakeAmp) Execute(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
+func (f *fakeAmp) Execute(ctx context.Context, key string, j Job, onThread func(string) error, onUsage func(string, StreamUsage)) (string, error) {
 	if f.execute != nil {
 		return f.execute(ctx, key, j, onThread)
 	}
 	if err := onThread(testThread); err != nil {
 		return "", err
 	}
+	onUsage(testThread, StreamUsage{InputTokens: 100, OutputTokens: 7, Turns: 2})
 	return `{"summary":"Reviewed","findings":[{"severity":"high","title":"Wrong result","message":"This input returns the wrong value","suggestion":"Check the input","path":"main.go","startLine":3,"endLine":5},{"severity":"critical","title":"Unchanged","message":"Not in this diff","suggestion":"Ignore","path":"main.go","startLine":2}]}`, nil
 }
 func (f *fakeAmp) Archive(_ context.Context, key, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, key+":"+id)
 	return nil
 }
 func (f *fakeAmp) Usage(_ context.Context, key, id string) (*Usage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, key+":"+id)
+	if f.usageErr != nil {
+		return nil, f.usageErr
+	}
 	return &Usage{CostUSD: 0.23, InputTokens: 120, OutputTokens: 9, Requests: 2}, nil
 }
+func (f *fakeAmp) Stopped(context.Context, string, string) (bool, error) { return f.stopped, nil }
 
 type fakeGitHub struct {
 	mu                          sync.Mutex
@@ -290,7 +302,7 @@ func deliver(t *testing.T, s *Service, a App, p pull, delivery, event, action st
 }
 func history(t *testing.T, s *Service) []Job {
 	t.Helper()
-	jobs, err := s.History(t.Context())
+	jobs, err := s.History(t.Context(), HistoryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,10 +367,10 @@ func TestSignedLifecycleAndReruns(t *testing.T) {
 	if check["conclusion"] != "failure" || check["details_url"] != "https://ampcode.com/threads/"+testThread {
 		t.Fatalf("check: %+v", check)
 	}
-	if err := s.Maintain(t.Context()); err != nil {
-		t.Fatal(err)
+	if j.Started < j.Created || j.Threads[0].Stream == nil || *j.Threads[0].Stream != (StreamUsage{InputTokens: 100, OutputTokens: 7, Turns: 2}) {
+		t.Fatalf("start or stream usage lost: %+v", j)
 	}
-	j = history(t, s)[0]
+	// Publication archives and reads usage without waiting for maintenance.
 	if !j.Threads[0].Archived || j.Threads[0].Usage.CostUSD != 0.23 || j.Threads[0].Usage.ProviderEstimateUSD != nil {
 		t.Fatal("cleanup or unknown estimate lost")
 	}
@@ -991,6 +1003,97 @@ func TestAccountsShareCapacityWithoutMonopolizingExecution(t *testing.T) {
 	}
 }
 
+func TestMergedDuringReviewResolvesOnceThreadStopped(t *testing.T) {
+	for _, reject := range []int{0, 403} {
+		t.Run(fmt.Sprint("reject-", reject), func(t *testing.T) { testMergedDuringReview(t, reject) })
+	}
+}
+
+func testMergedDuringReview(t *testing.T, reject int) {
+	f, gh := newGitHub(t)
+	setState := func(state string) {
+		f.mu.Lock()
+		p := f.pulls["lox/repo"]
+		p.State = state
+		f.pulls["lox/repo"] = p
+		f.mu.Unlock()
+	}
+	calls := 0
+	amp := &fakeAmp{}
+	amp.execute = func(ctx context.Context, key string, j Job, onThread func(string) error) (string, error) {
+		calls++
+		if calls > 1 {
+			return (&fakeAmp{}).Execute(ctx, key, j, onThread, func(string, StreamUsage) {})
+		}
+		// The PR merges mid-review and the CLI exits without a terminal result.
+		if err := onThread(testThread); err != nil {
+			return "", err
+		}
+		setState("closed")
+		return "", errAmbiguous
+	}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "first", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	maintain := func(want string) Job {
+		t.Helper()
+		if err := s.Maintain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		j := history(t, s)[len(history(t, s))-1]
+		if j.Status != want {
+			t.Fatalf("status %s, want %s", j.Status, want)
+		}
+		return j
+	}
+	// The PR closed mid-review, so the detached thread is archived to stop
+	// it, but the check stays open until Amp confirms it stopped.
+	if j := maintain("unknown"); !j.Threads[0].Archived || !slices.Contains(amp.keys, a.AmpKey+":"+testThread) {
+		t.Fatalf("detached thread not stopped: %+v", j)
+	}
+	amp.stopped = true
+	setState("open")
+	maintain("unknown") // An open PR still needs the owner's decision.
+	if f.finished != 0 {
+		t.Fatal("check closed before the review was safely resolved")
+	}
+	setState("closed")
+	f.rejectPublish = reject
+	want, closed := "cancelled", 1
+	if reject != 0 {
+		// A definite rejection leaves the check open; history must not claim it closed.
+		want, closed = "failed", 0
+	}
+	j := maintain(want)
+	if check := f.checks[j.CheckID]; f.finished != closed || closed == 1 && (check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil) {
+		t.Fatalf("check not closed as cancelled without findings: %v", check)
+	}
+	f.rejectPublish = 0
+	maintain(want)
+	if f.finished != closed {
+		t.Fatal("cancellation resent")
+	}
+
+	next := fixturePull("lox/repo", 44)
+	next.Number = 8
+	f.mu.Lock()
+	f.pulls["lox/repo"] = next
+	f.mu.Unlock()
+	deliver(t, s, a, next, "second", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := history(t, s)[0]; got.Number != 8 || got.Status != "succeeded" {
+		t.Fatalf("account did not resume: #%d %s", got.Number, got.Status)
+	}
+}
+
 func TestQueueCapacityAndUnknownHeadDoNotLaunchDuplicates(t *testing.T) {
 	_, gh := newGitHub(t)
 	s, _, _, _ := fixtureService(t, "user", &fakeAmp{execute: func(context.Context, string, Job, func(string) error) (string, error) { return "", errAmbiguous }}, gh, semaphore.NewWeighted(4))
@@ -1035,5 +1138,138 @@ func TestQueueCapacityAndUnknownHeadDoNotLaunchDuplicates(t *testing.T) {
 	}
 	if jobs, err := s.list(t.Context(), "queued", 100); err != nil || len(jobs) != 99 {
 		t.Fatal("resolved account did not resume")
+	}
+}
+
+func TestUsageReadsBackOffBeforeGivingUp(t *testing.T) {
+	f, gh := newGitHub(t)
+	_ = f
+	amp := &fakeAmp{usageErr: errors.New("Usage information is limited to 60 requests per hour")}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "first", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reads := func() int { return len(amp.keys) - 1 } // One archive, then usage reads.
+	thread := func() Thread { return history(t, s)[0].Threads[0] }
+	if got := thread(); reads() != 1 || got.UsageError != "" || got.UsageAttempts != 1 || got.UsageRetryAt < time.Now().Add(14*time.Minute).Unix() {
+		t.Fatalf("first failure was final or not backed off: %+v", got)
+	}
+	if err := s.Maintain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reads() != 1 {
+		t.Fatal("usage re-read before its retry time")
+	}
+	due := func() {
+		t.Helper()
+		j := history(t, s)[0]
+		j.Threads[0].UsageRetryAt = time.Now().Unix()
+		if err := s.update(t.Context(), &j); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Maintain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range usageRetries {
+		due()
+	}
+	if got := thread(); reads() != 1+len(usageRetries) || got.UsageError != "Usage unavailable" {
+		t.Fatalf("retries not exhausted: %d reads, %+v", reads(), got)
+	}
+	amp.usageErr = nil
+	due()
+	if reads() != 1+len(usageRetries) || thread().Usage != nil {
+		t.Fatal("final failure was retried")
+	}
+}
+
+func TestOwnerClosesCheckLeftOpenByResolve(t *testing.T) {
+	f, gh := newGitHub(t)
+	amp := &fakeAmp{execute: func(_ context.Context, _ string, _ Job, onThread func(string) error) (string, error) {
+		if err := onThread(testThread); err != nil {
+			return "", err
+		}
+		return "", errAmbiguous
+	}}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "one", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	j := history(t, s)[0]
+	if s.CloseCheck(t.Context(), j.ID) == nil {
+		t.Fatal("closed the check of an unresolved review")
+	}
+	// Resolving records the acknowledgement but leaves GitHub untouched.
+	if err := s.Cancel(t.Context(), j.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.checks[j.CheckID]["status"] != "in_progress" {
+		t.Fatalf("fixture: resolve changed the check: %v", f.checks[j.CheckID])
+	}
+	if err := s.CloseCheck(t.Context(), j.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	check, finished := f.checks[j.CheckID], f.finished
+	f.mu.Unlock()
+	if finished != 1 || check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil {
+		t.Fatalf("check not closed as cancelled without findings: %v", check)
+	}
+	if s.CloseCheck(t.Context(), j.ID) == nil || f.finished != 1 {
+		t.Fatal("closed an already completed check again")
+	}
+}
+
+func TestHistoryFilterMatchesExactlyBeyondLatestPage(t *testing.T) {
+	s, st, _, _ := fixtureService(t, "owner", &fakeAmp{}, &GitHub{}, semaphore.NewWeighted(1))
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	insert := func(id, repo string, number int, status string, created time.Time) {
+		t.Helper()
+		j := Job{ID: id, App: "app", Delivery: id, OwnerID: "owner", Repository: repo, Number: number, Status: status, Created: created.UnixNano()}
+		if err := st.InsertReview(t.Context(), j.record(), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("target", "lox/bridge", 1, "cancelled", start)
+	insert("other-repo", "lox/gateway", 1, "cancelled", start)
+	insert("other-status", "lox/bridge", 1, "succeeded", start.Add(time.Second))
+	// More than a page of newer reviews, sharing one timestamp, hide the target
+	// from the unfiltered list. PR #10 and #11 must not match #1.
+	for i := range 120 {
+		insert(fmt.Sprint("newer-", i), "lox/bridge", 10+i%2, "cancelled", start.Add(time.Hour))
+	}
+	ids := func(jobs []Job) []string {
+		var out []string
+		for _, j := range jobs {
+			out = append(out, j.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	got, err := s.History(t.Context(), HistoryFilter{Repository: "lox/bridge", Number: 1, Status: "cancelled"})
+	if err != nil || !slices.Equal(ids(got), []string{"target"}) {
+		t.Fatalf("filtered history %v, %v", ids(got), err)
+	}
+	got, _ = s.History(t.Context(), HistoryFilter{Number: 1})
+	if !slices.Equal(ids(got), []string{"other-repo", "other-status", "target"}) || got[0].ID != "other-status" {
+		t.Fatalf("exact number match or newest-first order wrong: %v", ids(got))
+	}
+	got, _ = s.History(t.Context(), HistoryFilter{Number: 10})
+	if len(got) != 60 {
+		t.Fatalf("tied timestamps dropped: %d of 60", len(got))
+	}
+	if got, _ := s.History(t.Context(), HistoryFilter{Repository: "lox/bridge"}); len(got) != 100 || got[0].Created != start.Add(time.Hour).UnixNano() {
+		t.Fatalf("not the newest 100: %d", len(got))
 	}
 }

@@ -12,13 +12,14 @@ The gateway exposes four tools to agents:
 - `get_operation` returns the persisted status and result.
 - `propose_policy_changes` prepares permission changes for human review.
 
-Extension-aware clients also discover [MCP usage skills](docs/dev.md#mcp-usage-skills)
-for the gateway and shared Chrome tab, with instructions loaded only when needed.
+Extension-aware clients also discover a [gateway usage skill](docs/dev.md#mcp-usage-skills),
+with instructions loaded only when needed.
 
 It is self-hosted and supports isolated owner accounts on one shared host. Each
 account has separate connections, credentials, approvals, and history. Remote
-MCP connections can use OAuth or bearer tokens; governed native tools and the
-Chrome extension use the same policy, approval, and audit path. Owners can also
+MCP connections can use OAuth or bearer tokens; governed native tools use the
+same policy, approval, and audit path. To let agents use a local Chrome tab, use
+[Amp Browser Bridge](https://github.com/lox/amp-browser-bridge). Owners can also
 store encrypted secrets and approve access for individual Amp threads or projects.
 The Reviews integration runs GitHub App reviews for explicitly approved repositories.
 
@@ -53,7 +54,7 @@ it.
 ## Documentation
 
 - [Development guide](docs/dev.md): runnable examples, remote MCP setup, native
-  integrations, Chrome sharing, deployment, identity, and security boundaries.
+  integrations, deployment, identity, and security boundaries.
 - [JavaScript adapters](docs/javascript.md): isolated API tools, installation,
   HTTP capabilities, resource limits and upgrade safety.
 - [Reviews](docs/reviews.md): GitHub Apps, execution credentials, review lifecycle

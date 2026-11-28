@@ -7,6 +7,8 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 
 //go:embed reviews.html
 var reviewsHTML string
+
+var reviewStatuses = []string{"queued", "running", "succeeded", "failed", "cancelled", "unknown"}
 
 var reviewTemplateFuncs = template.FuncMap{
 	"severities":  func() []string { return []string{"critical", "high", "medium", "low"} },
@@ -35,8 +39,8 @@ var reviewTemplateFuncs = template.FuncMap{
 // Costs include every attempt; missing usage must never look like a free review.
 func reviewStats(j reviews.Job) any {
 	v := struct {
-		Outcome, Class, Elapsed, Credits, Estimate string
-		Findings                                   []struct {
+		Outcome, Class, Elapsed, Queued, Credits, Estimate string
+		Findings                                           []struct {
 			Severity string
 			Count    int
 		}
@@ -62,6 +66,15 @@ func reviewStats(j reviews.Job) any {
 		elapsed := end.Sub(time.Unix(0, j.Created))
 		if elapsed >= 0 {
 			v.Elapsed = elapsed.Round(time.Second).String()
+		}
+		// Reviews recorded before Started existed show no split. The worker
+		// polls every second, so a few seconds is pickup, not a wait.
+		queuedUntil := time.Unix(0, j.Started)
+		if j.Started == 0 && j.Status == "queued" {
+			queuedUntil = end
+		}
+		if queued := queuedUntil.Sub(time.Unix(0, j.Created)).Round(time.Second); (j.Started > 0 || j.Status == "queued") && queued >= 5*time.Second && queued <= elapsed {
+			v.Queued = queued.String()
 		}
 	}
 	if j.Result != nil {
@@ -182,9 +195,13 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 			return
 		}
 		var err error
+		message := "Review action unavailable. Check its status, approved repository and frozen context; unknown outcomes require acknowledgement."
 		switch r.PathValue("action") {
 		case "cancel":
 			err = g.Reviews.Cancel(r.Context(), r.PathValue("id"), r.PostForm.Get("acknowledge") == "on")
+		case "close-check":
+			err = g.Reviews.CloseCheck(r.Context(), r.PathValue("id"))
+			message = "Could not close the GitHub check. It may already be closed or the repository is no longer approved; refresh to see its state."
 		case "rerun":
 			err = g.Reviews.Rerun(r.Context(), r.PathValue("id"), "browser:"+rand.Text(), r.PostForm.Get("acknowledge") == "on")
 		default:
@@ -192,27 +209,48 @@ func (g *Gateway) registerReviews(mux *http.ServeMux) {
 			return
 		}
 		if err != nil {
-			g.renderReviews(w, r, "Review action unavailable. Check its status, approved repository and frozen context; unknown outcomes require acknowledgement.", nil)
+			g.renderReviews(w, r, message, nil, nil)
 			return
 		}
 		http.Redirect(w, r, "/integrations/reviews", http.StatusSeeOther)
 	})
 }
 
-func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) { g.renderReviews(w, r, "", nil) }
+func (g *Gateway) reviewsPage(w http.ResponseWriter, r *http.Request) {
+	g.renderReviews(w, r, "", nil, nil)
+}
 
 type reviewInstallationView struct {
 	Index string
 	reviews.Installation
-	Repositories []reviewRepositoryView
 }
 
 type reviewRepositoryView struct {
-	Prefix, Index string
+	Index string
 	reviews.Repository
 }
 
-func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message string, values *reviews.Integration) {
+// Overrides summarises a row's non-default settings for its compact chip.
+func (r reviewRepositoryView) Overrides() string {
+	var parts []string
+	if r.FailOn != "" {
+		parts = append(parts, "fail on "+r.FailOn)
+	}
+	if r.Visibility != "" {
+		parts = append(parts, r.Visibility)
+	}
+	if r.TimeoutMinutes != 0 {
+		parts = append(parts, strconv.Itoa(r.TimeoutMinutes)+" min")
+	}
+	if len(parts) == 0 {
+		return "Defaults"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// renderReviews shows one repository list across installations. A rejected
+// form passes its submitted rows, including any that matched no installation.
+func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message string, values *reviews.Integration, rows []reviews.Repository) {
 	if g.Reviews == nil {
 		http.Error(w, "Reviews unavailable", 503)
 		return
@@ -230,11 +268,21 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 	editing := existing || values != nil || r.URL.Query().Get("new") == "1"
 	var installations []reviewInstallationView
 	for n, i := range selected.Installations {
-		v := reviewInstallationView{Index: strconv.Itoa(n), Installation: i}
-		for k, repo := range i.Repositories {
-			v.Repositories = append(v.Repositories, reviewRepositoryView{Prefix: "i." + v.Index, Index: strconv.Itoa(k), Repository: repo})
+		installations = append(installations, reviewInstallationView{Index: strconv.Itoa(n), Installation: i})
+		if values == nil {
+			rows = append(rows, i.Repositories...)
 		}
-		installations = append(installations, v)
+	}
+	if values == nil {
+		slices.SortFunc(rows, func(a, b reviews.Repository) int { return strings.Compare(a.Name, b.Name) })
+	}
+	var repositories []reviewRepositoryView
+	enabled := 0
+	for n, repo := range rows {
+		repositories = append(repositories, reviewRepositoryView{Index: strconv.Itoa(n), Repository: repo})
+		if repo.Enabled {
+			enabled++
+		}
 	}
 	credentials := map[string]bool{}
 	for id := range config.Credentials {
@@ -247,7 +295,44 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 			}
 		}
 	}
-	jobs, err := g.Reviews.History(r.Context())
+	// Filter options come from configuration; unknown values are ignored.
+	var filterRepositories []string
+	for _, in := range config.Integrations {
+		for _, i := range in.Installations {
+			for _, repo := range i.Repositories {
+				if name := strings.ToLower(repo.Name); !slices.Contains(filterRepositories, name) {
+					filterRepositories = append(filterRepositories, name)
+				}
+			}
+		}
+	}
+	slices.Sort(filterRepositories)
+	query := r.URL.Query()
+	var filter reviews.HistoryFilter
+	if repo := strings.ToLower(query.Get("repo")); slices.Contains(filterRepositories, repo) {
+		filter.Repository = repo
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(query.Get("pr")), "#")); err == nil && n > 0 {
+		filter.Number = n
+	}
+	if status := query.Get("status"); slices.Contains(reviewStatuses, status) {
+		filter.Status = status
+	}
+	jobs, err := g.Reviews.History(r.Context(), filter)
+	// Refresh keeps the accepted filters; Clear is the explicit reset.
+	refresh := url.Values{}
+	for key, value := range map[string]string{"repo": filter.Repository, "status": filter.Status} {
+		if value != "" {
+			refresh.Set(key, value)
+		}
+	}
+	if filter.Number > 0 {
+		refresh.Set("pr", strconv.Itoa(filter.Number))
+	}
+	refreshURL := "/integrations/reviews"
+	if len(refresh) > 0 {
+		refreshURL += "?" + refresh.Encode()
+	}
 	if err != nil {
 		http.Error(w, "Review history unavailable", 503)
 		return
@@ -265,9 +350,9 @@ func (g *Gateway) renderReviews(w http.ResponseWriter, r *http.Request, message 
 		w.WriteHeader(http.StatusBadRequest)
 	}
 	g.render(w, r, map[string]any{"Section": "integrations", "ReviewsPage": true, "ReviewApps": config.Integrations, "ReviewApp": selected, "ReviewExisting": existing, "ReviewEditing": editing,
-		"ReviewInstallations": installations, "ReviewCredentials": credentials,
-		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Prefix: "i.__i__", Index: "__r__"},
-		"ReviewJobs": jobs, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
+		"ReviewInstallations": installations, "ReviewRepositories": repositories, "ReviewEnabledRepositories": enabled, "ReviewCredentials": credentials,
+		"ReviewInstallationTemplate": reviewInstallationView{Index: "__i__"}, "ReviewRepositoryTemplate": reviewRepositoryView{Index: "__r__", Repository: reviews.Repository{Name: "__name__"}},
+		"ReviewJobs": jobs, "ReviewFilter": filter, "ReviewRefresh": template.URL(refreshURL), "ReviewFilterRepositories": filterRepositories, "ReviewStatuses": reviewStatuses, "ReviewUsage": usage, "ReviewWebhook": strings.TrimRight(g.cfg.BaseURL, "/") + "/webhooks/reviews/" + g.Reviews.Route() + "/", "Error": message, "Saved": r.URL.Query().Get("saved") == "1", "ReviewDemo": g.cfg.Demo})
 }
 
 func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
@@ -296,28 +381,46 @@ func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
 		}
 		credentials[id] = f["credential_key"][n]
 	}
+	installations := map[string]int{}
 	for _, token := range f["installation"] {
 		prefix := "i." + token
 		i := reviews.Installation{Owner: f.Get(prefix + ".owner"), ExecutionCredential: f.Get(prefix + ".credential")}
 		i.ID, _ = strconv.ParseInt(f.Get(prefix+".id"), 10, 64)
-		if len(f[prefix+".repository"]) > 100 {
-			http.Error(w, "Too many repositories", 400)
+		installations[strings.ToLower(strings.TrimSpace(i.Owner))] = len(a.Installations)
+		a.Installations = append(a.Installations, i)
+	}
+	if len(f["repository"]) > 20*100 {
+		http.Error(w, "Too many repositories", 400)
+		return
+	}
+	var rows []reviews.Repository
+	for _, row := range f["repository"] {
+		p := "r." + row
+		repo := reviews.Repository{Name: f.Get(p + ".name"), Project: f.Get(p + ".project"), Enabled: f.Get(p+".enabled") == "on",
+			Settings: reviews.Settings{FailOn: f.Get(p + ".fail_on"), Visibility: f.Get(p + ".visibility")}}
+		if raw := f.Get(p + ".timeout"); raw != "" {
+			var err error
+			repo.TimeoutMinutes, err = strconv.Atoi(raw)
+			if err != nil || repo.TimeoutMinutes == 0 {
+				repo.TimeoutMinutes = -1
+			}
+		}
+		rows = append(rows, repo)
+	}
+	// The owner/ prefix assigns each row to its installation. Owners must be
+	// distinct so the assignment is unambiguous; unmatched rows are never dropped.
+	if len(installations) != len(a.Installations) {
+		g.renderReviews(w, r, "each installation needs a distinct GitHub owner", &a, rows)
+		return
+	}
+	for _, repo := range rows {
+		owner, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(repo.Name)), "/")
+		n, ok := installations[owner]
+		if !ok {
+			g.renderReviews(w, r, fmt.Sprintf("no installation for GitHub owner %q (repository %s); add the installation or remove the repository", owner, repo.Name), &a, rows)
 			return
 		}
-		for _, row := range f[prefix+".repository"] {
-			p := prefix + ".r." + row
-			repo := reviews.Repository{Name: f.Get(p + ".name"), Project: f.Get(p + ".project"), Enabled: f.Get(p+".enabled") == "on",
-				Settings: reviews.Settings{FailOn: f.Get(p + ".fail_on"), Visibility: f.Get(p + ".visibility")}}
-			if raw := f.Get(p + ".timeout"); raw != "" {
-				var err error
-				repo.TimeoutMinutes, err = strconv.Atoi(raw)
-				if err != nil || repo.TimeoutMinutes == 0 {
-					repo.TimeoutMinutes = -1
-				}
-			}
-			i.Repositories = append(i.Repositories, repo)
-		}
-		a.Installations = append(a.Installations, i)
+		a.Installations[n].Repositories = append(a.Installations[n].Repositories, repo)
 	}
 	var err error
 	if g.cfg.Demo {
@@ -327,7 +430,7 @@ func (g *Gateway) saveReviews(w http.ResponseWriter, r *http.Request) {
 		err = g.Reviews.SaveIntegration(r.Context(), a, credentials)
 	}
 	if err != nil {
-		g.renderReviews(w, r, err.Error(), &a)
+		g.renderReviews(w, r, err.Error(), &a, rows)
 		return
 	}
 	http.Redirect(w, r, "/integrations/reviews?saved=1&app="+a.ID, http.StatusSeeOther)

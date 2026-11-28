@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/jsintegration"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
@@ -125,11 +124,7 @@ export async function createIssue(args,ctx) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	browser, err := browserbridge.New(t.Context(), cfg.Connections, m, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, err := gateway.New(cfg, s, browser)
+	g, err := gateway.New(cfg, s, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +136,7 @@ export async function createIssue(args,ctx) {
 	auth.Register(mux)
 	mh, _ := g.DemoHandlers("demo-mcp-token")
 	mux.Handle("/mcp", mh)
-	mux.Handle("/", g.UI(auth, m, browser, false))
+	mux.Handle("/", g.UI(auth, m))
 	server.Config.Handler = mux
 	server.Start()
 	defer server.Close()

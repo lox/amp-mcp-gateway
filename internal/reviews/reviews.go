@@ -2,6 +2,7 @@
 package reviews
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -63,6 +65,17 @@ type Thread struct {
 	Archived   bool
 	Usage      *Usage
 	UsageError string
+	// Failed usage reads back off; UsageError records only the final failure.
+	UsageAttempts int
+	UsageRetryAt  int64
+	Stream        *StreamUsage
+}
+
+// StreamUsage is what the CLI stream itself reported, available as soon as an
+// attempt ends. It has no cost and may omit work the stream does not carry,
+// so it never replaces Amp's billed usage.
+type StreamUsage struct {
+	InputTokens, OutputTokens, Turns int64
 }
 
 // Usage separates billed Amp credits from an optional provider-price estimate.
@@ -86,11 +99,14 @@ type Job struct {
 	Threads                               []Thread
 	Attempts                              int
 	Created, Completed, CleanupAt         int64
-	Result                                *Result
-	Conclusion                            string
-	Omitted                               int
-	FailOn, Visibility, PromptVersion     string
-	TimeoutMinutes                        int
+	// Started is the first claim (Unix nanoseconds), separating queue time
+	// from run time. Restart requeues keep it; reruns reset it.
+	Started                           int64
+	Result                            *Result
+	Conclusion                        string
+	Omitted                           int
+	FailOn, Visibility, PromptVersion string
+	TimeoutMinutes                    int
 	// Cleanup never borrows a replacement execution identity's credential.
 	ExecutionBinding    string
 	ExecutionCredential string
@@ -175,17 +191,48 @@ func (s *Service) update(ctx context.Context, j *Job) error {
 	return nil
 }
 
+// HistoryFilter narrows history. Zero fields match everything; Number
+// matches one pull request exactly.
+type HistoryFilter struct {
+	Repository, Status string
+	Number             int
+}
+
 // History returns recent records only from this account, with no credentials.
 // Always include the next unresolved outcome, even behind a full queue.
-func (s *Service) History(ctx context.Context) ([]Job, error) {
-	jobs, err := s.list(ctx, "", 100)
-	if err != nil {
-		return nil, err
+// A filter searches all stored history and returns the newest 100 matches.
+func (s *Service) History(ctx context.Context, f HistoryFilter) ([]Job, error) {
+	if f.Repository == "" && f.Number == 0 {
+		jobs, err := s.list(ctx, f.Status, 100)
+		if err != nil || f.Status != "" {
+			return jobs, err
+		}
+		unknown, err := s.list(ctx, "unknown", 1)
+		if len(unknown) > 0 && !slices.ContainsFunc(jobs, func(j Job) bool { return j.ID == unknown[0].ID }) {
+			jobs = append(unknown, jobs...)
+		}
+		return jobs, err
 	}
-	unknown, err := s.list(ctx, "unknown", 1)
-	if len(unknown) > 0 && !slices.ContainsFunc(jobs, func(j Job) bool { return j.ID == unknown[0].ID }) {
-		jobs = append(unknown, jobs...)
-	}
+	// Repository and number live in the encrypted payload, so scan it all,
+	// keeping only the newest 100 matches: history is never deleted.
+	newer := func(a, b Job) int { return cmp.Or(cmp.Compare(b.Created, a.Created), strings.Compare(b.ID, a.ID)) }
+	jobs := make([]Job, 0, 101)
+	err := s.store.VisitReviews(ctx, 0, math.MaxInt64, func(r store.ReviewRecord) error {
+		j, err := decode(r)
+		if err != nil {
+			return err
+		}
+		if j.OwnerID != s.owner {
+			return errors.New("review owner mismatch")
+		}
+		if (f.Status == "" || j.Status == f.Status) && (f.Repository == "" || j.Repository == f.Repository) && (f.Number == 0 || j.Number == f.Number) {
+			i, _ := slices.BinarySearchFunc(jobs, j, newer)
+			if i < 100 {
+				jobs = slices.Insert(jobs, i, j)[:min(len(jobs)+1, 100)]
+			}
+		}
+		return nil
+	})
 	return jobs, err
 }
 
@@ -264,7 +311,7 @@ func (s *Service) rerun(ctx context.Context, id, delivery string, ack bool, chec
 			return err
 		}
 	}
-	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt = "", 0, nil, nil, 0, "", "", "", 0, 0
+	j.ID, j.CheckID, j.Threads, j.Result, j.Attempts, j.Error, j.Phase, j.Conclusion, j.Completed, j.CleanupAt, j.Started = "", 0, nil, nil, 0, "", "", "", 0, 0, 0
 	j.Delivery, j.Event = delivery, "check_run.rerequested"
 	return s.enqueue(ctx, a, j, false)
 }

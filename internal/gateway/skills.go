@@ -102,54 +102,24 @@ var skillCatalog = func() []bundledSkill {
 	return catalog
 }()
 
-// The browser workflow names all native browser tools, so withhold the whole
-// skill if any are hidden. No account catalogue or policy is baked into its bytes.
-func (g *Gateway) skillAvailable(ctx context.Context, skill bundledSkill) bool {
-	if skill.entry.Frontmatter["name"] != "using-shared-browser" {
-		return true
-	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	identity, _ := ctx.Value(ampIdentityKey{}).(ampIdentity)
-	if !identity.allows(g.cfg.privateConnection(chromeConnectionID)) {
-		return false
-	}
-	for _, connection := range g.cfg.Connections {
-		if connection.ID != chromeConnectionID || !connection.Browser {
-			continue
-		}
-		_, tools := ChromeIntegration()
-		for _, tool := range tools {
-			saved, ok := g.tools[tool.ID]
-			if !ok || saved.Connection != chromeConnectionID || saved.Name != tool.Name || saved.Policy == "deny" {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
 func (g *Gateway) registerSkills(s *mcp.Server) {
-	err := mcp.AddReceivingCustomMethod(s, "skills/list", func(ctx context.Context, _ *mcp.ServerSession, params *listSkillsParams) (*listSkillsResult, error) {
+	err := mcp.AddReceivingCustomMethod(s, "skills/list", func(_ context.Context, _ *mcp.ServerSession, params *listSkillsParams) (*listSkillsResult, error) {
 		if params != nil && params.Cursor != "" {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid skills cursor"}
 		}
 		out := &listSkillsResult{ResultType: "complete", Cacheable: mcp.Cacheable{CacheScope: "private"}, Skills: []skillEntry{}}
 		for _, skill := range skillCatalog {
-			if g.skillAvailable(ctx, skill) {
-				out.Skills = append(out.Skills, skill.entry)
-			}
+			out.Skills = append(out.Skills, skill.entry)
 		}
 		return out, nil
 	})
 	if err != nil {
 		panic(err)
 	}
-	err = mcp.AddReceivingCustomMethod(s, "skills/get", func(ctx context.Context, _ *mcp.ServerSession, params *getSkillParams) (*getSkillResult, error) {
+	err = mcp.AddReceivingCustomMethod(s, "skills/get", func(_ context.Context, _ *mcp.ServerSession, params *getSkillParams) (*getSkillResult, error) {
 		if params != nil {
 			for _, skill := range skillCatalog {
-				if skill.entry.URI == params.URI && g.skillAvailable(ctx, skill) {
+				if skill.entry.URI == params.URI {
 					return &getSkillResult{ResultType: "complete", Cacheable: mcp.Cacheable{CacheScope: "private"}, Skill: skill.entry}, nil
 				}
 			}
@@ -159,11 +129,10 @@ func (g *Gateway) registerSkills(s *mcp.Server) {
 	if err != nil {
 		panic(err)
 	}
-	// Only a generic template is listed: ordinary resource enumeration must not
-	// reveal a restricted skill's name or description. The manifest lists files.
-	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "skill://{+file}", Name: "Gateway skill file", MIMEType: "text/markdown"}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	// Only a generic template is listed; each skill's manifest lists its files.
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "skill://{+file}", Name: "Gateway skill file", MIMEType: "text/markdown"}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		for _, skill := range skillCatalog {
-			if text, ok := skill.files[req.Params.URI]; ok && g.skillAvailable(ctx, skill) {
+			if text, ok := skill.files[req.Params.URI]; ok {
 				return &mcp.ReadResourceResult{Cacheable: mcp.Cacheable{CacheScope: "private"}, Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/markdown", Text: text}}}, nil
 			}
 		}

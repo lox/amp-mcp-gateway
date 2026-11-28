@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/store"
 	"ampcode.com/lox/amp-mcp-gateway/internal/upstream"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,22 +28,9 @@ func adminUI(t *testing.T, g *Gateway, m *upstream.Manager) (http.Handler, *http
 	if err != nil {
 		t.Fatal(err)
 	}
-	connections := append([]upstream.Connection(nil), g.cfg.Connections...)
-	configured := false
-	for _, connection := range connections {
-		configured = configured || connection.Browser
-	}
-	if !configured {
-		connection, _ := ChromeIntegration()
-		connections = append(connections, connection)
-	}
-	browser, err := browserbridge.New(t.Context(), connections, m, g.store)
-	if err != nil {
-		t.Fatal(err)
-	}
 	mux := http.NewServeMux()
 	a.Register(mux)
-	mux.Handle("/", g.UI(a, m, browser, true))
+	mux.Handle("/", g.UI(a, m))
 	r := httptest.NewRequest("POST", "/login", strings.NewReader("password=test-login"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -950,9 +936,6 @@ func TestDisableAndRemoveConnectionAffectOnlyThatConnection(t *testing.T) {
 	other := cfg.Tools[0]
 	other.ID, other.Connection = "other.write", "other"
 	cfg.Tools = append(slices.Clone(cfg.Tools), other)
-	if !ConfigureChrome(&cfg) {
-		t.Fatal("could not add the browser connection")
-	}
 	g, err := New(cfg, s, b)
 	if err != nil {
 		t.Fatal(err)
@@ -1046,12 +1029,6 @@ func TestDisableAndRemoveConnectionAffectOnlyThatConnection(t *testing.T) {
 	}
 	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", nil); w.Code != 400 || !g.remoteConnection("notes") {
 		t.Fatal("removed a connection without confirmation")
-	}
-	if w := formRequest(h, cookie, "POST", "/connections/"+chromeConnectionID+"/remove", url.Values{"confirm": {"remove"}}); w.Code != 404 {
-		t.Fatalf("removed the native browser connection: %d", w.Code)
-	}
-	if w := formRequest(h, cookie, "GET", "/connections/"+chromeConnectionID+"/settings", nil); w.Code != 404 {
-		t.Fatalf("native browser connection shows remote connection controls: %d", w.Code)
 	}
 	if w := formRequest(h, cookie, "POST", "/connections/notes/remove", url.Values{"confirm": {"remove"}}); w.Code != 303 {
 		t.Fatalf("remove: %d %s", w.Code, w.Body.String())

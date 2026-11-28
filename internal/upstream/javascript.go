@@ -17,12 +17,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type operationKey struct{}
+type operationContext struct {
+	id, binding string
+}
 
-// WithOperation attaches the claimed ledger ID for broker journaling. Only the
-// worker supplies this; neither arguments nor JavaScript can choose a parent.
-func WithOperation(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, operationKey{}, id)
+// WithOperation attaches the claimed ledger ID and expected artifact binding
+// for broker execution. Only the worker supplies this; neither arguments nor
+// JavaScript can choose a parent or authority.
+func WithOperation(ctx context.Context, id, expectedBinding string) context.Context {
+	return context.WithValue(ctx, operationContext{}, operationContext{id: id, binding: expectedBinding})
 }
 
 type attemptStore interface {
@@ -49,9 +52,9 @@ type httpRequest struct {
 	Body    json.RawMessage   `json:"body,omitempty"`
 }
 
-func (m *Manager) callJavaScript(ctx context.Context, c *managedConnection, name, expectedBinding string, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *Manager) callJavaScript(ctx context.Context, c *managedConnection, name string, args map[string]any) (*mcp.CallToolResult, error) {
 	dispatched := false
-	result, err := m.runJavaScript(ctx, c, name, expectedBinding, args, &dispatched)
+	result, err := m.runJavaScript(ctx, c, name, args, &dispatched)
 	if err == nil {
 		return result, nil
 	}
@@ -63,7 +66,7 @@ func (m *Manager) callJavaScript(ctx context.Context, c *managedConnection, name
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "JavaScript operation failed before HTTP dispatch."}}}, nil
 }
 
-func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name, expectedBinding string, args map[string]any, dispatched *bool) (*mcp.CallToolResult, error) {
+func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name string, args map[string]any, dispatched *bool) (*mcp.CallToolResult, error) {
 	definition := c.config.JavaScript
 	var tool *jsintegration.Tool
 	for _, t := range definition.Tools {
@@ -79,15 +82,16 @@ func (m *Manager) runJavaScript(ctx context.Context, c *managedConnection, name,
 	if token == "" || len(token) > 16<<10 || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("invalid JavaScript credential")
 	}
+	op, _ := ctx.Value(operationContext{}).(operationContext)
 	binding := definition.Binding(token)
-	if binding != expectedBinding {
+	if binding != op.binding {
 		return nil, errors.New("JavaScript authority changed")
 	}
 	journal, ok := m.store.(attemptStore)
 	if !ok {
 		return nil, errors.New("HTTP journal unavailable")
 	}
-	parent, _ := ctx.Value(operationKey{}).(string)
+	parent := op.id
 	if parent == "" {
 		return nil, errors.New("claimed operation required")
 	}

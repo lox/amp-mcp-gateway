@@ -70,7 +70,7 @@ func TestJavaScriptExample(t *testing.T) {
 			if _, err := s.Submit(t.Context(), o); err != nil {
 				t.Fatal(err)
 			}
-			result, err := m.Call(WithOperation(t.Context(), o.ID), c.ID, tt.tool, c.JavaScript.Binding("fake-example-token"), tt.args)
+			result, err := m.Call(WithOperation(t.Context(), o.ID, c.JavaScript.Binding("fake-example-token")), c.ID, tt.tool, tt.args)
 			if err != nil || result == nil || result.IsError || len(result.Content) != 1 {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}

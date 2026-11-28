@@ -63,7 +63,7 @@ func TestJavaScriptHTTPAuthority(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
 			})
 			defer func() { javascriptTransport = old }()
-			result, err := m.Call(WithOperation(t.Context(), o.ID), "js", "run", definition.Binding("fake-broker-token"), map[string]any{})
+			result, err := m.Call(WithOperation(t.Context(), o.ID, definition.Binding("fake-broker-token")), "js", "run", map[string]any{})
 			if err != nil || result == nil || result.IsError == tt.allowed {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
@@ -123,7 +123,7 @@ func TestJavaScriptHTTPNeverRedirectsOrReplays(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})
 			defer func() { javascriptTransport = old }()
-			result, err := m.Call(WithOperation(context.Background(), o.ID), "js", "run", definition.Binding("fake-broker-token"), map[string]any{})
+			result, err := m.Call(WithOperation(context.Background(), o.ID, definition.Binding("fake-broker-token")), "js", "run", map[string]any{})
 			if mode == "redirect" {
 				if err != nil || result == nil || result.IsError {
 					t.Fatalf("redirect status not returned as data: %+v %v", result, err)

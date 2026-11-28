@@ -14,13 +14,13 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"ampcode.com/lox/amp-mcp-gateway/internal/browserauth"
-	"ampcode.com/lox/amp-mcp-gateway/internal/browserbridge"
 	"ampcode.com/lox/amp-mcp-gateway/internal/demo"
 	"ampcode.com/lox/amp-mcp-gateway/internal/gateway"
 	"ampcode.com/lox/amp-mcp-gateway/internal/reviews"
@@ -228,7 +228,6 @@ type accountRuntime struct {
 	store      *store.Store
 	gateway    *gateway.Gateway
 	upstream   *upstream.Manager
-	browser    *browserbridge.Manager
 	tokenMu    sync.Mutex // OAuth writes and project cache, isolated per account.
 	names      browserauth.ProjectNames
 	namesUntil time.Time
@@ -255,16 +254,20 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	if err := gateway.LoadCatalogue(ctx, &cfg, s); err != nil {
 		return nil, fmt.Errorf("load saved catalogue: %w", err)
 	}
-	chromeAvailable := gateway.ConfigureChrome(&cfg)
+	// The native Chrome integration was removed. Deny its queued requests and
+	// revoke its standing approvals unless a remote connection or integration,
+	// such as a secret, now uses the ID.
+	if !slices.ContainsFunc(cfg.Connections, func(c upstream.Connection) bool { return c.ID == "browser" }) &&
+		!slices.ContainsFunc(cfg.Integrations, func(i gateway.Integration) bool { return i.ID == "browser" }) {
+		if err := s.RetireConnection(ctx, "browser", "browser-integration-removed"); err != nil {
+			return nil, fmt.Errorf("retire browser integration: %w", err)
+		}
+	}
 	m, err := upstream.New(cfg.BaseURL, cfg.Connections, s)
 	if err != nil {
 		return nil, err
 	}
-	browser, err := browserbridge.New(ctx, cfg.Connections, m, s)
-	if err != nil {
-		return nil, err
-	}
-	g, err := gateway.New(cfg, s, browser)
+	g, err := gateway.New(cfg, s, m)
 	if err != nil {
 		return nil, err
 	}
@@ -297,14 +300,13 @@ func newAccount(ctx context.Context, config accountConfig, authCfg browserauth.C
 	}
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("POST /leases/{id}", leaseHandler)
-	mux.Handle("/browser/connect", browser.Socket())
 	mux.HandleFunc("POST /webhooks/reviews/{owner}/{app}", g.Reviews.Webhook)
-	mux.Handle("/", g.UI(auth, m, browser, chromeAvailable))
+	mux.Handle("/", g.UI(auth, m))
 	if consent != nil {
 		mux.Handle("GET /demo/authorize", auth.Require(consent))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
-	account := &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m, browser: browser}
+	account := &accountRuntime{handler: securityHeaders(mux), store: s, gateway: g, upstream: m}
 	if cfg.AccountPage {
 		g.ProjectNames = func(ctx context.Context) browserauth.ProjectNames { return account.projectNames(ctx, auth) }
 	}
@@ -317,7 +319,6 @@ func sharedAccountHandler(auth *browserauth.Auth, registry *accountRegistry) htt
 	mux.Handle("GET /account", auth.Require(http.HandlerFunc(registry.account)))
 	mux.Handle("/mcp", http.HandlerFunc(registry.workload))
 	mux.Handle("POST /leases/{id}", http.HandlerFunc(registry.workload))
-	mux.Handle("/browser/connect", browserbridge.SocketRouter(registry.browserManager))
 	mux.HandleFunc("POST /webhooks/reviews/{owner}/{app}", registry.reviewWebhook)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("/", auth.Require(http.HandlerFunc(registry.browser)))

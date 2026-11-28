@@ -35,9 +35,13 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	}
 	private := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	values := url.Values{"id": {"lox"}, "app_id": {"1"}, "private_key": {private}, "webhook_secret": {"short"}, "credential_name": {"reviews-bot"}, "credential_key": {"fake-execution-key"}, "fail_on": {"high"}, "visibility": {"private"}, "timeout": {"30"}, "enabled": {"on"},
-		"installation": {"0", "1"}, "i.0.owner": {"lox"}, "i.0.id": {"11"}, "i.0.credential": {"reviews-bot"}, "i.0.repository": {"0"}, "i.0.r.0.name": {"lox/repo"}, "i.0.r.0.project": {"lox/repo"}, "i.0.r.0.enabled": {"on"},
-		"i.1.owner": {"sporevm"}, "i.1.id": {"22"}, "i.1.credential": {"reviews-bot"}, "i.1.repository": {"0"}, "i.1.r.0.name": {"sporevm/repo"}, "i.1.r.0.project": {"sporevm/repo"}}
-	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel"} {
+		"installation": {"0", "1"}, "i.0.owner": {"lox"}, "i.0.id": {"11"}, "i.0.credential": {"reviews-bot"},
+		"i.1.owner": {"sporevm"}, "i.1.id": {"22"}, "i.1.credential": {"reviews-bot"},
+		// One blended list: each row belongs to the installation matching its owner prefix.
+		"repository": {"a", "b", "c"}, "r.a.name": {"sporevm/repo"}, "r.a.project": {"sporevm/repo"},
+		"r.b.name": {"lox/repo"}, "r.b.project": {"lox/repo"}, "r.b.enabled": {"on"},
+		"r.c.name": {"acme/repo"}, "r.c.project": {"acme/repo"}}
+	for _, path := range []string{"/integrations/reviews", "/integrations/reviews/unknown/rerun", "/integrations/reviews/unknown/cancel", "/integrations/reviews/unknown/close-check"} {
 		if w := formRequest(h, nil, "POST", path, values); w.Code != http.StatusSeeOther {
 			t.Fatalf("anonymous %s: %d", path, w.Code)
 		}
@@ -57,19 +61,31 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 		t.Fatal("invalid form leaked secrets or locked identity")
 	}
 	values.Set("webhook_secret", "long-enough-fake-hook-secret")
-	values.Set("i.0.r.0.project", "invalid-project")
+	// A row whose owner has no installation is rejected, not silently dropped.
 	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `value="invalid-project"`) {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no installation for GitHub owner") || !strings.Contains(w.Body.String(), `value="acme/repo"`) || len(g.Reviews.Configuration().Integrations) != 0 {
+		t.Fatal("repository without an installation was not rejected with its row kept")
+	}
+	values["repository"] = []string{"a", "b"}
+	values.Set("r.b.project", "invalid-project")
+	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `value="invalid-project"`) || !strings.Contains(w.Body.String(), `value="sporevm/repo"`) {
 		t.Fatal("invalid project mappings were lost instead of remaining editable")
 	}
-	values.Set("i.0.r.0.project", "lox/repo")
+	values.Set("r.b.project", "lox/repo")
 	values.Set("webhook_secret", "long-enough-fake-hook-secret")
 	w = formRequest(h, cookie, "POST", "/integrations/reviews", values)
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
-	if config := g.Reviews.Configuration(); len(config.Integrations) != 1 || config.Integrations["lox"].Enabled || len(config.Integrations["lox"].Installations) != 2 || len(config.Credentials) != 1 {
+	config := g.Reviews.Configuration()
+	if len(config.Integrations) != 1 || config.Integrations["lox"].Enabled || len(config.Integrations["lox"].Installations) != 2 || len(config.Credentials) != 1 {
 		t.Fatal("demo allowed execution")
+	}
+	for _, i := range config.Integrations["lox"].Installations {
+		if len(i.Repositories) != 1 || i.Repositories[0].Name != i.Owner+"/repo" || i.Repositories[0].Enabled != (i.Owner == "lox") {
+			t.Fatalf("repository rows assigned to the wrong installation: %+v", i)
+		}
 	}
 	values.Set("private_key", "")
 	values.Set("webhook_secret", "")
@@ -81,6 +97,17 @@ func TestReviewsBrowserAuthorizationAndSecretRetention(t *testing.T) {
 	w = formRequest(h, cookie, "GET", "/integrations/reviews?app=lox", nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Configure lox") || strings.Contains(w.Body.String(), "Import amp-reviewbot history") || strings.Contains(w.Body.String(), "fake-execution-key") || strings.Contains(w.Body.String(), private) {
 		t.Fatal("configured page lost state or leaked credentials")
+	}
+	// Filters normalize "#1" to an exact number and ignore unconfigured values.
+	w = formRequest(h, cookie, "GET", "/integrations/reviews?repo=LOX/repo&pr=%231&status=bogus", nil)
+	if body := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(body, `<option value="lox/repo" selected>`) || !strings.Contains(body, `name="pr" inputmode="numeric" pattern="#?[0-9]+" placeholder="Exact number" value="1"`) || strings.Contains(body, `<option value="bogus"`) || strings.Contains(body, `" selected>queued`) || !strings.Contains(body, "No reviews match these filters.") {
+		t.Fatal("history filter not parsed")
+	}
+	if body := formRequest(h, cookie, "GET", "/integrations/reviews?repo=lox/repo&pr=1", nil).Body.String(); !strings.Contains(body, `href="/integrations/reviews?pr=1&amp;repo=lox%2Frepo">Refresh`) {
+		t.Fatal("refresh dropped the active filters")
+	}
+	if body := formRequest(h, cookie, "GET", "/integrations/reviews?repo=acme/other", nil).Body.String(); strings.Contains(body, " selected>acme/other") || strings.Contains(body, "No reviews match") {
+		t.Fatal("unconfigured repository applied as a filter")
 	}
 	if w := formRequest(h, cookie, "POST", "/integrations/reviews/import", nil); w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("history import is still exposed over HTTP: %d", w.Code)
@@ -154,6 +181,51 @@ func TestReviewUsageOverview(t *testing.T) {
 				t.Fatal("invalid chart coordinates")
 			}
 		})
+	}
+}
+
+func TestReviewHistorySeparatesQueueTime(t *testing.T) {
+	created := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		started time.Duration
+		want    string
+	}{
+		{"waited behind another review", 150 * time.Second, "2m30s queued"},
+		{"picked up by the next poll", 3 * time.Second, ""},
+		{"recorded before start times", -1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := reviews.Job{Status: "succeeded", Conclusion: "success", Result: &reviews.Result{}, Created: created.UnixNano(), Completed: created.Add(400 * time.Second).Unix()}
+			if tc.started >= 0 {
+				j.Started = created.Add(tc.started).UnixNano()
+			}
+			var body strings.Builder
+			if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewJobs": []reviews.Job{j}}); err != nil {
+				t.Fatal(err)
+			}
+			_, summary, _ := strings.Cut(body.String(), `<summary class="review-summary">`)
+			summary, _, _ = strings.Cut(summary, "</summary>")
+			if !strings.Contains(summary, "6m40s") || (tc.want == "") == strings.Contains(summary, "queued") || !strings.Contains(summary, tc.want) {
+				t.Fatalf("want total 6m40s and %q: %s", tc.want, summary)
+			}
+		})
+	}
+}
+
+func TestReviewThreadShowsStreamUsageWithBilledUsage(t *testing.T) {
+	j := reviews.Job{Status: "succeeded", Threads: []reviews.Thread{
+		{ID: "T-00000000-0000-0000-0000-000000000001", Usage: &reviews.Usage{CostUSD: .02}, Stream: &reviews.StreamUsage{InputTokens: 1079070, OutputTokens: 5409, Turns: 13}},
+		{ID: "T-00000000-0000-0000-0000-000000000002", Stream: &reviews.StreamUsage{InputTokens: 900, OutputTokens: 7, Turns: 2}},
+	}}
+	var body strings.Builder
+	if err := page.ExecuteTemplate(&body, "reviews", map[string]any{"ReviewJobs": []reviews.Job{j}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Amp credits: $0.0200 · Provider estimate: not reported · stream reported 1079070 input and 5409 output tokens over 13 turns", "Usage pending · stream reported 900 input and 7 output tokens over 2 turns"} {
+		if !strings.Contains(body.String(), want) {
+			t.Fatalf("missing %q", want)
+		}
 	}
 }
 

@@ -121,7 +121,6 @@ func Open(path, key string) (*Store, error) {
 	BEGIN;
 CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS browser_pairings (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS secrets (id TEXT PRIMARY KEY, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS http_attempts (operation TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 10), request BLOB NOT NULL, response BLOB, PRIMARY KEY(operation,sequence));
@@ -141,7 +140,7 @@ COMMIT;`)
 	// Reject a wrong key before recovery mutates an existing ledger.
 	var id string
 	var payload []byte
-	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'browser-pairing:'||id,payload FROM browser_pairings UNION ALL SELECT 'secret:'||id,payload FROM secrets UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
+	err = db.QueryRow(`SELECT 'token:'||id,payload FROM tokens UNION ALL SELECT 'secret:'||id,payload FROM secrets UNION ALL SELECT 'operation:'||id,payload FROM operations UNION ALL SELECT 'approval-grant:'||id,payload FROM approval_grants UNION ALL SELECT 'credential-lease:'||id,payload FROM credential_leases UNION ALL SELECT 'catalogue',payload FROM catalogue LIMIT 1`).Scan(&id, &payload)
 	if err == nil {
 		_, err = s.open(id, payload)
 		if err != nil {
@@ -153,7 +152,8 @@ COMMIT;`)
 		s.Close()
 		return nil, errors.New("cannot decrypt existing ledger: check encryption key and database integrity")
 	}
-	_, err = db.Exec(`BEGIN; INSERT INTO events(operation,kind,actor,time) SELECT id,'unknown','restart',unixepoch() FROM operations WHERE status='running'; UPDATE operations SET status='unknown' WHERE status='running'; COMMIT;`)
+	// browser_pairings held reconnect credentials for the removed native Chrome integration.
+	_, err = db.Exec(`BEGIN; DROP TABLE IF EXISTS browser_pairings; INSERT INTO events(operation,kind,actor,time) SELECT id,'unknown','restart',unixepoch() FROM operations WHERE status='running'; UPDATE operations SET status='unknown' WHERE status='running'; COMMIT;`)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -271,6 +271,21 @@ type connectionScope struct {
 // credential for the connection. Running operations must finish first.
 func (s *Store) SaveConnectionCatalogue(ctx context.Context, b []byte, connection, reason string, forget bool, events ...Event) error {
 	return s.saveCatalogue(ctx, b, nil, nil, &connectionScope{id: connection, reason: reason, forget: forget}, events...)
+}
+
+// RetireConnection denies one connection's queued requests and revokes its
+// standing approvals, recording reason as the audit actor, without changing
+// the catalogue. Use it for a connection that this release no longer provides.
+func (s *Store) RetireConnection(ctx context.Context, connection, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.revokeConnection(ctx, tx, connectionScope{id: connection, reason: reason}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MigrateCatalogueSecrets moves already-authorized secret records out of a
