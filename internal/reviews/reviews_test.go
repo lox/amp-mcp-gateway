@@ -1052,7 +1052,11 @@ func testMergedDuringReview(t *testing.T, reject int) {
 		}
 		return j
 	}
-	maintain("unknown") // Amp has not confirmed the thread stopped.
+	// The PR closed mid-review, so the detached thread is archived to stop
+	// it, but the check stays open until Amp confirms it stopped.
+	if j := maintain("unknown"); !j.Threads[0].Archived || !slices.Contains(amp.keys, a.AmpKey+":"+testThread) {
+		t.Fatalf("detached thread not stopped: %+v", j)
+	}
 	amp.stopped = true
 	setState("open")
 	maintain("unknown") // An open PR still needs the owner's decision.

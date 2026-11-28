@@ -82,10 +82,24 @@ func (s *Service) recover(ctx context.Context, a App, key string, j *Job) error 
 		if current, err := gh.current(ctx, *j); err != nil || current {
 			return nil
 		}
-		for _, t := range j.Threads {
-			if stopped, err := s.amp.Stopped(ctx, key, t.ID); err != nil || !stopped {
-				return nil
+		// The CLI detaches on SIGTERM, leaving the remote thread working.
+		// Archiving it stops its executor, and the PR can no longer use it.
+		running, archived := false, false
+		for i := range j.Threads {
+			t := &j.Threads[i]
+			stopped, err := s.amp.Stopped(ctx, key, t.ID)
+			if err == nil && !stopped && !t.Archived && s.amp.Archive(ctx, key, t.ID) == nil {
+				t.Archived, archived = true, true
 			}
+			running = running || err != nil || !stopped
+		}
+		if archived {
+			if err := s.update(ctx, j); err != nil {
+				return err
+			}
+		}
+		if running { // Confirm on a later pass that archiving stopped it.
+			return nil
 		}
 		// Checkpoint first: a lost close is confirmed below on a later pass
 		// rather than resent.

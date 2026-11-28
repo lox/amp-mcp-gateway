@@ -180,9 +180,10 @@ exact values; a dash means no reported usage, not zero. Refresh to update.
   App, external ID, SHA and conclusion. It never guesses that an uncertain launch
   failed. SIGTERM detaches the pinned CLI from an orb thread, which keeps running
   remotely, so a PR merged mid-review usually leaves an unknown review. Once its
-  PR is closed, draft or superseded and `amp threads export` shows each recorded
-  thread idle, recovery closes its still-open check as cancelled (no findings)
-  and the account resumes. Other persistently unknown jobs, including
+  PR is closed, draft or superseded, recovery archives each recorded thread that
+  is still working, which stops its executor. When `amp threads export` then shows
+  each thread idle, recovery closes its still-open check as cancelled (no findings)
+  and the account resumes, normally within two maintenance passes. Other persistently unknown jobs, including
   those on still-open PRs, need the owner; their threads are not silently archived.
   Check creation recovery is bounded to 1,000 checks for the commit.
 - A failed finalization database write stops the worker and propagates through
