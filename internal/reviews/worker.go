@@ -460,3 +460,43 @@ func (s *Service) Cancel(ctx context.Context, id string, acknowledge bool) error
 	}
 	return err
 }
+
+// CloseCheck closes an ended review's GitHub check that is still open, such
+// as one left when the owner resolved an unknown outcome, which never touches
+// GitHub. It reads the check first and sends only a cancellation, never findings.
+func (s *Service) CloseCheck(ctx context.Context, id string) error {
+	s.mu.Lock()
+	j, err := s.get(ctx, id)
+	var a App
+	ok := false
+	if err == nil {
+		a, ok = s.config.resolve(j.App, j.InstallationID, j.Repository)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if j.Status != "failed" && j.Status != "cancelled" || j.CheckID == 0 {
+		return fmt.Errorf("review is %s", j.Status)
+	}
+	if !ok || a.RepositoryID != j.RepositoryID {
+		return errors.New("review not authorized")
+	}
+	gh, err := s.github.session(ctx, a, j.Repository)
+	if err != nil {
+		return err
+	}
+	var check checkRun
+	if err := gh.request(ctx, "GET", fmt.Sprintf("/check-runs/%d", j.CheckID), nil, &check); err != nil {
+		return err
+	}
+	if check.ID != j.CheckID || check.ExternalID != j.ID || check.HeadSHA != j.HeadSHA || check.App.ID != a.AppID {
+		return errors.New("check does not belong to this review")
+	}
+	if check.Status == "completed" {
+		return errors.New("GitHub check is already closed")
+	}
+	closing := j
+	closing.Result = nil
+	return gh.finish(ctx, closing, "cancelled", "This review had already ended; the owner closed its check from the gateway.")
+}

@@ -1188,3 +1188,45 @@ func TestUsageReadsBackOffBeforeGivingUp(t *testing.T) {
 		t.Fatal("final failure was retried")
 	}
 }
+
+func TestOwnerClosesCheckLeftOpenByResolve(t *testing.T) {
+	f, gh := newGitHub(t)
+	amp := &fakeAmp{execute: func(_ context.Context, _ string, _ Job, onThread func(string) error) (string, error) {
+		if err := onThread(testThread); err != nil {
+			return "", err
+		}
+		return "", errAmbiguous
+	}}
+	s, _, _, _ := fixtureService(t, "user", amp, gh, semaphore.NewWeighted(4))
+	a := fixtureApp(t, "lox")
+	if err := s.Save(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	deliver(t, s, a, fixturePull("lox/repo", 44), "one", "pull_request", "opened", nil)
+	if err := s.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	j := history(t, s)[0]
+	if s.CloseCheck(t.Context(), j.ID) == nil {
+		t.Fatal("closed the check of an unresolved review")
+	}
+	// Resolving records the acknowledgement but leaves GitHub untouched.
+	if err := s.Cancel(t.Context(), j.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.checks[j.CheckID]["status"] != "in_progress" {
+		t.Fatalf("fixture: resolve changed the check: %v", f.checks[j.CheckID])
+	}
+	if err := s.CloseCheck(t.Context(), j.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	check, finished := f.checks[j.CheckID], f.finished
+	f.mu.Unlock()
+	if finished != 1 || check["conclusion"] != "cancelled" || check["output"].(map[string]any)["annotations"] != nil {
+		t.Fatalf("check not closed as cancelled without findings: %v", check)
+	}
+	if s.CloseCheck(t.Context(), j.ID) == nil || f.finished != 1 {
+		t.Fatal("closed an already completed check again")
+	}
+}
