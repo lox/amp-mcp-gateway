@@ -95,9 +95,10 @@ func (s *Store) Reviews(ctx context.Context, status string, before int64, limit 
 	return records, rows.Err()
 }
 
-// PullReviews returns one App's latest snapshots for a pull request, newest first.
-func (s *Store) PullReviews(ctx context.Context, scope, pull string, limit int) ([]ReviewRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,delivery,head,pull,status,revision,created,payload FROM reviews WHERE scope=? AND pull=? ORDER BY created DESC,id DESC LIMIT ?`, scope, pull, limit)
+// PullReviews returns one App's latest snapshots for a pull request in one
+// status, newest first.
+func (s *Store) PullReviews(ctx context.Context, scope, pull, status string, limit int) ([]ReviewRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,delivery,head,pull,status,revision,created,payload FROM reviews WHERE scope=? AND pull=? AND status=? ORDER BY created DESC,id DESC LIMIT ?`, scope, pull, status, limit)
 	if err != nil {
 		return nil, err
 	}

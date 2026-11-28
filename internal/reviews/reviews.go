@@ -297,26 +297,20 @@ func (s *Service) enqueue(ctx context.Context, a App, j Job, missing bool) error
 // previous returns the pull request's latest successful review when it
 // reviewed another head.
 func (s *Service) previous(ctx context.Context, j Job) (*Previous, error) {
-	records, err := s.store.PullReviews(ctx, j.App, j.pullKey(), 20)
+	records, err := s.store.PullReviews(ctx, j.App, j.pullKey(), "succeeded", 1)
+	if err != nil || len(records) == 0 {
+		return nil, err
+	}
+	old, err := decode(records[0])
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range records {
-		old, err := decode(r)
-		if err != nil {
-			return nil, err
-		}
-		if old.OwnerID != s.owner || old.Status != "succeeded" || old.Result == nil {
-			continue
-		}
-		// An unchanged head (reopened, ready for review) has no interdiff;
-		// an older head's findings would drop the latest review's.
-		if old.HeadSHA == j.HeadSHA || !shaPattern.MatchString(old.HeadSHA) {
-			return nil, nil
-		}
-		return &Previous{HeadSHA: old.HeadSHA, Findings: old.Result.Findings}, nil
+	// An unchanged head (reopened, ready for review) has no interdiff;
+	// an older head's findings would drop the latest review's.
+	if old.OwnerID != s.owner || old.Result == nil || old.HeadSHA == j.HeadSHA || !shaPattern.MatchString(old.HeadSHA) {
+		return nil, nil
 	}
-	return nil, nil
+	return &Previous{HeadSHA: old.HeadSHA, Findings: old.Result.Findings}, nil
 }
 
 func validJob(j Job) bool {
